@@ -1,0 +1,164 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,stmaryrd}
+\usepackage{soul}
+\usepackage{array}
+\usepackage{empheq}
+\usepackage{xfrac}
+\usepackage{minibox}
+\usepackage{enumitem}
+	\setlist{nosep} % or \setlist{noitemsep} to leave space around whole list
+\usepackage{color}
+
+\newcommand{\tcb}{\textcolor{blue}}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO\@: #1]}}
+
+
+
+\begin{document}
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\section{Space-time discretizations}
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Time integrators}
+
+Consider a linear PDE of the form 
+\begin{align*}
+u_t + \mathcal{L}(u,\mathbf{x},t) = g(\mathbf{x},t).
+\end{align*}
+We discretize $\mathcal{L}$ in space and, denoting $\mathbf{u}(t)$ the discrete solution in space at time $t$
+and $\mathbf{g}(t)$ the corresponding right-hand side, we arrive at the system of ODEs 
+\begin{align}\label{eq:ode}
+\mathbf{u}_t + \mathcal{L}(t)\mathbf{u} = \mathbf{g}(t).
+\end{align}
+Time integrators can be largely broken down into Runge-Kutta-type methods and linear multistep methods. Runge-Kutta methods
+are one-step, $s$-stage methods, and are not amenable to building a space-time linear system. Three main classes of linear multistep
+methods are the Adams-Bashforth (explicit), Adams-Moulton (implicit), and backwards differentiation formulas (implicit), all of which
+can be framed as a sparse linear system. Suppose we have a discrete time grid with time step $\Delta t$ and time points $\{t_0,t_1,...\}$.
+Denote $\mathbf{g}(t_n) = \mathbf{g}_n$ and $\mathcal{L}(t_n) = \mathcal{L}_n$. The first three formulae for each of the linear
+multistep classes of integrators in the context of \eqref{eq:ode} are given as follows:
+%
+{\small
+\begin{align*}
+\textnormal{\textbf{Adams-Bashforth:}}\hspace{40.5ex}&\\
+\mathbf{u}_n - (I - \Delta t\mathcal{L}_{n-1})\mathbf{u}_{n-1} & =\Delta t\mathbf{g}_{n-1}  \\
+\mathbf{u}_n - (I - \tfrac{3}{2}\Delta t\mathcal{L}_{n-1})\mathbf{u}_{n-1} - \tfrac{1}{2}\Delta t\mathcal{L}_{n-2}\mathbf{u}_{n-2} & = \tfrac{3}{2}\Delta t\mathbf{g}_{n-1} - \tfrac{1}{2}\Delta t\mathbf{g}_{n-2}\\
+\mathbf{u}_n - (I - \tfrac{23}{12}\Delta t\mathcal{L}_{n-1})\mathbf{u}_{n-1} - \tfrac{4}{3}\Delta t\mathcal{L}_{n-2}\mathbf{u}_{n-2} + 
+	\tfrac{5}{12}\Delta t\mathcal{L}_{n-3}\mathbf{u}_{n-3} & = \tfrac{23}{12}\Delta t\mathbf{g}_{n-1} - \tfrac{4}{3}\Delta t\mathbf{g}_{n-2} + 
+	\tfrac{5}{12}\Delta t\mathbf{g}_{n-3}\\
+\textnormal{\textbf{Adams-Moulton:}}\hspace{42ex}&\\
+(I + \Delta t \mathcal{L}_n)\mathbf{u}_n - \mathbf{u}_{n-1} &  =  \Delta t \mathbf{g}_n \\
+(I + \tfrac{1}{2}\Delta t \mathcal{L}_n)\mathbf{u}_n - (I - \tfrac{1}{2}\Delta t \mathcal{L}_{n-1})\mathbf{u}_{n-1} & =
+	\tfrac{1}{2} \Delta t (\mathbf{g}_n + \mathbf{g}_{n-1}) \\
+(I + \tfrac{5}{12}\Delta t \mathcal{L}_n)\mathbf{u}_n - (I - \tfrac{2}{3}\Delta t \mathcal{L}_{n-1})\mathbf{u}_{n-1} - 
+	\tfrac{1}{12}\Delta t\mathcal{L}_{n-2}\mathbf{u}_{n-2}& = \tfrac{5}{12} \Delta t\mathbf{g}_n + \tfrac{2}{3} \Delta t\mathbf{g}_{n-1} -
+	\tfrac{1}{12} \Delta t\mathbf{g}_{n-2}\\
+\textnormal{\textbf{BDF:}}\hspace{55ex}&\\
+(I + \Delta t \mathcal{L}_n)\mathbf{u}_n - \mathbf{u}_{n-1} &  =  \Delta t \mathbf{g}_n \\
+ (I + \tfrac{2}{3}\Delta t \mathcal{L}_n)\mathbf{u}_{n} - \tfrac{4}{3} \mathbf{u}_{n-1} + \tfrac{1}{3} \mathbf{u}_{n-2} & =
+ 	\tfrac{2}{3}\Delta t\mathbf{g}_n \\
+(I + \tfrac{6}{11}\Delta t \mathcal{L}_n)\mathbf{u}_{n} - \tfrac{18}{11} \mathbf{u}_{n-1} + \tfrac{9}{11} \mathbf{u}_{n-2} -
+	\tfrac{2}{11} \mathbf{u}_{n-3} +  & =   \tfrac{6}{11}\Delta t  \mathbf{g}_n.
+\end{align*}
+}
+%
+
+Full space-time discretizations take the form of a block lower triangular matrix, $\mathcal{A}$, where each block corresponds to the full
+spatial solution at one point in time. The Adams-Bashforth methods are explicit, so the block diagonal of $\mathcal{A}$ is the identity,
+and off-diagonal blocks given by spatial discretization terms at previous time steps. Adams-Moulton have spatial discretization blocks
+along the diagonal as well as off-diagonals. Finally, BDF methods only have the spatial discretization along the diagonal; off-diagonal
+blocks consist only of the identity. Such a structure reduces the number of matrix nonzeros and connectivity compared with an
+Adams-type scheme; however, the Adams-Moulton implicit methods gain an extra order of accuracy. For example, if we consider
+two time-neighbors away, that is, approximate $\mathbf{u}_i$ using $\mathbf{u}_{i-1}$ and $\mathbf{u}_{i-2}$, BDF is $O(\Delta t^2)$
+accurate, while Adams-Moulton is $O(\Delta t^3)$. 
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{BDF}
+
+Suppose the spatial discretization at each time step has $n_{\mathbf{x}}$ degrees of freedom (over all dimensions) and the time domain
+is discretized into $n_t$ time steps of size $\Delta t$. Let $n_p$ denote the number of processors.
+
+
+%int HYPRE IJMatrixInitialize (HYPRE IJMatrix matrix)
+%	Prepare a matrix object for setting coefficient values. 
+%
+%int HYPRE IJMatrixSetValues (HYPRE IJMatrix matrix, int nrows, int* ncols, const int* rows, const int* cols, const double* values)
+%	Sets values for nrows rows or partial rows of the matrix. The arrays ncols and rows are of dimension nrows and contain the number of columns in each row and the row indices, respectively. The array cols contains the column indices for each of the rows, and is ordered by rows. The data in the values array corresponds directly to the column entries in cols. Erases any previous values at the specified locations and replaces them with new ones, or, if there was no value there before, inserts a new one.
+%Not collective.
+%
+%HYPRE IJMatrixAssemble (HYPRE IJMatrix matrix)
+%	Finalize the construction of the matrix before using
+%
+
+% ------------------------------------------------------------------------------------------------------- %
+\subsubsection{Assume $n_p | n_t$}
+% MPI ranks are zero-indexed. 
+
+For an initial implementation, assume that $n_p < n_t$ and $n_p | n_t$ ($n_p$ divides $n_t$), where $P_T = \frac{n_t}{n_p}$. This is nice
+because no time steps (and the corresponding matrix blocks) are split over multiple processors. That is, each processor will create its own
+spatial discretizaion(s), and we do not need to split these over processors. Assume we are using zero-indexing. 
+
+Structurally, the BDF discretizations are fairly straightforward. The right-hand side consists of $\mathbf{g}$ evaluated at the current time
+and scaled by a constant. The diagonal block of the matrix consists of the identity plus some constant times the spatial discretization, and
+there are $k$ off-diagonal blocks, each of which are a constant-diagonal matrix, where $k$ is the order of accuracy of the BDF discretization. 
+Initial conditions, $\mathbf{u}_{-1} = f(\mathbf{x})$ are also easily satisfied by moving to the right-hand-side. Thus each block row of the matrix
+takes on the CSR structure of the spatial discretization, with an extra $k$ nonzeros per row (except for points near the boundary).\\
+\\
+\noindent\textbf{Notes on construction:}
+\begin{itemize}
+\item For time $t_i$, the $i$th block row consists of rows $\{in_{\mathbf{x}}, ...,[(i+1)n_{\mathbf{x}}-1]\}$ in the matrix. 
+\item Processor $p_{\ell}$ has time steps $\{P_T\ell,...,P_T(\ell+1)-1\}$. 
+\item When adding spatial discretization matrices to the global structure, we will need to adjust the column indices. The $j$th block column
+will have column indices $+jn_{\mathbf{x}}$. 
+\item Suppose $\frac{n_t}{n_p} = q$. Then we will have $q$ time steps (i.e., block rows) stored on each processor and $qn_{\mathbf{x}}$
+total rows. 
+\item At time $t_0$ (first row in $\mathcal{A}$), there is only a diagonal block, consisting of the spatial discretization. Right hand side must
+account for initial conditions. \tcb{How do we handle first time step(s) with high-order BDF scheme?}
+
+\end{itemize}
+
+
+
+% ------------------------------------------------------------------------------------------------------- %
+\subsubsection{Assume $n_p > n_t$ and $n_t | n_p$}
+% MPI ranks are zero-indexed. 
+
+Now suppose there are more processors than time steps. For a large, 2d- or 3d-space problem, this is entirely possible.
+Here we make a similar assumption as above, this time that $n_t | n_p$. Then, one time step will be split over multiple
+processors. 
+
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Boot-strapping}
+
+For high-order integrators, there needs to be some sort of boot-strapping process such that the initial time step has sufficient
+information to be high-order accuracy. One option is to take a very small time step, for example, use BDF1 to take a step of
+size $\Delta t^2$, and proceed to use the initial condition and the solution at time $\Delta t^2$ to take a time step of size 
+$\Delta t$. However, this introduces a variably-sized time steps, and high-order BDF methods can be unstable with variable
+time steps. \todo{Talk about other options?}
+
+The goal here is to design the space-time construction code to be such that the user modifies the right-hand-side appropriately
+such that the first step(s) are of an appropriate order of accuracy. This should make the code fairly general / ``non-intrusive.'' 
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\section{Tensor-product structure?}
+
+
+
+
+\end{document}
+
+
+
+
+
+
+
