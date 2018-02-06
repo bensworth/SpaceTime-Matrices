@@ -1,10 +1,10 @@
 # Compiler, compile options, and link options
 LIB_DIR   = /Users/ben/Documents/SoftwareLibraries
-MFEM_DIR  = $LIB_DIR/mfem
-HYPRE_DIR = $LIB_DIR/hypre/src/hypre
-METIS_DIR = $LIB_DIR/metis/build/Darwin-x86_64
+MFEM_DIR  = $(LIB_DIR)/mfem
+HYPRE_DIR = $(LIB_DIR)/hypre/src/hypre
+METIS_DIR = $(LIB_DIR)/metis/build/Darwin-x86_64
 CXX      = mpic++
-FLAGS    = -g
+FLAGS    = -O3
 INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include
 CXXFLAGS = $(FLAGS) $(INC)
 LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis -L/System/Library/Frameworks/Accelerate.framework
