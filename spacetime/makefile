@@ -1,7 +1,8 @@
 # Compiler, compile options, and link options
-MFEM_DIR  = /Users/ben/Documents/SoftwareLibraries/mfem
-HYPRE_DIR = /Users/ben/Documents/SoftwareLibraries/hypre/src/hypre
-METIS_DIR = /Users/ben/Documents/SoftwareLibraries/metis/build/Darwin-x86_64
+LIB_DIR   = /Users/ben/Documents/SoftwareLibraries
+MFEM_DIR  = $LIB_DIR/mfem
+HYPRE_DIR = $LIB_DIR/hypre/src/hypre
+METIS_DIR = $LIB_DIR/metis/build/Darwin-x86_64
 CXX      = mpic++
 FLAGS    = -g
 INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include

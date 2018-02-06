@@ -20,10 +20,10 @@ void BDF3(const int &rank, const int &timePerProc, const int &numTimeSteps,
 void AM2(const int &rank, const int &timePerProc, const int &numTimeSteps,
           const double &dt, const bool &isTimeDependent, SparseMatrix &A,
           Vector &B, Vector &X, const int &ref_levels, const int &order);
-void AM3(const int &rank, const int &timePerProc, const int &numTimeSteps,
+void AB1(const int &rank, const int &timePerProc, const int &numTimeSteps,
           const double &dt, const bool &isTimeDependent, SparseMatrix &A,
           Vector &B, Vector &X, const int &ref_levels, const int &order);
-void AB1(const int &rank, const int &timePerProc, const int &numTimeSteps,
+void AB2(const int &rank, const int &timePerProc, const int &numTimeSteps,
           const double &dt, const bool &isTimeDependent, SparseMatrix &A,
           Vector &B, Vector &X, const int &ref_levels, const int &order);
 
@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
     std::cout << "Initialized MPI\n";
 
     // Parameters
-    bool isTimeDependent = false;
+    bool isTimeDependent = true;
     int numTimeSteps = 4;
     int ref_levels = 1;
     int order = 1;
@@ -124,6 +124,9 @@ int main(int argc, char *argv[])
     else if (ab == 1) {
         AB1(rank, timePerProc, numTimeSteps, dt, isTimeDependent, A, B, X, ref_levels, order);
     }
+    else if (ab == 2) {
+        AB2(rank, timePerProc, numTimeSteps, dt, isTimeDependent, A, B, X, ref_levels, order);
+    }
     A.Finalize(1);
 
     // Save to file by MPI rank
@@ -143,7 +146,7 @@ void getSpatialDiscretization(SparseMatrix &A, Vector &B, Vector &X, double t,
                               int ref_levels, int order)
 {
     // Read mesh from mesh file
-    const char *mesh_file = "./meshes/beam-quad.mesh";
+    const char *mesh_file = "../meshes/beam-quad.mesh";
     Mesh *mesh = new Mesh(mesh_file, 1, 1);
     int dim = mesh->Dimension();
 
@@ -189,6 +192,8 @@ void getSpatialDiscretization(SparseMatrix &A, Vector &B, Vector &X, double t,
     // Assemble bilinear form and corresponding linear system
     a->Assemble();
     a->FormLinearSystem(ess_tdof_list, x, *b, A, X, B, 1);
+
+    A *= (1.0+t);       // Scale by t to distinguish system at different times for verification
 }
 
 
@@ -209,7 +214,7 @@ void BDF1(const int &rank, const int &timePerProc, const int &numTimeSteps,
     // Allocate CSR structure.
     int rowsPerTime = T.NumRows();
     int nnzPerTime  = T.NumNonZeroElems();
-    int procNnz     = timePerProc * (nnzPerTime + rowsPerTime);     // nnzs on this processor for BDF1
+    int procNnz     = timePerProc * (nnzPerTime + rowsPerTime);     // nnzs on this processor
     int procRow     = timePerProc * rowsPerTime;
     if (tInd0 == 0) procNnz -= rowsPerTime;
 
@@ -244,8 +249,7 @@ void BDF1(const int &rank, const int &timePerProc, const int &numTimeSteps,
         int colPlusOffd  = (ti - 1)*rowsPerTime;
         int colPlusDiag  = ti*rowsPerTime;
 
-        // At time t=0, only have spatial discretization block; need to move initial
-        // conditions to RHS
+        // At time t=0, only have spatial discretization block
         if (ti == 0) {
             
             // Loop over each row in spatial discretization at time ti
@@ -338,7 +342,7 @@ void BDF2(const int &rank, const int &timePerProc, const int &numTimeSteps,
     // Allocate CSR structure.
     int rowsPerTime = T.NumRows();
     int nnzPerTime  = T.NumNonZeroElems();
-    int procNnz     = timePerProc * (nnzPerTime + 2*rowsPerTime);     // nnzs on this processor for BDF2 
+    int procNnz     = timePerProc * (nnzPerTime + 2*rowsPerTime);     // nnzs on this processor
     int procRow     = timePerProc * rowsPerTime;
     if (tInd0 == 0) procNnz -= 2*rowsPerTime;
     if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= rowsPerTime;
@@ -375,8 +379,7 @@ void BDF2(const int &rank, const int &timePerProc, const int &numTimeSteps,
         int colPlusOffd_1 = (ti - 1)*rowsPerTime;
         int colPlusOffd_2 = (ti - 2)*rowsPerTime;
 
-        // At time t=0, only have spatial discretization block; need to move initial
-        // conditions to RHS
+        // At time t=0, only have spatial discretization block
         if (ti == 0) {
             
             // Loop over each row in spatial discretization at time ti
@@ -407,8 +410,7 @@ void BDF2(const int &rank, const int &timePerProc, const int &numTimeSteps,
                 thisRow += 1;
             }
         }
-        // At time t=1, only have 1 off-diagonal block and need to move initial
-        // conditions to RHS for 2nd-order accuracy
+        // At time t=1, only have 1 off-diagonal block
         else if (ti == 1) {
             // Loop over each row in spatial discretization at time t1
             for (int i=0; i<rowsPerTime; i++) {
@@ -510,7 +512,7 @@ void BDF3(const int &rank, const int &timePerProc, const int &numTimeSteps,
     // Allocate CSR structure.
     int rowsPerTime = T.NumRows();
     int nnzPerTime  = T.NumNonZeroElems();
-    int procNnz     = timePerProc * (nnzPerTime + 3*rowsPerTime);     // nnzs on this processor for BDF2 
+    int procNnz     = timePerProc * (nnzPerTime + 3*rowsPerTime);     // nnzs on this processor
     int procRow     = timePerProc * rowsPerTime;
     if (tInd0 == 0) procNnz -= 3*rowsPerTime;
     if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= 2*rowsPerTime;
@@ -549,8 +551,7 @@ void BDF3(const int &rank, const int &timePerProc, const int &numTimeSteps,
         int colPlusOffd_2 = (ti - 2)*rowsPerTime;
         int colPlusOffd_3 = (ti - 3)*rowsPerTime;
 
-        // At time t=0, only have spatial discretization block; need to move initial
-        // conditions to RHS
+        // At time t=0, only have spatial discretization block
         if (ti == 0) {
             
             // Loop over each row in spatial discretization at time ti
@@ -581,8 +582,7 @@ void BDF3(const int &rank, const int &timePerProc, const int &numTimeSteps,
                 thisRow += 1;
             }
         }
-        // At time t=1, only have 1 off-diagonal block and need to move initial
-        // conditions to RHS for 2nd-order accuracy
+        // At time t=1, only have 1 off-diagonal block
         else if (ti == 1) {
             // Loop over each row in spatial discretization at time t1
             for (int i=0; i<rowsPerTime; i++) {
@@ -734,7 +734,7 @@ void AM2(const int &rank, const int &timePerProc, const int &numTimeSteps,
     // Allocate CSR structure.
     int rowsPerTime = Tb.NumRows();
     int nnzPerTime  = Tb.NumNonZeroElems();
-    int procNnz     = 2 * timePerProc * nnzPerTime;     // nnzs on this processor for BDF1
+    int procNnz     = 2 * timePerProc * nnzPerTime;     // nnzs on this processor
     int procRow     = timePerProc * rowsPerTime;
     if (tInd0 == 0) procNnz -= nnzPerTime;
 
@@ -903,8 +903,8 @@ void AM2(const int &rank, const int &timePerProc, const int &numTimeSteps,
             }
         }
 
-        // Change sign of pointer index
-        swap_ind *= -1;
+        // Change sign of pointer index (except for on time t=0 iteration)
+        if (ti > 0) swap_ind *= -1;
 
         // Check if sufficient data was allocated
         if (dataInd > procNnz) {
@@ -940,7 +940,7 @@ void AB1(const int &rank, const int &timePerProc, const int &numTimeSteps,
     // Allocate CSR structure.
     int rowsPerTime = T.NumRows();
     int nnzPerTime  = T.NumNonZeroElems();
-    int procNnz     = timePerProc * (nnzPerTime + rowsPerTime);     // nnzs on this processor for BDF1
+    int procNnz     = timePerProc * (nnzPerTime + rowsPerTime);     // nnzs on this processor
     int procRow     = timePerProc * rowsPerTime;
     if (tInd0 == 0) procNnz -= rowsPerTime;
 
@@ -975,8 +975,7 @@ void AB1(const int &rank, const int &timePerProc, const int &numTimeSteps,
         int colPlusOffd  = (ti - 1)*rowsPerTime;
         int colPlusDiag  = ti*rowsPerTime;
 
-        // At time t=0, only have spatial discretization block; need to move initial
-        // conditions to RHS
+        // At time t=0, only have identity block on diagonal
         if (ti == 0) {
             
             // Loop over each row in spatial discretization at time ti
@@ -1030,6 +1029,238 @@ void AB1(const int &rank, const int &timePerProc, const int &numTimeSteps,
                 thisRow += 1;
             }
         }
+
+        // Check if sufficient data was allocated
+        if (dataInd > procNnz) {
+            std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
+        }
+    }
+
+    // Build sparse matrix structure for all rows on this processor
+    A = SparseMatrix(rowptr, colinds, data, procRow, numTimeSteps*rowsPerTime);
+    if (rank == 1) std::cout << "\nBuilt mat.\n";
+}
+
+
+/* Second-order Adams-Bashforth explicit scheme */
+/* -- verified time ordering of blocks correct */
+void AB2(const int &rank, const int &timePerProc, const int &numTimeSteps,
+          const double &dt, const bool &isTimeDependent, SparseMatrix &A,
+          Vector &B, Vector &X, const int &ref_levels, const int &order)
+{
+    int tInd0 = rank*timePerProc;
+    int tInd1 = tInd0 + timePerProc -1;
+
+    // Get spatial discretization for previous time step, or first step if tInd0=0
+    SparseMatrix Ta, Tb;
+    Vector Ba, Bb, Xa, Xb;
+    if (tInd0 <= 1) {    
+        getSpatialDiscretization(Tb, Bb, Xb, 0.0, ref_levels, order);
+    }
+    else {
+        getSpatialDiscretization(Tb, Bb, Xb, dt*(tInd0-2), ref_levels, order);
+    }
+
+    // Get size/nnz of spatial discretization and total for rows on this processor.
+    // Allocate CSR structure.
+    int rowsPerTime = Tb.NumRows();
+    int nnzPerTime  = Tb.NumNonZeroElems();
+    int procNnz     = timePerProc * (2*nnzPerTime + rowsPerTime);     // nnzs on this processor
+    int procRow     = timePerProc * rowsPerTime;
+    if (tInd0 == 0) procNnz -= 2*nnzPerTime;
+    if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= rowsPerTime;
+
+    int *rowptr  = new int[procRow + 1];
+    int *colinds = new int[procNnz];
+    double *data = new double[procNnz];
+    B.SetSize(procRow);
+    X.SetSize(procRow);
+    int dataInd = 0;
+    int thisRow = 0;
+    rowptr[0] = 0;
+
+    // if (rank == 0) {
+    if (rank > -1) {
+        std::cout << "Total time steps: " << numTimeSteps << "\nSteps per proc: " << timePerProc
+                  << "\nDOFs per time step: " << rowsPerTime << "\nNnz per time: " << nnzPerTime
+                  << "\nAllocated nnz: " << procNnz << "\n";
+    }
+
+    // Set index to swap pointers to zero if spatial problem is not time dependent. Avoids
+    // rebuilding matrix each iteration. 
+    int swap_ind;
+    if (isTimeDependent) {
+        swap_ind = 1;
+    }
+    else {
+        swap_ind = 0;
+    }
+
+    // Loop over each time index and build sparse space-time matrix rows on this processor
+    for (int ti=tInd0; ti<=tInd1; ti++) {
+
+        int colPlusOffd_1 = (ti - 1)*rowsPerTime;
+        int colPlusOffd_2 = (ti - 2)*rowsPerTime;
+        int colPlusDiag = ti*rowsPerTime;
+
+        // Pointers to CSR arrays for A_{ti} and A_{ti-1}
+        int *tempRowptr_1;
+        int *tempColinds_1;
+        double *tempData_1;
+        double *Bi_1;
+        double *Xi_1;
+        int *tempRowptr_2;
+        int *tempColinds_2;
+        double *tempData_2;
+        double *Bi_2;
+
+        // Swap pointer between A_{ti} and A_{ti-1} each iteration. Makes so that only have
+        // to build one spatial matrix each iteration. Matrix at ti for previous iteration
+        //  is used as ti-1 on this iteration.
+        if (ti <= 1) {
+            tempRowptr_1  = Tb.GetI();
+            tempColinds_1 = Tb.GetJ();
+            tempData_1    = Tb.GetData();
+            Bi_1          = &Bb[0];
+            Xi_1          = &Xb[0];
+        }
+        else if (swap_ind > 0) {
+            getSpatialDiscretization(Ta, Ba, Xa, dt*(ti-1), ref_levels, order); 
+            tempRowptr_1  = Ta.GetI();
+            tempColinds_1 = Ta.GetJ();
+            tempData_1    = Ta.GetData();
+            Bi_1          = &Ba[0];
+            Xi_1            = &Xa[0];
+            tempRowptr_2  = Tb.GetI();
+            tempColinds_2 = Tb.GetJ();
+            tempData_2    = Tb.GetData();
+            Bi_2          = &Bb[0];
+        }
+        else if (swap_ind < 0) {
+            getSpatialDiscretization(Tb, Bb, Xb, dt*(ti-1), ref_levels, order); 
+            tempRowptr_1  = Tb.GetI();
+            tempColinds_1 = Tb.GetJ();
+            tempData_1    = Tb.GetData();
+            Bi_1          = &Bb[0];
+            Xi_1            = &Xb[0];
+            tempRowptr_2  = Ta.GetI();
+            tempColinds_2 = Ta.GetJ();
+            tempData_2    = Ta.GetData();
+            Bi_2          = &Ba[0];
+        }
+        else {
+            tempRowptr_1  = Tb.GetI();
+            tempColinds_1 = Tb.GetJ();
+            tempData_1    = Tb.GetData();
+            Bi_1          = &Bb[0];
+            tempRowptr_2  = Tb.GetI();
+            tempColinds_2 = Tb.GetJ();
+            tempData_2    = Tb.GetData();            
+            Bi_2          = &Bb[0];
+            Xi_1            = &Xb[0];
+        }
+
+        // At time t=0, only have identity block on diagonal
+        if (ti == 0) {
+            
+            // Loop over each row in spatial discretization at time ti
+            for (int i=0; i<rowsPerTime; i++) {
+
+                // Add identity as diagonal block, u_ti
+                colinds[dataInd] = colPlusDiag + i;
+                data[dataInd] = 1.0;
+                dataInd += 1;
+
+                // Assume user implements boundary conditions to rhs
+                B[thisRow] = 0.0;
+                X[thisRow] = Xi_1[i];
+
+                // One nonzero for this row
+                rowptr[thisRow+1] = rowptr[thisRow] + 1;
+                thisRow += 1;
+            }
+        }
+        else if (ti == 1) {
+            // Loop over each row in spatial discretization at time ti
+            for (int i=0; i<rowsPerTime; i++) {
+
+                // Add this row of spatial discretization to first off-diagonal block
+                for (int j=tempRowptr_1[i]; j<tempRowptr_1[i+1]; j++) {
+
+                    // Add identity to diagonal, (I + dt*L), otherwise data is dt*L
+                    //     - NOTE: assume here that spatial disc. has nonzero diagonal
+                    if (i == tempColinds_1[j]) {
+                        data[dataInd] = -1 + 3.0*dt*tempData_1[j] / 2.0;
+                    }
+                    else {
+                        data[dataInd] = 3.0*dt*tempData_1[j] / 2.0;
+                    }
+                    colinds[dataInd] = colPlusOffd_1 + tempColinds_1[j];
+                    dataInd += 1;
+                }
+
+                // Add identity as diagonal block, u_ti
+                colinds[dataInd] = colPlusDiag + i;
+                data[dataInd] = 1.0;
+                dataInd += 1;
+
+                // Add right hand side and initial guess for this row to global problem
+                B[thisRow] = 3.0*dt*Bi_1[i] / 2.0;
+                X[thisRow] = Xi_1[i];
+
+                // Total nonzero for this row on processor is one for diagonal block
+                // and the total nnz in this row of T (tempRowptr[i+1] - tempRowptr[i]).
+                rowptr[thisRow+1] = rowptr[thisRow] + 1 + tempRowptr_1[i+1] - tempRowptr_1[i];
+                thisRow += 1;
+            }
+        }
+        else {
+            // Loop over each row in spatial discretization at time ti
+            for (int i=0; i<rowsPerTime; i++) {
+
+                // Add row for spatial discretization of second off-diagonal block 
+                for (int j=tempRowptr_2[i]; j<tempRowptr_2[i+1]; j++) {
+
+                    // Add spatial block -dt*Lu_{ti-2}
+                    data[dataInd] = -dt*tempData_2[j] / 2.0;
+                    colinds[dataInd] = colPlusOffd_2 + tempColinds_2[j];
+                    dataInd += 1;
+                }
+
+                // Add this row of spatial discretization to first off-diagonal block
+                for (int j=tempRowptr_1[i]; j<tempRowptr_1[i+1]; j++) {
+
+                    // Add identity to diagonal, (I + dt*L/2), otherwise data is dt*L/2
+                    //     - NOTE: assume here that spatial disc. has nonzero diagonal
+                    if (i == tempColinds_1[j]) {
+                        data[dataInd] = -1 + 3.0*dt*tempData_1[j] / 2.0;
+                    }
+                    else {
+                        data[dataInd] = 3.0*dt*tempData_1[j] / 2.0;
+                    }
+                    colinds[dataInd] = colPlusOffd_1 + tempColinds_1[j];
+                    dataInd += 1;
+                }
+
+                // Add identity as diagonal block, u_ti
+                colinds[dataInd] = colPlusDiag + i;
+                data[dataInd] = 1.0;
+                dataInd += 1;
+
+                // Add right hand side and initial guess for this row to global problem
+                B[thisRow] = dt*(3.0*Bi_1[i] - Bi_2[i]) / 2.0;
+                X[thisRow] = Xi_1[i];
+
+                // Total nonzero for this row on processor is one for diagonal plue the
+                // total nnz in this row the spatial discretization at time ti and ti-1.
+                rowptr[thisRow+1] = rowptr[thisRow] + (tempRowptr_1[i+1] - tempRowptr_1[i]) +
+                                    (tempRowptr_2[i+1] - tempRowptr_2[i]) + 1;
+                thisRow += 1;
+            }
+        }
+
+        // Change sign of pointer index (except for on time t=0 and t=1 iterations)
+        if (ti > 1) swap_ind *= -1;
 
         // Check if sufficient data was allocated
         if (dataInd > procNnz) {
