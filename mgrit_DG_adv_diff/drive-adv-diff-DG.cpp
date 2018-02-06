@@ -385,7 +385,7 @@ DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[])
    num_procs_x    = 1;
 
    // set defaults for the (optional) mesh/refinement inherited options
-   mesh_file       = "../../mfem/data/periodic-hexagon.mesh";
+   mesh_file       = "../meshes/periodic-hexagon.mesh";
    ser_ref_levels  = 2;
    par_ref_levels  = 0;
    AddMeshOptions();
