@@ -1,3 +1,13 @@
 # Add any directories, files, or patterns you don't want to be tracked by version control
 *.pdf
 *.mm
+*DS_Store
+*.o
+*.gz
+*.aux
+*.log
+*.synctex
+*.blg
+*dSYM
+*.out*
+
