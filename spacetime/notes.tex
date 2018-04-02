@@ -16,11 +16,13 @@
 
 
 \begin{document}
+\allowdisplaybreaks
+
 
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
-\section{Space-time discretizations}
+\section{Space-time discretizations}\label{sec:disc}
 
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
@@ -78,10 +80,24 @@ accurate, while Adams-Moulton is $O(\Delta t^3)$.
 
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
+\subsection{Matrix structure}
+
+Are these matrices M-matrices?? May help motivate AMG.. If $\mathcal{L}$ is an M-matrix, BDF1/AM1 also is, but none of the others.
+M-matrix must have non-positive off-diagonals.
+
+If $\mathcal{L}$ is symmetric, $A^*A$ and $AA^*$ are almost identical, thus (hopefully) implying the left and right singular vectors are
+similar. This would motivate a $P^*AP$ approach, which seems to be working well on diffusion. For BDF-type schemes, $A^*A$ and $AA^*$
+seem to differ only in the first and last $k$ time steps, where $k$ is the order of the time integration.
+
+Real symmetric matrix has SVD equivalent to eigendecomposition, with signs swapped on 
+
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
 \subsection{BDF}
 
 Suppose the spatial discretization at each time step has $n_{\mathbf{x}}$ degrees of freedom (over all dimensions) and the time domain
-is discretized into $n_t$ time steps of size $\Delta t$. Let $n_p$ denote the number of processors.
+is discretized into $n_t$ time steps of size $\Delta t$. Let $N_p$ denote the number of processors.
 
 
 %int HYPRE IJMatrixInitialize (HYPRE IJMatrix matrix)
@@ -96,10 +112,10 @@ is discretized into $n_t$ time steps of size $\Delta t$. Let $n_p$ denote the nu
 %
 
 % ------------------------------------------------------------------------------------------------------- %
-\subsubsection{Assume $n_p | n_t$}
+\subsubsection{Assume $N_p | n_t$}
 % MPI ranks are zero-indexed. 
 
-For an initial implementation, assume that $n_p < n_t$ and $n_p | n_t$ ($n_p$ divides $n_t$), where $P_T = \frac{n_t}{n_p}$. This is nice
+For an initial implementation, assume that $N_p < n_t$ and $N_p | n_t$ ($N_p$ divides $n_t$), where $P_T = \frac{n_t}{N_p}$. This is nice
 because no time steps (and the corresponding matrix blocks) are split over multiple processors. That is, each processor will create its own
 spatial discretizaion(s), and we do not need to split these over processors. Assume we are using zero-indexing. 
 
@@ -115,7 +131,7 @@ takes on the CSR structure of the spatial discretization, with an extra $k$ nonz
 \item Processor $p_{\ell}$ has time steps $\{P_T\ell,...,P_T(\ell+1)-1\}$. 
 \item When adding spatial discretization matrices to the global structure, we will need to adjust the column indices. The $j$th block column
 will have column indices $+jn_{\mathbf{x}}$. 
-\item Suppose $\frac{n_t}{n_p} = q$. Then we will have $q$ time steps (i.e., block rows) stored on each processor and $qn_{\mathbf{x}}$
+\item Suppose $\frac{n_t}{N_p} = q$. Then we will have $q$ time steps (i.e., block rows) stored on each processor and $qn_{\mathbf{x}}$
 total rows. 
 \item At time $t_0$ (first row in $\mathcal{A}$), there is only a diagonal block, consisting of the spatial discretization. Right hand side must
 account for initial conditions. \tcb{How do we handle first time step(s) with high-order BDF scheme?}
@@ -123,14 +139,20 @@ account for initial conditions. \tcb{How do we handle first time step(s) with hi
 \end{itemize}
 
 
-
 % ------------------------------------------------------------------------------------------------------- %
-\subsubsection{Assume $n_p > n_t$ and $n_t | n_p$}
+\subsubsection{Assume $N_p > n_t$ and $n_t | N_p$}
 % MPI ranks are zero-indexed. 
 
 Now suppose there are more processors than time steps. For a large, 2d- or 3d-space problem, this is entirely possible.
-Here we make a similar assumption as above, this time that $n_t | n_p$. Then, one time step will be split over multiple
-processors. 
+Here we make a similar assumption as above, this time that $n_t | N_p$. Then, one time step will be split over multiple
+processors. Let $N_p$ be the number of processors, $n_t$ the number of time steps, and $N_{p_x} = \frac{N_p}{n_t}$
+be the number of processors per time index (i.e., number of processors per spatial discretization). For rank $r_i$, we
+define communication groups 
+\begin{align*}
+\mathcal{G}_i = \left\{r_k \text{ $\Big|$ } \left\lfloor \frac{r_k}{N_{p_x}} \right\rfloor == i\right\}.
+\end{align*}
+These groups will be the communication packages that we build spatial discretizations over. 
+
 
 
 % ------------------------------------------------------------------------------------------------------- %
@@ -152,7 +174,323 @@ such that the first step(s) are of an appropriate order of accuracy. This should
 \section{Tensor-product structure?}
 
 
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\newpage
+\section{Time integration}
 
+Using a method-of-lines approach, we typically formulate an initial value problem (IVP) as an ode in time,
+with a general form along the lines of
+\begin{align}
+\mathbf{u}_t(t) = \mathbf{f}(\mathbf{u}, t) = \mathbf{k}(\mathbf{u},t) + \mathbf{g}(\mathbf{u},t), \label{eq:ode}
+\end{align}
+where $\mathbf{u}(t)$ is the full spatial solution at time $t$ and we break the right-hand side $\mathbf{f}$ into
+temporally stiff terms, $\mathbf{k}$, and non-stiff terms, $\mathbf{g}$. Then, we rewrite \eqref{eq:ode} as
+\begin{align}
+\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) & = \mathcal{G}(\mathbf{u},t),\label{eq:imp_exp}
+\end{align}
+where $\mathcal{F}$ is the implicit part of our operator, typically chosen to correspond with the stiff part of \eqref{eq:ode},
+which is integrated implicitly, and $\mathcal{G}$ is the explicit part of our operator, which is chosen to correspond with non-stiff
+terms in \eqref{eq:ode}. Equation \eqref{eq:imp_exp} is a differential algebraic equation (DAE). The following table, taken from the
+PetSc manual, gives a nice overview of how $\mathcal{F}$ and $\mathcal{G}$ are defined for various circumstances: 
+
+%
+\begin{table}[h!]
+\small
+\centering
+\begin{tabular}{l l l} \hline
+$\mathbf{u}_t = \mathbf{g}(\mathbf{u},t)$  & non-stiff ODE & $\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) = \mathbf{u}_t$, 
+	\\&& \hspace{3.5ex}$\mathcal{G}(\mathbf{u},t) = \mathbf{g}(\mathbf{u},t)$ \\
+$\mathbf{u}_t = \mathbf{k}(\mathbf{u},t)$  & stiff ODE & $\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) = \mathbf{u}_t - \mathbf{k}(\mathbf{u},t)$, 
+	\\&& \hspace{3.5ex}$\mathcal{G}(\mathbf{u},t) = \mathbf{0}$ \\
+$M\mathbf{u}_t = \mathbf{g}(\mathbf{u},t)$  & non-stiff ODE with & $\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) = \mathbf{u}_t$, 
+	\\& mass matrix& \hspace{3.5ex}$\mathcal{G}(\mathbf{u},t) = M^{-1}\mathbf{g}(\mathbf{u},t)$ \\
+$M\mathbf{u}_t = \mathbf{k}(\mathbf{u},t)$  & stiff ODE with mass & $\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) = M\mathbf{u}_t - \mathbf{k}(\mathbf{u},t)$, 
+	\\&matrix & \hspace{3.5ex}$\mathcal{G}(\mathbf{u},t) = \mathbf{0}$ \\\hline
+$\mathbf{u}_t = \mathbf{k}(\mathbf{u},t) + \mathbf{g}(\mathbf{u},t)$  & stiff/non-stiff ODE &  $\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) =
+	\mathbf{u}_t - \mathbf{k}(\mathbf{u},t)$, \\&& \hspace{3.5ex}$\mathcal{G}(\mathbf{u},t) = \mathbf{g}(\mathbf{u},t)$ \\\hline
+$M\mathbf{u}_t = \mathbf{k}(\mathbf{u},t) + \mathbf{g}(\mathbf{u},t)$  & stiff/non-stiff ODE &  $\mathcal{F}(\mathbf{u},\mathbf{u}_t,t) =
+	M\mathbf{u}_t - \mathbf{k}(\mathbf{u},t)$, \\&with mass matrix& \hspace{3.5ex}$\mathcal{G}(\mathbf{u},t) = M^{-1}\mathbf{g}(\mathbf{u},t)$ \\\hline
+\end{tabular}
+\end{table}
+%
+
+Given the decomposition in \eqref{eq:imp_exp}, many time-stepping schemes can be formulated based on the action of
+$\mathcal{G}$ and $\mathcal{F}^{-1}$.
+
+\textbf{Example:} backward Euler\\
+\indent Solve for $k = f(\mathbf{x} + \delta t\mathbf{k}, t + \delta t)$ \\
+\indent $\mathbf{x} =  \mathbf{x} + \delta t \mathbf{k}$.
+
+%Note, number of iterations with GMRES and no block scaling is, e.g., 225. Block-diagonal scaling reduces
+%to 19, AIR reduces to 5. 
+%
+%
+%%%%
+%\begin{table}[h!]
+%\centering
+%{\footnotesize
+%\begin{tabular}{| c r r r r r r c c c|} \hline
+%order & np & DOFs & loc DOFs & nnz & OC & dt=dx & $\rho$ & it/solve & solve/step \\\hline
+%2 & 4 & 110592 & 27648 & 4976640 & 1.41 & 0.0145 & 0.0041 & 4 & 1 \\
+%2 & 16 & 442368 & 28224 & 19906560 & 1.39 & 0.0072 & 0.0039 & 4 & 1 \\
+%2 & 64 & 1769472 & 27648 & 79626240 & 1.39 & 0.0036 & 0.0042 & 4 & 1 \\
+%2 & 256 & 7077888 & 27648 & 318504960 & 1.38 & 0.0018 & 0.0041 & 4 & 1 \\
+%3 & 4 & 196608 & 49152 & 15728640 & 1.46 & 0.0145 & 0.0063 & 4 & 2 \\
+%3 & 16 & 786432 & 50176 & 62914560 & 1.42 & 0.0072& 0.0069 & 4 & 2 \\
+%3 & 64 & 3145728 & 49152 & 251658240 & 1.41 & 0.0036 & 0.0068 & 4 & 2 \\
+%3 & 256 & 12582912 & 49152 & 1006632960 & 1.39 & 0.0018 & 0.0067 & 4 & 2 \\
+%4 & 4 & 307200 & 76800 & 38400000 & 1.61 & 0.0145 & 0.0111 & 5 & 3 \\
+%4 & 16 & 1228800 & 78400 & 153600000 & 1.53 & 0.0072 & 0.0097 & 4 & 3 \\
+%4 & 64 & 4915200 & 76800 & 614400000 & 1.48 & 0.0036 & 0.0121 & 5 & 3 \\
+%4 & 256 & 19660800 & 76800 & -1837367296 & 1.46 & 0.0018 & 0.0098 & 4 & 3 \\\hline
+%\end{tabular}
+%}
+%\caption{Results applying AIR to implicit time-stepping schemes with DG advection (MFEM ex. 9). 
+%Here, we use A-stable SDIRK time integration schemes, and pick the order of time integration equal to
+%the order of spatial discretization, and set $dt = dx$, to get the same accuracy in space and time. Solves
+%are done without Krylov acceleration, with a relative residual tolerance of $10^{-8}$. Higher-order SDIRK
+%schemes require solving multiple linear systems, as shown in the solves/step column. Convergence factors
+%are $< 0.012$ in all iterations here. Convergence can degrade if we increase, for example, $dt \gg \sqrt{dx}$.
+%In general such a scenario is not likely to come up; however, for parallel-in-time with MGRiT, this may come up
+%if we were to coarsen in time and not in space, and we will have to test if spatial coarsening is necessary.}
+%\end{table}
+
+
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\newpage
+\section{Block AIR in time domain}
+
+Consider some linear multistep method as discussed in Section \ref{sec:disc}. Let us consider schemes
+with at most four stages (e.g., BDF3 or AM4). The space-time matrix will take the form
+%
+\begin{align*}
+A = 
+\begin{pmatrix}
+	A_{1} \\ 
+	B_{1} & A_2 \\ 
+	C_1 & B_2 & A_3 \\
+	D_1 & C_2 & B_3 & A_4 \\
+	& \ddots & \ddots & \ddots & \ddots \\
+	& & D_{n-3} & C_{n-2} & B_{n-1} & A_n
+\end{pmatrix},
+\end{align*}
+%
+for some sparse matrices $A_i,B_i,C_d,D_i$. In such temporal discretizations, the sub-diagonal is
+almost always the largest ``weight'' in a given row. Because of this, semi-coarsening in the time
+dimension is a natural choice. Without loss of generality, suppose $n$ is even, and we choose the
+first row as an F-point. Then, sub-matrices take the following form:
+%
+\begin{align*}
+A_{ff} & = 
+\begin{pmatrix}
+	A_{1} \\ 
+	C_1 & A_3 \\
+	& C_3 & A_5 \\
+	& & \ddots & \ddots  \\
+	& & & C_{n-3} & A_{n-1}
+\end{pmatrix},
+\hspace{6ex}
+A_{fc} = 
+\begin{pmatrix}
+	 \mathbf{0} & \\
+	B_2 & \ddots\\
+	D_2 & B_4  \\
+	& D_4 & B_6  \\
+	& & \ddots & \ddots & \ddots\\
+	& & & D_{n-4} & B_{n-2} &  \mathbf{0}
+\end{pmatrix},
+\\
+A_{cf} & = 
+\begin{pmatrix}
+	B_{1} \\ 
+	D_1 & B_3 \\
+	& D_3 & B_5 \\
+	&& \ddots & \ddots \\
+	&& & D_{n-3} & B_{n-1}
+\end{pmatrix},
+\hspace{4ex}
+A_{cc} = 
+\begin{pmatrix}
+	A_{2} \\ 
+	C_2 & A_4 \\
+	& C_4 & A_6 \\
+	& & \ddots & \ddots  \\
+	& & & C_{n-2} & A_{n}
+\end{pmatrix}.
+\end{align*}
+%
+Note that we could also swap C-points and F-points. This would lead to a different framework, which will be
+explored later. Let $A_{ff} = D_{ff} + L_{ff} = (I - (-L_{ff})D_{ff}^{-1})D_{ff}$. Then, a Neumann approximation 
+can be used to approximate $A_{ff}^{-1}$ and an approximation to $R_{\textnormal{ideal}}$ given by
+%
+\begin{align*}
+R = \begin{pmatrix} -A_{cf}\mathcal{D}_{ff}^{-1}(I - L_{ff}D_{ff}^{-1} + (L_{ff}D_{ff}^{-1})^2 + ...) & I\end{pmatrix},
+\end{align*}
+%
+where $\mathcal{D}_{ff}$ is the diagonal block of $A_{ff}$. 
+Let $Z_i$ denote the F-point block of $R$ for a degree-$i$ truncated Neumann approximation. Then
+%
+{\footnotesize
+\begin{align*}
+Z_0 & = -
+\begin{pmatrix}
+	B_{1}A_1^{-1} \\ 
+	D_1A_1^{-1} & B_3A_3^{-1} \\
+	& D_3A_3^{-1} & B_5A_5^{-1} \\
+	&& \ddots & \ddots \\
+	&& & D_{n-3}A_{n-3}^{-1} & B_{n-1}A_{n-1}^{-1}
+\end{pmatrix}, \\
+Z_1& = -
+\begin{pmatrix}
+	B_{1}A_1^{-1} \\ 
+	D_1A_1^{-1} & B_3A_3^{-1} \\
+	& D_3A_3^{-1} & B_5A_5^{-1} \\
+	&& \ddots & \ddots \\
+	&& & D_{n-3}A_{n-3}^{-1} & B_{n-1}A_{n-1}^{-1}
+\end{pmatrix}
+\begin{pmatrix}
+	I \\ 
+	-C_1A_1^{-1} & I \\
+	& -C_3A_3^{-1} & I \\
+	& & \ddots & \ddots  \\
+	& & & -C_{n-3}A_{n-3}^{-1} & I
+\end{pmatrix} \\
+& = -
+\begin{pmatrix}
+	B_{1}A_1^{-1} \\ 
+	D_1A_1^{-1} - B_3A_3^{-1}C_1A_1^{-1} & B_3A_3^{-1} \\
+	-D_3A_3^{-1}C_1A_1^{-1} & D_3A_3^{-1} - B_5A_5^{-1}C_3A_3^{-1} & B_5A_5^{-1} \\
+	& \ddots & \ddots & \ddots \\
+%	& & D_{n-3}A_{n-3}^{-1}C_{n-5} & D_{n-3}A_{n-3}^{-1} + B_{n-1}A_{n-1}^{-1}C_{n-3} & B_{n-1}A_{n-1}^{-1}
+\end{pmatrix}
+\end{align*}
+}%
+For ease of notation and also likely important for a clean derivation, suppose we have a PDE with no
+time-dependent coefficients. This means $A_1 = A_2 = ...$, $B_1 = B_2 = ...$, etc. \todo{What about
+boundary conditions? Assuming we can move to rhs; need to verify.} Then
+%
+\begin{align*}
+Z_0 & = -
+\begin{pmatrix}
+	BA^{-1} \\ 
+	DA^{-1} & BA^{-1} \\
+	& \ddots & \ddots \\
+	& & DA^{-1} & BA^{-1}
+\end{pmatrix}, \\
+Z_1 & = -
+\begin{pmatrix}
+	BA^{-1} \\ 
+	DA^{-1} - BA^{-1}CA^{-1} & BA^{-1} \\
+	-DA^{-1}CA^{-1} & DA^{-1} - BA^{-1}CA^{-1} & BA^{-1} \\
+	& \ddots & \ddots & \ddots \\
+	& & -DA^{-1}CA^{-1} & DA^{-1} - BA^{-1}CA^{-1} & BA^{-1}
+\end{pmatrix}
+\end{align*}
+%
+Now, let us define $P$ as the famous one-point interpolation that has worked well for AIR, where we
+interpolate each F-point from its strongest C-neighbor:
+%
+\begin{align*}
+P = \begin{pmatrix} W \\ I \end{pmatrix} = 
+\begin{pmatrix}
+\mathbf{0} \\ 
+I & \mathbf{0} \\
+& \ddots & \ddots\\
+& & I & \mathbf{0} \\ \hline
+I \\
+& \ddots \\
+& & \ddots \\
+& & & I
+\end{pmatrix}
+\end{align*}
+%
+Computing $\mathcal{K} := RAP$ in block form, we have $\mathcal{K} = RAP = ZA_{ff}W + A_{cf}W 
++ ZA_{fc}+A_{cc}$. Looking at each of these terms, we have
+%
+\begin{align*}
+A_{cc} &= 
+\begin{pmatrix}
+	A \\ 
+	C & A \\
+	& \ddots & \ddots  \\
+	& & C & A
+\end{pmatrix},
+\\
+Z_0A_{fc} &=-
+\begin{pmatrix}
+	\mathbf{0} \\
+	BA^{-1}B  & \mathbf{0} \\ 
+	DA^{-1}B + BA^{-1}D & BA^{-1}B & \mathbf{0} \\
+	& \ddots & \ddots & \ddots \\
+	& & DA^{-1}B + BA^{-1}D & BA^{-1}B & \mathbf{0} 
+\end{pmatrix},
+\\
+Z_1A_{fc} & =
+\begin{pmatrix}
+0
+\end{pmatrix}, 
+\\
+A_{cf}W & = 
+\begin{pmatrix}
+	\mathbf{0} \\
+	B  & \mathbf{0} \\ 
+	D & B & \mathbf{0} \\
+	& \ddots & \ddots & \ddots \\
+	& & D & B & \mathbf{0} 
+\end{pmatrix},
+\hspace{4ex}
+A_{ff}W = 
+\begin{pmatrix}
+	\mathbf{0} \\
+	A & \mathbf{0} \\ 
+	C & A & \mathbf{0}\\
+	& \ddots & \ddots & \ddots  \\
+	& & C & A & \mathbf{0}
+\end{pmatrix},
+\\
+Z_0A_{ff}W & = -
+\begin{pmatrix}
+	\mathbf{0} \\
+	B & \mathbf{0} \\ 
+	D + BA^{-1}C & B & \mathbf{0} \\
+	DA^{-1}C & D + BA^{-1}C & B & \mathbf{0} \\
+	& \ddots & \ddots & \ddots & \ddots \\
+	& & DA^{-1}C & D + BA^{-1}C & B & \mathbf{0}
+\end{pmatrix},
+\\
+Z_1A_{ff}W & = -
+\begin{pmatrix}
+	\mathbf{0} \\
+	B & \mathbf{0} \\ 
+	D & B & \mathbf{0} \\
+	-BA^{-1}CA^{-1}C & D & B & \mathbf{0} \\
+	-DA^{-1}CA^{-1}C & -BA^{-1}CA^{-1}C & D & B & \mathbf{0} \\
+	& \ddots & \ddots & \ddots & \ddots & \ddots \\
+\end{pmatrix},
+\end{align*}
+%
+
+
+Coarse-grid operators then take the form
+%
+\begin{align*}
+\mathcal{K}_0 & =
+\begin{pmatrix}
+	A \\
+	C - BA^{-1}B& A \\ 
+	-BA^{-1}C & C- BA^{-1}B & A \\
+	- DA^{-1}C & - BA^{-1}C & C - BA^{-1}B & A \\
+	& \ddots & \ddots & \ddots & \ddots \\
+	& & - DA^{-1}C & -BA^{-1}C & C - BA^{-1}B & A
+\end{pmatrix},
+\end{align*}
+%
+\tcb{$\mathcal{K}_0$ isn't quite finished.}
 
 \end{document}
 

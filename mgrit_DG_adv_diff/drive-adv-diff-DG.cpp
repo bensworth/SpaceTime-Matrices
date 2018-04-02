@@ -34,6 +34,11 @@
 // Description:   Solves (a) scalar ODE problems, and (b) the 2D/3D heat equation
 
 
+// TODO:
+//    - Need to save block diag inverse on each level in hierarchy
+//    - What are Arnoldi spaces for
+
+
 #include "braid_mfem.hpp"
 #include "mfem_arnoldi.hpp"
 #include "hypre_extra.hpp"
@@ -56,6 +61,18 @@ double u0_function(Vector &x);
 // Inflow boundary condition
 double inflow_function(Vector &x);
 
+struct AIR_parameters {
+   int distance;
+   std::string prerelax;
+   std::string postrelax;
+   double strength_tol;
+   int interp_type;
+   int relax_type;
+   double filterA_tol;
+   int coarsening;
+   double solve_tol;
+   int use_gmres;
+};
 
 /** A time-dependent operator for the right-hand side of the ODE. The DG weak
     form of du/dt = v.grad(u) is M du/dt = K u + b, where M and K are the mass
@@ -65,18 +82,19 @@ double inflow_function(Vector &x);
 class FE_Evolution : public TimeDependentOperator
 {
 private:
-   HypreParMatrix &M, &K;
+   HypreParMatrix &M, &K; // T = M - dt K;
    const Vector &b;
    HypreSmoother M_prec;
    CGSolver M_solver;
 
    mutable Array<double> dts;
-   mutable Array<HypreParMatrix*> B; // B = M - dt*K, for ImplicitSolve
+   mutable Array<HypreParMatrix*> T; // T = M - dt*K, for ImplicitSolve
    mutable Array<Operator*> B_prec;
    mutable Array<Solver*> B_solver;
    int prec_type;
 
    mutable Vector z; // auxiliary vector
+   AIR_parameters &AIR;
 
    int GetDtIndex(double dt) const;
 
@@ -134,7 +152,7 @@ class DGAdvectionApp : public MFEMBraidApp
 {
 protected:
    DGAdvectionOptions &options;
-
+   AIR_parameters &AIR_opt;
    DG_FECollection fe_coll;
 
    VectorFunctionCoefficient velocity;
@@ -193,29 +211,25 @@ int main(int argc, char *argv[])
    cout.precision(precision);
 
    // Parse command line options
-   DGAdvectionOptions opts(argc, argv);
+   AIR_parameters AIR0 = {2, "", "FFF", 0.005, 100, 0, 1e-4, 22, 1e-10, 0};
+   DGAdvectionOptions opts(argc, argv, AIR0);
    // Check for errors
-   if (!opts.Good())
-   {
-      if (myid == 0)
-      {
+   if (!opts.Good()) {
+      if (myid == 0) {
          opts.PrintUsage(cout);
       }
       MPI_Finalize();
       return 1;
    }
    // Print the used options
-   if (myid == 0)
-   {
+   if (myid == 0) {
       opts.PrintOptions(cout);
    }
 
    // Load the mesh and refine it in each processor (serial refinement)
    Mesh *mesh = opts.LoadMeshAndSerialRefine();
-   if (!mesh)
-   {
-      if (myid == 0)
-      {
+   if (!mesh) {
+      if (myid == 0) {
          cerr << "\nError loading mesh file: " << opts.mesh_file
               << '\n' << endl;
       }
@@ -224,8 +238,7 @@ int main(int argc, char *argv[])
    }
 
    // If the mesh is NURBS, convert it to curved mesh
-   if (mesh->NURBSext)
-   {
+   if (mesh->NURBSext) {
       mesh->SetCurvature(std::max(opts.order, 1));
    }
 
@@ -239,7 +252,7 @@ int main(int argc, char *argv[])
    delete mesh;
 
    // Create and initialize a DGAdvectionApp (including parallel refinement)
-   DGAdvectionApp app(opts, comm_t, pmesh);
+   DGAdvectionApp app(opts, AIR0, comm_t, pmesh);
 
    // Run a Braid simulation
    BraidCore core(comm, &app);
@@ -255,8 +268,9 @@ int main(int argc, char *argv[])
 
 // Implementation of class FE_Evolution
 FE_Evolution::FE_Evolution(HypreParMatrix &_M, HypreParMatrix &_K,
-                           const Vector &_b)
+                           const Vector &_b, AIR_parameters &AIR_opt)
    : TimeDependentOperator(_M.Height()),
+   AIR(AIR_opt)
      M(_M), K(_K), b(_b), M_solver(M.GetComm()), z(_M.Height())
 {
    M_prec.SetType(HypreSmoother::Jacobi);
@@ -272,8 +286,7 @@ FE_Evolution::FE_Evolution(HypreParMatrix &_M, HypreParMatrix &_K,
 
 FE_Evolution::~FE_Evolution()
 {
-   for (int i = dts.Size()-1; i >= 0; i--)
-   {
+   for (int i = dts.Size()-1; i >= 0; i--) {
       delete B_solver[i];
       delete B_prec[i];
       delete B[i];
@@ -282,64 +295,44 @@ FE_Evolution::~FE_Evolution()
 
 int FE_Evolution::GetDtIndex(double dt) const
 {
-   for (int i = 0; i < dts.Size(); i++)
-   {
-      if (std::abs(dts[i]-dt) < 1e-10*dt)
-      {
+   // If this dt has been used before, solver exists; return index
+   for (int i = 0; i < dts.Size(); i++) {
+      if (std::abs(dts[i]-dt) < 1e-10*dt) {
          return i;
       }
    }
-   // cout << "\nConstructing (M - dt K) and solver for dt = " << dt << endl;
+
+   // Otherwise, build matrix corresponding to (M - dt*K) d = K*u + b
+   // TODO : scale by block-diag inverse
    dts.Append(dt);
-   B.Append(new HypreParMatrix(hypre_ParCSRMatrixAdd(M, K)));
-   HypreParMatrix &B_new = *B.Last();
-   hypre_ParCSRMatrixSetConstantValues(B_new, 0.0);
-   hypre_ParCSRMatrixSum(B_new, 1.0, M);
-   hypre_ParCSRMatrixSum(B_new, -dt, K);
+   T.Append(HypreParMatrixAdd(1.0, M, -1.0*dt, K));
+   HypreParMatrix &T_new = *T.Last();
 
-   HypreSolver *B_hs = NULL;
-   Solver *B_prec_new = NULL;
-   Solver *B_solver_new = NULL;
-   if (prec_type == 0)
-   {
-      HypreParaSails *prec = new HypreParaSails(B_new);
-      HYPRE_ParaSailsSetLogging(*prec, 0);
-      B_prec_new = B_hs = prec;
-   }
-   else if (prec_type == 1)
-   {
-      HypreBoomerAMG *prec = new HypreBoomerAMG(B_new);
-      prec->SetPrintLevel(0);
-      B_prec_new = B_hs = prec;
-   }
-   else
-   {
-#ifdef MFEM_USE_SUITESPARSE
-      SparseMatrix B_new_diag;
-      B_new.GetDiag(B_new_diag); // B_new_diag is just a wrapper for the data
-      SparseMatrix *diag_copy = new SparseMatrix(B_new_diag);
-      diag_copy->SortColumnIndices();
-      B_prec.Append(diag_copy);
-      UMFPackSolver *solver = new UMFPackSolver(*diag_copy);
-      B_solver_new = solver;
-#else
-      MFEM_ABORT("MFEM was not compiled with SuiteSparse support!");
-#endif
-   }
-   if (B_prec_new) { B_prec.Append(B_prec_new); }
+   // Build AIR solver
+   HypreBoomerAMG *AMG_solver = new HypreBoomerAMG(T_new);
+   AMG_solver->SetPrintLevel(0);
+   AMG_solver->SetAIROptions(AIR.distance, AIR.prerelax, AIR.postrelax,
+                             AIR.strength_tol, AIR.interp_type, AIR.relax_type,
+                             AIR.filterA_tol, AIR.coarsening);
 
-   if (!B_solver_new)
-   {
-      HypreGMRES *solver = new HypreGMRES(B_new);
-      solver->SetTol(1e-12);
-      solver->SetMaxIter(1000);
-      solver->SetPrintLevel(0);
-      solver->SetPreconditioner(*B_hs);
-      solver->iterative_mode = false;
-      B_solver_new = solver;
+   // Use AMG solver with no Krylov acceleration, add to array solvers
+   if (!AIR.use_gmres) {
+      AMG_solver->SetTol(AIR.solve_tol);
+      AMG_solver->SetMaxIter(AIR.maxiter);
+      T_solver.Append(AMG_solver);
    }
-   B_solver.Append(B_solver_new);
+   // Build GMRES solver with AIR preconditioner, add to array solvers
+   else {
+      HypreGMRES *GMRES_solver = new HypreGMRES(T_new);
+      GMRES_solver->SetTol(AIR.solve_tol);
+      GMRES_solver->SetMaxIter(AIR.maxiter);
+      GMRES_solver->SetPrintLevel(0);
+      GMRES_solver->SetPreconditioner(*AMG_solver);
+      GMRES_solver->iterative_mode = false;
+      T_solver.Append(GMRES_solver);
+   }
 
+   // Return size of array of hierarchies
    return dts.Size()-1;
 }
 
@@ -357,9 +350,16 @@ void FE_Evolution::ImplicitSolve(const double dt, const Vector &x, Vector &k)
    int i = GetDtIndex(dt);
    K.Mult(x, z);
    z += b;
-   B_solver[i]->Mult(z, k);
-   if (HYPRE_GetError())
-   {
+   BlockInvScal(&T_s, NULL, &z, &z_s, blocksize, 2);
+
+   if (AIR.use_gmres){
+      GMRES_solver[i]->Mult(z, k);
+   }
+   else {
+      AMG_solver[i]->Mult(z, k);
+   }
+
+   if (HYPRE_GetError()) {
       MFEM_WARNING("HYPRE error = " << HYPRE_GetError());
       HYPRE_ClearAllErrors();
    }
@@ -375,7 +375,7 @@ double FE_Evolution::InnerProduct(const Vector &x, const Vector &y) const
 }
 
 
-DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[])
+DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[], AIR_parameters &AIR)
    : BraidOptions(argc, argv)
 {
    // set defaults for inherited options
@@ -408,6 +408,8 @@ DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[])
    vis_braid_steps = 0;
    vis_screenshots = false;
    write_matrices  = false;
+   const char* temp_prerelax = NULL;
+   const char* temp_postrelax = NULL;
 
    AddOption(&problem, "-p", "--problem",
              "Problem setup to use. See options in velocity_function().");
@@ -416,10 +418,12 @@ DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[])
              "Dissipation operator type: 0 - diffusion, 1 - diffusion squared");
    AddOption(&order, "-o", "--order",
              "Order (degree) of the finite elements.");
+   AddOption(&use_gmres, "-gmres", "--use-gmres",
+             "Boolean to use GMRES acceleration with AIR.");
    AddOption(&ode_solver_type, "-s", "--ode-solver",
-             "ODE solver: 1 - Forward Euler, 2 - RK2 SSP, 3 - RK3 SSP,"
-             " 4 - RK4, 6 - RK6,\n"
-             "\t11 - Backward Euler, 12 - SDIRK-2, 13 - SDIRK-3");
+             "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
+             "\t   11 - Forward Euler, 12 - RK2, 13 - RK3 SSP, 14 - RK4,\n\t"
+             "\t   22 - Imp. midpoint, 23 - A-stable SDIRK3, 34 - A-stable SDIRK4.");
    AddOption(&basis_type, "-b", "--basis-type",
              "DG basis type: 0 - Nodal Gauss-Legendre, 1 - Nodal Gauss-Lobatto,"
              " 2 - Positive");
@@ -433,9 +437,6 @@ DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[])
                            " Arnoldi-based coarse-grid time-stepping.");
    AddOption(&init_rand, "-rand", "--random-init", "-zero", "--zero-init",
              "How to initialize vectors: with random numbers or zeros");
-   AddOption(&prec_type, "-prec", "--preconditioner",
-             "Preconditioner type (for implicit time stepping):\n\t"
-             "0 - HypreParaSails, 1 - HypreBoomerAMG, 2 - UMFPACK (px=1)");
    AddOption(&vishost, "-vh", "--visualization-host",
              "Set the GLVis host.");
    AddOption(&visport, "-vp", "--visualization-port",
@@ -450,18 +451,34 @@ DGAdvectionOptions::DGAdvectionOptions(int argc, char *argv[])
    AddOption(&write_matrices, "-wm", "--write-matrices",
              "-dont-wm", "--dont-write-matrices", "Enable/disable the saving of"
              " the fine level mass (M) and advection (K) matrices.");
-
+   AddOption(&(AIR.distance), "-Ad", "--AIR-distance",
+             "Distance restriction neighborhood for AIR.");
+   AddOption(&(AIR.interp_type), "-Ai", "--AIR-interpolation",
+             "Index for hypre interpolation routine.");
+   AddOption(&(AIR.coarsening), "-Ac", "--AIR-coarsening",
+             "Index for hypre coarsening routine.");
+   AddOption(&(AIR.strength_tol), "-As", "--AIR-strength",
+             "Theta value determining strong connections for AIR.");
+   AddOption(&(AIR.filterA_tol), "-Af", "--AIR-filter",
+             "Theta value to eliminate small connections in AIR hierarchy.");
+   AddOption(&temp_prerelax, "-Ar1", "--AIR-prerelax",
+             "String denoting prerelaxation scheme; e.g., FCC.");
+   AddOption(&temp_postrelax, "-Ar2", "--AIR-postrelax",
+             "String denoting postrelaxation scheme; e.g., FFC.");
    Parse();
 
+   if (temp_prerelax != NULL) AIR.prerelax = std::string(temp_prerelax);
+   if (temp_postrelax != NULL) AIR.postrelax = std::string(temp_postrelax);
    dt = (t_final - t_start) / num_time_steps;
 }
 
 
-DGAdvectionApp::DGAdvectionApp(
-      DGAdvectionOptions &opts, MPI_Comm comm_t_, ParMesh *pmesh)
+DGAdvectionApp::DGAdvectionApp(DGAdvectionOptions &opts, AIR_parameters &AIR,
+                               MPI_Comm comm_t_, ParMesh *pmesh)
 
    : MFEMBraidApp(comm_t_, opts.t_start, opts.t_final, opts.num_time_steps),
      options(opts),
+     AIR_opt(AIR), 
      fe_coll(opts.order, pmesh->Dimension(), opts.basis_type),
      velocity(pmesh->Dimension(), velocity_function),
      inflow(inflow_function),
@@ -478,8 +495,7 @@ DGAdvectionApp::DGAdvectionApp(
    x[0]->ProjectCoefficient(u0);
    HypreParVector *U = x[0]->GetTrueDofs();
    SetInitialCondition(U);
-   if (opts.init_rand)
-   {
+   if (opts.init_rand) {
       int rank_t, rank_x = pmesh->GetMyRank(), glob_id;
       MPI_Comm_rank(comm_t, &rank_t);
       glob_id = rank_x + pmesh->GetNRanks()*rank_t;
@@ -494,8 +510,7 @@ DGAdvectionApp::DGAdvectionApp(
 
 DGAdvectionApp::~DGAdvectionApp()
 {
-   for (int l = 0; l < GetNumSpaceLevels(); l++)
-   {
+   for (int l = 0; l < GetNumSpaceLevels(); l++) {
       delete B[l];
       delete K[l];
       delete M[l];
@@ -573,36 +588,38 @@ int DGAdvectionApp::Step(braid_Vector    u_,
 
          // Setup the ODE solver
          ODESolver *ode_solver = NULL;
-         switch (options.ode_solver_type)
-         {
-            case 1: ode_solver = new ForwardEulerSolver; break;
-            case 2: ode_solver = new RK2Solver(1.0); break;
-            case 3: ode_solver = new RK3SSPSolver; break;
-            case 4: ode_solver = new RK4Solver; break;
-            case 6: ode_solver = new RK6Solver; break;
-
-            case 11: ode_solver = new BackwardEulerSolver; break;
-            case 12: ode_solver = new SDIRK23Solver(2); break;
-            case 13: ode_solver = new SDIRK33Solver; break;
-
-            default: ode_solver = new RK4Solver; break;
+         switch (options.ode_solver_type) {
+            // Implicit L-stable methods
+            case 1:  ode_solver = new BackwardEulerSolver; break;
+            case 2:  ode_solver = new SDIRK23Solver(2); break;
+            case 3:  ode_solver = new SDIRK33Solver; break;
+            // Explicit methods
+            case 11: ode_solver = new ForwardEulerSolver; break;
+            case 12: ode_solver = new RK2Solver(0.5); break; // midpoint method
+            case 13: ode_solver = new RK3SSPSolver; break;
+            case 14: ode_solver = new RK4Solver; break;
+            // Implicit A-stable methods (not L-stable)
+            case 22: ode_solver = new ImplicitMidpointSolver; break;
+            case 23: ode_solver = new SDIRK23Solver; break;
+            case 24: ode_solver = new SDIRK34Solver; break;
+            
+            default:
+               cout << "Unknown ODE solver type: " << ode_solver_type << ". Using RK4.\n";
+               ode_solver = new RK4Solver; break;
          }
          ode_solver->Init(arn.GetH());
 
          // Do time-stepping
          int m;
-         if( options.cfactor0 == -1)
-         {
+         if( options.cfactor0 == -1) {
             m = pow(options.cfactor, braid_level);
          }
-         else
-         {
+         else {
             m = options.cfactor0*pow(options.cfactor, braid_level-1);
          }
 
          double dt_fine = dt / ( (double) m);
-         for(int k = 0; k < m; k++)
-         {
+         for(int k = 0; k < m; k++) {
             // Step() advances tstart by dt_fine
             ode_solver->Step(ubar, tstart, dt_fine);
          }
@@ -615,7 +632,6 @@ int DGAdvectionApp::Step(braid_Vector    u_,
 
       // no refinement
       pstatus.SetRFactor(1);
-
    }
 
    return 0;
@@ -667,18 +683,15 @@ void DGAdvectionApp::InitLevel(int l)
    k->AddBdrFaceIntegrator(
       new TransposeIntegrator(new DGTraceIntegrator(velocity, 1.0, -0.5)));
    HypreParMatrix *S = NULL;
-   if (options.diffusion > 0.0)
-   {
+   if (options.diffusion > 0.0) {
       double sigma, kappa;
       ParBilinearForm *s = new ParBilinearForm(fe_space[l]);
-      if (1)
-      {
+      if (1) {
          // IP method
          sigma = -1.0;
          kappa = (options.order+1)*(options.order+1);
       }
-      else
-      {
+      else {
          // NIPG method
          sigma = 1.0;
          kappa = 1.0;
@@ -694,8 +707,7 @@ void DGAdvectionApp::InitLevel(int l)
       s->Finalize(skip_zeros);
       S = s->ParallelAssemble();
       delete s;
-      if (options.diss_oper_type)
-      {
+      if (options.diss_oper_type) {
          // S := S M^{-1} S
          // a) assemble M^{-1}
          HypreParMatrix *Mi;
@@ -739,8 +751,7 @@ void DGAdvectionApp::InitLevel(int l)
    delete k;
    delete m;
 
-   if (S)
-   {
+   if (S) {
       // K[l] := K[l] - diff*S
       *S *= (-options.diffusion);
       hypre_ParCSRMatrixSum(*S, 1.0, *K[l]);
@@ -748,8 +759,7 @@ void DGAdvectionApp::InitLevel(int l)
       K[l] = S;
    }
 
-   if (l == 0 && options.write_matrices)
-   {
+   if (l == 0 && options.write_matrices) {
       cout << "\nWritting the mass and advection matrices, M and K, for"
               " level 0.\n" << endl;
       M[l]->Print("drive-05-M");
@@ -757,25 +767,30 @@ void DGAdvectionApp::InitLevel(int l)
    }
 
    // Create the time-dependent operator, ode[l]
-   FE_Evolution *fe_ev = new FE_Evolution(*M[l], *K[l], *B[l]);
+   FE_Evolution *fe_ev = new FE_Evolution(*M[l], *K[l], *B[l], AIR_opt);
    fe_ev->SetPreconditionerType(options.prec_type);
    ode[l] = fe_ev;
 
    // Setup the ODE solver, solver[l]
    ODESolver *ode_solver = NULL;
-   switch (options.ode_solver_type)
-   {
-      case 1: ode_solver = new ForwardEulerSolver; break;
-      case 2: ode_solver = new RK2Solver(1.0); break;
-      case 3: ode_solver = new RK3SSPSolver; break;
-      case 4: ode_solver = new RK4Solver; break;
-      case 6: ode_solver = new RK6Solver; break;
-
-      case 11: ode_solver = new BackwardEulerSolver; break;
-      case 12: ode_solver = new SDIRK23Solver(2); break;
-      case 13: ode_solver = new SDIRK33Solver; break;
-
-      default: ode_solver = new RK4Solver; break;
+   switch (options.ode_solver_type) {
+      // Implicit L-stable methods
+      case 1:  ode_solver = new BackwardEulerSolver; break;
+      case 2:  ode_solver = new SDIRK23Solver(2); break;
+      case 3:  ode_solver = new SDIRK33Solver; break;
+      // Explicit methods
+      case 11: ode_solver = new ForwardEulerSolver; break;
+      case 12: ode_solver = new RK2Solver(0.5); break; // midpoint method
+      case 13: ode_solver = new RK3SSPSolver; break;
+      case 14: ode_solver = new RK4Solver; break;
+      // Implicit A-stable methods (not L-stable)
+      case 22: ode_solver = new ImplicitMidpointSolver; break;
+      case 23: ode_solver = new SDIRK23Solver; break;
+      case 24: ode_solver = new SDIRK34Solver; break;
+      
+      default:
+         cout << "Unknown ODE solver type: " << ode_solver_type << ". Using RK4.\n";
+         ode_solver = new RK4Solver; break;
    }
    solver[l] = ode_solver;
 
@@ -789,8 +804,7 @@ void DGAdvectionApp::InitLevel(int l)
 
 void DGAdvectionApp::PrintStats(MPI_Comm comm)
 {
-   if (mesh[0]->GetMyRank() == 0)
-   {
+   if (mesh[0]->GetMyRank() == 0) {
       int loc_calls[2], tot_calls[2]; // 0 - Step, 1 - Norm
       loc_calls[0] = Step_calls_counter;
       loc_calls[1] = Norm_calls_counter;
@@ -798,8 +812,7 @@ void DGAdvectionApp::PrintStats(MPI_Comm comm)
 
       int my_rank_t;
       MPI_Comm_rank(comm_t, &my_rank_t);
-      if (my_rank_t == 0)
-      {
+      if (my_rank_t == 0) {
          cout << "\n Total number of 'Step' calls = " << tot_calls[0]
               << "\n Total number of 'Norm' calls = " << tot_calls[1] << '\n';
       }

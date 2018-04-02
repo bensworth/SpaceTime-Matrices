@@ -4,7 +4,7 @@ MFEM_DIR  = $(LIB_DIR)/mfem
 HYPRE_DIR = $(LIB_DIR)/hypre/src/hypre
 METIS_DIR = $(LIB_DIR)/metis/build/Darwin-x86_64
 CXX      = mpic++
-FLAGS    = -O3
+FLAGS    = -g
 INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include
 CXXFLAGS = $(FLAGS) $(INC)
 LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis -L/System/Library/Frameworks/Accelerate.framework
@@ -13,7 +13,7 @@ LDLIBS   = -framework Accelerate -lmfem -lHYPRE -lmetis -lcblas
 # Files to compile
 SOURCE_FILES  = 
 OBJECT_FILES  = $(SOURCE_FILES:.cpp=.o)
-EXEC_FILES    = MFEM_spacetime
+EXEC_FILES    = MFEM_spacetime MFEM_adv
 
 .PHONY: all clean clean-build clean-exec
 

@@ -21,7 +21,8 @@ def plot_coo_matrix(m):
     ax.set_yticks([])
     return ax
 
-A0 = mmread("/Users/ben/Dropbox/Research/Math/Projects/ParallelTime/mgrit_air/spacetime/test_mat_0.mm")
+A0 = mmread("/Users/ben/Dropbox/Research/Math/Projects/ParallelTime/mgrit_air/spacetime/test.mm")
+# A0 = mmread("/Users/ben/Dropbox/Research/Math/Projects/ParallelTime/mgrit_air/spacetime/test_mat_0.mm")
 ax = plot_coo_matrix(A0)
 # plt.show()
 
@@ -43,30 +44,32 @@ ax = plot_coo_matrix(A0)
 
 
 # Make sure AB2 is ordering time matrices correctly
-A0 = A0.tocsr()
-timeDependent = False
-nt = 10
-bsize = 51
-for i in range(0,nt-2):
-    at0 = A0[(i+2)*bsize:bsize*(i+3),:][:,bsize*(i+1):bsize*(i+2)]
-    at1 = A0[(i+2)*bsize:bsize*(i+3),:][:,bsize*i:bsize*(i+1)]
-    test = np.abs(at0) - np.abs(at1)
-    # For non-time dependent, should have same off-diagonal and differ by identity
-    # on diagonal (-I + dt*A) vs dt*A
-    if not timeDependent:
-        if np.max(np.abs(test.diagonal() - 1)) > 0:
-            print "bad news! non-unit diagonal."
-            pdb.set_trace()
-        test[np.arange(0,bsize),np.arange(0,bsize)] = 0
-        if len(test.data[test.data != 0]) > 0:
-            print "bad news! non-zero off-diagonal."
-            pdb.set_trace()
-    # With time-depedence scaling by t, matrix data should be bigger for bigger t
-    else:
-        test[np.arange(0,bsize),np.arange(0,bsize)] = 0
-        if len(test.data[test.data < 0]) > 0:
-            print "bad news!"
-            pdb.set_trace()
+# A0 = A0.tocsr()
+# timeDependent = False
+# nt = 10
+# bsize = 51
+# for i in range(0,nt-2):
+#     at0 = A0[(i+2)*bsize:bsize*(i+3),:][:,bsize*(i+1):bsize*(i+2)]
+#     at1 = A0[(i+2)*bsize:bsize*(i+3),:][:,bsize*i:bsize*(i+1)]
+#     test = np.abs(at0) - np.abs(at1)
+#     # For non-time dependent, should have same off-diagonal and differ by identity
+#     # on diagonal (-I + dt*A) vs dt*A
+#     if not timeDependent:
+#         if np.max(np.abs(test.diagonal() - 1)) > 0:
+#             print "bad news! non-unit diagonal."
+#             pdb.set_trace()
+#         test[np.arange(0,bsize),np.arange(0,bsize)] = 0
+#         if len(test.data[test.data != 0]) > 0:
+#             print "bad news! non-zero off-diagonal."
+#             pdb.set_trace()
+#     # With time-depedence scaling by t, matrix data should be bigger for bigger t
+#     else:
+#         test[np.arange(0,bsize),np.arange(0,bsize)] = 0
+#         if len(test.data[test.data < 0]) > 0:
+#             print "bad news!"
+#             pdb.set_trace()
+
+
 
 pdb.set_trace()
 
