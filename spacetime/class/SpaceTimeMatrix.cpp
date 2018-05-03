@@ -458,13 +458,6 @@ void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
     int thisRow = 0;
     rowptr[0] = 0;
 
-    // if (m_globRank == 0) {
-    if (m_globRank > -1) {
-        std::cout << "Steps per proc: " << m_ntPerProc
-                  << "\nDOFs per time step: " << spatialDOFs << "\nNnz per time: " << nnzPerTime
-                  << "\nAllocated nnz: " << procNnz << "\n";
-    }
-
     // Loop over each time index and build sparse space-time matrix rows on this processor
     for (int ti=tInd0; ti<=tInd1; ti++) {
 
@@ -595,13 +588,6 @@ void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
     int dataInd = 0;
     int thisRow = 0;
     rowptr[0] = 0;
-
-    // if (m_globRank == 0) {
-    if (m_globRank > -1) {
-        std::cout << "Steps per proc: " << m_ntPerProc
-                  << "\nDOFs per time step: " << spatialDOFs << "\nNnz per time: " << nnzPerTime
-                  << "\nAllocated nnz: " << procNnz << "\n";
-    }
 
     // Loop over each time index and build sparse space-time matrix rows on this processor
     for (int ti=tInd0; ti<=tInd1; ti++) {
@@ -773,13 +759,6 @@ void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
     int dataInd = 0;
     int thisRow = 0;
     rowptr[0] = 0;
-
-    // if (m_globRank == 0) {
-    if (m_globRank > -1) {
-        std::cout << "Steps per proc: " << m_ntPerProc
-                  << "\nDOFs per time step: " << spatialDOFs << "\nNnz per time: " << nnzPerTime
-                  << "\nAllocated nnz: " << procNnz << "\n";
-    }
 
     // Loop over each time index and build sparse space-time matrix rows on this processor
     for (int ti=tInd0; ti<=tInd1; ti++) {
@@ -1010,14 +989,7 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
     X = new double[onProcSize];
     int dataInd = 0;
     int thisRow = 0;
-
     rowptr[0] = 0;
-    // if (m_globRank == 0) {
-    if (m_globRank > -1) {
-        std::cout << "Steps per proc: " << m_ntPerProc
-                  << "\nDOFs per time step: " << spatialDOFs << "\nNnz per time: " << nnzPerTime
-                  << "\nAllocated nnz: " << procNnz << "\n";
-    }
 
     // Loop over each time index and build sparse space-time matrix rows on this processor
     for (int ti=tInd0; ti<=tInd1; ti++) {
@@ -1178,13 +1150,6 @@ void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds, double *&data,
     int thisRow = 0;
     rowptr[0] = 0;
 
-    // if (m_globRank == 0) {
-    if (m_globRank > -1) {
-        std::cout << "Steps per proc: " << m_ntPerProc
-                  << "\nDOFs per time step: " << spatialDOFs << "\nNnz per time: " << nnzPerTime
-                  << "\nAllocated nnz: " << procNnz << "\n";
-    }
-
     // Loop over each time index and build sparse space-time matrix rows on this processor
     for (int ti=tInd0; ti<=tInd1; ti++) {
 
@@ -1323,13 +1288,6 @@ void SpaceTimeMatrix::AB2(int *&rowptr, int *&colinds, double *&data,
     int dataInd = 0;
     int thisRow = 0;
     rowptr[0] = 0;
-
-    // if (m_globRank == 0) {
-    if (m_globRank > -1) {
-        std::cout << "Steps per proc: " << m_ntPerProc
-                  << "\nDOFs per time step: " << spatialDOFs << "\nNnz per time: " << nnzPerTime
-                  << "\nAllocated nnz: " << procNnz << "\n";
-    }
 
     // Loop over each time index and build sparse space-time matrix rows on this processor
     for (int ti=tInd0; ti<=tInd1; ti++) {
@@ -1506,10 +1464,6 @@ void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
     int dataInd = 0;
     rowptr[0] = 0;
 
-    std::cout << "Time index: " << m_timeInd << "\n\tSpatial DOFs: " << spatialDOFs
-              << "\n\tRows/processor: " << procRows << "\n\tAllocated nnz: "
-              << procNnz << "\n";
-
     // Column indices for this processor given the time index and the first row
     // stored on this processor of the spatial discretization (zero if whole
     // spatial problem stored on one processor).
@@ -1614,10 +1568,6 @@ void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
     data = new double[procNnz];
     int dataInd = 0;
     rowptr[0] = 0;
-
-    std::cout << "Time index: " << m_timeInd << "\n\tSpatial DOFs: " << spatialDOFs
-              << "\n\tRows/processor: " << procRows << "\n\tAllocated nnz: "
-              << procNnz << "\n";
 
     // Column indices for this processor given the time index and the first row
     // stored on this processor of the spatial discretization (zero if whole
@@ -1762,10 +1712,6 @@ void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
     data = new double[procNnz];
     int dataInd = 0;
     rowptr[0] = 0;
-
-    std::cout << "Time index: " << m_timeInd << "\n\tSpatial DOFs: " << spatialDOFs
-              << "\n\tRows/processor: " << procRows << "\n\tAllocated nnz: "
-              << procNnz << "\n";
 
     // Column indices for this processor given the time index and the first row
     // stored on this processor of the spatial discretization (zero if whole
@@ -1972,10 +1918,6 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
     int dataInd = 0;
     rowptr[0] = 0;
 
-    std::cout << "Time index: " << m_timeInd << "\n\tSpatial DOFs: " << spatialDOFs
-              << "\n\tRows/processor: " << procRows << "\n\tAllocated nnz: "
-              << procNnz << "\n";
-
     // Local CSR matrices have (spatially) global column indices. Do not need
     // to account for the min row indexing as in BDF.
     int colPlusOffd = (m_timeInd - 1)*spatialDOFs;
@@ -2108,10 +2050,6 @@ void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds,  double *&data,
     data = new double[procNnz];
     int dataInd = 0;
     rowptr[0] = 0;
-
-    std::cout << "Time index: " << m_timeInd << "\n\tSpatial DOFs: " << spatialDOFs
-              << "\n\tRows/processor: " << procRows << "\n\tAllocated nnz: "
-              << procNnz << "\n";
 
     // Local CSR matrices in off-diagonal blocks here have (spatially) global
     // column indices. Only need to account for min row indexing for the
