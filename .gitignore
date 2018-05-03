@@ -10,4 +10,4 @@
 *.blg
 *dSYM
 *.out*
-
+*.gitignore
