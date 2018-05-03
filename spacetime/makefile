@@ -13,7 +13,7 @@ LDLIBS   = -framework Accelerate -lmfem -lHYPRE -lmetis -lcblas
 # Files to compile
 SOURCE_FILES  = 
 OBJECT_FILES  = $(SOURCE_FILES:.cpp=.o)
-EXEC_FILES    = MFEM_spacetime MFEM_adv
+EXEC_FILES    = MFEM_spacetime_nt_lt1 MFEM_spacetime_nt_ge1 MFEM_adv
 
 .PHONY: all clean clean-build clean-exec
 
