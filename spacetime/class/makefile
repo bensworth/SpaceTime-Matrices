@@ -1,14 +1,13 @@
 # Compiler, compile options, and link options
-LIB_DIR   = /Users/ben/Documents/SoftwareLibraries
-MFEM_DIR  = $(LIB_DIR)/mfem
-HYPRE_DIR = $(LIB_DIR)/hypre/src/hypre
-METIS_DIR = $(LIB_DIR)/metis/build/Darwin-x86_64
-CXX      = mpic++
+MFEM_DIR  = /g/g19/bs/cab/mfem
+HYPRE_DIR = $(MFEM_DIR)/../hypre/src/hypre
+METIS_DIR = $(MFEM_DIR)/../metis/build/Linux-x86_64
+CXX      = mpiicpc
 FLAGS    = -g -std=c++11
-INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include
+INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include -I./src
 CXXFLAGS = $(FLAGS) $(INC)
-LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis -L/System/Library/Frameworks/Accelerate.framework
-LDLIBS   = -lmfem -lHYPRE -lmetis -framework Accelerate -lcblas
+LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis
+LDLIBS   = -lmfem -lHYPRE -lmetis
 
 # Files to compile
 #	TODO : Maybe should put class files in subdirectory so can use wildcard.

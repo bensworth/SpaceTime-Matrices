@@ -26,8 +26,8 @@ int main(int argc, char *argv[])
     int print_level = 3;
     int timeDisc = 11;
 
-	AMG_parameters AMG = {"A", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    const char* temp_prerelax = "A";
+	AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
+    const char* temp_prerelax = "";
     const char* temp_postrelax = "FFC";
 
     OptionsParser args(argc, argv);
@@ -68,6 +68,8 @@ int main(int argc, char *argv[])
     args.Parse();
     AMG.prerelax = std::string(temp_prerelax);
     AMG.postrelax = std::string(temp_postrelax);
+    if (AMG.prerelax.compare("N") == 0) AMG.prerelax = "";
+    if (AMG.postrelax.compare("N") == 0) AMG.postrelax = "";
     if (!args.Good()) {
         if (rank == 0) {
             args.PrintUsage(std::cout);

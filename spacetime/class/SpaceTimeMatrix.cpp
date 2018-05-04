@@ -10,11 +10,18 @@
 //      - Add isTimeDependent option
 //      - Finish AB2 for spatial parallel
 //      - Add hypre timing for setup and solve (see ij.c)
-//      - Figure out why can't destroy IJ matrix
-//      - Why isn't GMRES working? 
-//          + Why is it solving systems twice?? 
+//      - Figure out why can't destroy IJ matrix 
 //      - May be something wrong with BDF3 implementation --> singular matrix?
 //          + lots of sing submatrices, bad/stalling overall conv.
+//          + Seems related to number of processors (actually relaxation: GS better on less proc)
+//              CON: srun -N 16 -n 256 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 8 -Ar 3 -Ac 3
+//              DNC: srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 8 -Ar 3 -Ac 3
+//      - Seems like parallel coarsening can be a problem.
+//          CON (no gmres, n16): srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 0
+//          DNC (gmres, n16): srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 1
+//          DNC (no gmres, n256): srun -N 16 -n 256 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 0
+
+
 
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int numTimeSteps, double t0, double t1)
@@ -68,7 +75,7 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 {
     if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
     if (m_gmres) HYPRE_ParCSRGMRESDestroy(m_gmres);
-    // if (m_Aij) HYPRE_IJMatrixDestroy(m_Aij);   // This should destroy parCSR matrix too
+    if (m_Aij) HYPRE_IJMatrixDestroy(m_Aij);   // This should destroy parCSR matrix too
     if (m_bij) HYPRE_IJVectorDestroy(m_bij);   // This should destroy parVector too
     if (m_xij) HYPRE_IJVectorDestroy(m_xij);
 }
@@ -78,6 +85,7 @@ void SpaceTimeMatrix::BuildMatrix()
 {
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
+    if (m_globRank == 0) std::cout << "Space-time matrix assembled.\n";
 }
 
 
@@ -125,7 +133,6 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     int onProcSize = localMaxRow - localMinRow + 1;
     int ilower = m_timeInd*spatialDOFs + localMinRow;
     int iupper = m_timeInd*spatialDOFs + localMaxRow;
-    HYPRE_IJMatrix m_Aij;
     HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &m_Aij);
     HYPRE_IJMatrixSetObjectType(m_Aij, HYPRE_PARCSR);
     HYPRE_IJMatrixInitialize(m_Aij);
@@ -164,6 +171,8 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     delete[] data;
     delete[] B;
     delete[] X;
+    delete[] rows;
+    delete[] cols_per_row;
 }
 
 
@@ -207,10 +216,9 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     // Initialize matrix
     int ilower = m_globRank*onProcSize;
     int iupper = (m_globRank+1)*onProcSize - 1;
-    HYPRE_IJMatrix      A0;
-    HYPRE_IJMatrixCreate(MPI_COMM_WORLD, ilower, iupper, ilower, iupper, &A0);
-    HYPRE_IJMatrixSetObjectType(A0, HYPRE_PARCSR);
-    HYPRE_IJMatrixInitialize(A0);
+    HYPRE_IJMatrixCreate(MPI_COMM_WORLD, ilower, iupper, ilower, iupper, &m_Aij);
+    HYPRE_IJMatrixSetObjectType(m_Aij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(m_Aij);
 
     // Set matrix coefficients
     int *rows = new int[onProcSize];
@@ -219,30 +227,35 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
         rows[i] = ilower + i;
         cols_per_row[i] = rowptr[i+1] - rowptr[i];
     }
-    HYPRE_IJMatrixSetValues(A0, onProcSize, cols_per_row, rows, colinds, data);
+    HYPRE_IJMatrixSetValues(m_Aij, onProcSize, cols_per_row, rows, colinds, data);
 
     // Finalize construction
-    HYPRE_IJMatrixAssemble(A0);
-    HYPRE_IJMatrixGetObject(A0, (void **) &m_A);
+    HYPRE_IJMatrixAssemble(m_Aij);
+    HYPRE_IJMatrixGetObject(m_Aij, (void **) &m_A);
 
     /* Create sample rhs and solution vectors */
-    HYPRE_IJVector b;
-    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &b);
-    HYPRE_IJVectorSetObjectType(b, HYPRE_PARCSR);
-    HYPRE_IJVectorInitialize(b);
-    HYPRE_IJVectorSetValues(b, onProcSize, rows, B);
-    HYPRE_IJVectorAssemble(b);
-    HYPRE_IJVectorGetObject(b, (void **) &m_b);
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_bij);
+    HYPRE_IJVectorSetObjectType(m_bij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(m_bij);
+    HYPRE_IJVectorSetValues(m_bij, onProcSize, rows, B);
+    HYPRE_IJVectorAssemble(m_bij);
+    HYPRE_IJVectorGetObject(m_bij, (void **) &m_b);
 
-    HYPRE_IJVector x;
-    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &x);
-    HYPRE_IJVectorSetObjectType(x, HYPRE_PARCSR);
-    HYPRE_IJVectorInitialize(x);
-    HYPRE_IJVectorSetValues(x, onProcSize, rows, X);
-    HYPRE_IJVectorAssemble(x);
-    HYPRE_IJVectorGetObject(x, (void **) &m_x);
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_xij);
+    HYPRE_IJVectorSetObjectType(m_xij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(m_xij);
+    HYPRE_IJVectorSetValues(m_xij, onProcSize, rows, X);
+    HYPRE_IJVectorAssemble(m_xij);
+    HYPRE_IJVectorGetObject(m_xij, (void **) &m_x);
 
-    // TODO: Clean up pointers. Does Hypre take ownership or no??
+    // Remove pointers that should have been copied by Hypre
+    delete[] rowptr;
+    delete[] colinds;
+    delete[] data;
+    delete[] B;
+    delete[] X;
+    delete[] rows;
+    delete[] cols_per_row;
 }
 
 
@@ -313,7 +326,7 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
     else {
         if (m_solver) {
             std::cout << "Rebuilding solver.\n";
-            delete m_solver;
+            HYPRE_BoomerAMGDestroy(m_solver);
         }
 
         // Array to store relaxation scheme and pass to Hypre
