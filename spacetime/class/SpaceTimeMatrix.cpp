@@ -9,6 +9,12 @@
 //        ownership of pointer arrays passed in in construction?
 //      - Add isTimeDependent option
 //      - Finish AB2 for spatial parallel
+//      - Add hypre timing for setup and solve (see ij.c)
+//      - Figure out why can't destroy IJ matrix
+//      - Why isn't GMRES working? 
+//          + Why is it solving systems twice?? 
+//      - May be something wrong with BDF3 implementation --> singular matrix?
+//          + lots of sing submatrices, bad/stalling overall conv.
 
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int numTimeSteps, double t0, double t1)
@@ -62,7 +68,7 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 {
     if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
     if (m_gmres) HYPRE_ParCSRGMRESDestroy(m_gmres);
-    if (m_Aij) HYPRE_IJMatrixDestroy(m_Aij);   // This should destroy parCSR matrix too
+    // if (m_Aij) HYPRE_IJMatrixDestroy(m_Aij);   // This should destroy parCSR matrix too
     if (m_bij) HYPRE_IJVectorDestroy(m_bij);   // This should destroy parVector too
     if (m_xij) HYPRE_IJVectorDestroy(m_xij);
 }
@@ -401,9 +407,9 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
     HYPRE_GMRESSetTol(m_gmres, tol);
     HYPRE_GMRESSetPrintLevel(m_gmres, printLevel);
     
-    // AMG preconditioning
+    // AMG preconditioning (setup boomerAMG with 1 max iter and print level 1)
     if (precondition == 1) {
-        SetupBoomerAMG(printLevel, maxiter, tol);
+        SetupBoomerAMG(1, 1, tol);
         HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
                           (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
     }
