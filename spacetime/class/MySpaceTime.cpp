@@ -42,7 +42,7 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
 										   int *&A_colinds, double *&A_data, double *&B,
 										   double *&X, int &localMinRow, int &localMaxRow,
-										   int &spatialDOFs, double t)
+										   int &spatialDOFs, double t, double dt)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -140,7 +140,7 @@ void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
 /* Time-independent spatial discretization of Laplacian */
 void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
 										   double *&A_data, double *&B, double *&X,
-										   int &spatialDOFs, double t)
+										   int &spatialDOFs, double t, double dt)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -186,12 +186,23 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     BilinearForm *a = new BilinearForm(fespace);
     a->AddDomainIntegrator(new DiffusionIntegrator(one));
 
+    // Mass integrator (lumped) for time integration
+    // BilinearForm *m = new BilinearForm(fespace);
+    // m->AddDomainIntegrator(new LumpedIntegrator(new MassIntegrator));
+    // m->Assemble();
+    // m->Finalize();
+    // HypreParMatrix *M = m -> ParallelAssemble();
+
+    // TODO : SCALE BY MASS INVERSE
+
     // Assemble bilinear form and corresponding linear system
     Vector B0;
     Vector X0;
-    SparseMatrix A;
+    SparseMatrix A, M;
     a->Assemble();
     a->FormLinearSystem(ess_tdof_list, x, *b, A, X0, B0, 0);
+    // m->FormSystemMatrix(ess_tdof_list, M);
+    // SparseMatrix M = m->SpMat();
 
     // Change ownership of matrix data to sparse matrix from bilinear form
     spatialDOFs = A.NumRows();
@@ -206,6 +217,7 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     X = x.StealData();
 
     delete a;
+    delete m;
     delete b; 
     if (fec) {
       delete fespace;

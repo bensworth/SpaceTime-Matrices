@@ -100,10 +100,11 @@ private:
     virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                           int *&A_colinds, double *&A_data, double *&B,
                                           double *&X, int &localMinRow, int &localMaxRow,
-                                          int &spatialDOFs, double t) = 0;
+                                          int &spatialDOFs, double t, double dt) = 0;
     // Spatial discretization on one processor
     virtual void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
-                                          double *&B, double *&X, int &spatialDOFs, double t) = 0;
+                                          double *&B, double *&X, int &spatialDOFs,
+                                          double t, double dt) = 0;
 
     // TODO: Add support in functions for this; make optional? 
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t) = 0;
@@ -116,7 +117,7 @@ public:
     virtual ~SpaceTimeMatrix();
 
     void BuildMatrix();
-    void SaveMatrix();  // TODO: implement
+    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename1); }
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
