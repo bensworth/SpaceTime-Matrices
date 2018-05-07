@@ -19,6 +19,12 @@
 //          CON (no gmres, n16): srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 0
 //          DNC (gmres, n16): srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 1
 //          DNC (no gmres, n256): srun -N 16 -n 256 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 0
+//      - Figure out why can't destroy IJ matrix
+//      - May be something wrong with BDF3 implementation --> singular matrix?
+//          + lots of sing submatrices, bad/stalling overall conv.
+//      - Something wrong with GMRES
+//            srun -N 4 -n 64 -p pdebug driver -nt 512 -t 12 -o 2 -l 4 -Af 0 -Ai 100 -AIR 2 -gmres 1
+//        doesn't converge, but does if you turn off gmres...
 
 
 
@@ -400,6 +406,7 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // Do not rebuild solver unless parameters are changed.
         m_rebuildSolver = false;
+        delete[] grid_relax_points;
     }
 }
 

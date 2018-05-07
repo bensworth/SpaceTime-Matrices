@@ -82,6 +82,10 @@ accurate, while Adams-Moulton is $O(\Delta t^3)$.
 % ------------------------------------------------------------------------------------------------------- %
 \subsection{Matrix structure}
 
+\tcb{Must include mass matrix integration for using finite elements in space. This will be a diagonal scaling
+on the left by $M^{-1}$. Definitely motivates using AIR because of invariance to row scaling. }
+
+
 Are these matrices M-matrices?? May help motivate AMG.. If $\mathcal{L}$ is an M-matrix, BDF1/AM1 also is, but none of the others.
 M-matrix must have non-positive off-diagonals.
 
@@ -90,6 +94,8 @@ similar. This would motivate a $P^*AP$ approach, which seems to be working well 
 seem to differ only in the first and last $k$ time steps, where $k$ is the order of the time integration.
 
 Real symmetric matrix has SVD equivalent to eigendecomposition, with signs swapped on 
+
+
 
 
 % ------------------------------------------------------------------------------------------------------- %
