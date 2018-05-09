@@ -498,6 +498,195 @@ Coarse-grid operators then take the form
 %
 \tcb{$\mathcal{K}_0$ isn't quite finished.}
 
+
+
+
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\newpage
+\section{Runge-Kutta}
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{RK4:} 
+
+Consider the classic RK4 time integration scheme as an example to solve $\mathbf{u}_t = \mathcal{L}\mathbf{u} + \mathbf{g}(t)$,
+where $\mathcal{L}$ is a spatial discretization matrix and $\mathbf{u}_n$ the spatial solution in vector form at time $t_n$. 
+Then, the four stages can be written out as:
+%
+\begin{align*}
+k_1 & = \delta t\mathcal{L}\mathbf{u}_n + \delta t\mathbf{g}(t_n), \\
+k_2 & = \delta t\mathcal{L}(\mathbf{u}_n + \tfrac{k_1}{2}) + \delta t\mathbf{g}(t_{n+\frac{1}{2}}) \\
+	& = \delta t\mathcal{L}\mathbf{u}_n + \tfrac{\delta t^2}{2}\mathcal{L}^2\mathbf{u}_n + \delta t\mathbf{g}(t_{n+\frac{1}{2}}) +
+	\tfrac{\delta t^2}{2}\mathcal{L}\mathbf{g}(t_n) ,\\
+k_3 & = \delta t\mathcal{L}(\mathbf{u}_n + \tfrac{k_2}{2}) + \delta t\mathbf{g}(t_{n+\frac{1}{2}}) \\
+	& = \delta t\mathcal{L}\mathbf{u}_n + \tfrac{\delta t^2}{2}\mathcal{L}^2\mathbf{u}_n + \tfrac{\delta t^3}{4}\mathcal{L}^3\mathbf{u}_n +
+	\delta t(I+\tfrac{\delta t}{2}\mathcal{L})\mathbf{g}(t_{n+\frac{1}{2}}) + \tfrac{\delta t^3}{4}\mathcal{L}^2\mathbf{g}(t_n), \\
+k_4 & = \delta t\mathcal{L}(\mathbf{u}_n + k_3) + \delta t \mathbf{g}(t_{n+1}), \\
+	& = \delta t\mathcal{L}\mathbf{u}_n + \delta t^2\mathcal{L}^2\mathbf{u}_n + \tfrac{\delta t^3}{2}\mathcal{L}^3\mathbf{u}_n +
+	\tfrac{\delta t^4}{4}\mathcal{L}^4\mathbf{u}_n + \delta t^2\mathcal{L}(I+\tfrac{\delta t}{2}\mathcal{L})\mathbf{g}(t_{n+\frac{1}{2}}) +
+	 ...\\&\hspace{4ex} \tfrac{\delta t^4}{4}\mathcal{L}^3\mathbf{g}(t_n) + \delta t \mathbf{g}(t_{n+1}),
+\end{align*}
+%
+where 
+%
+\begin{align*}
+\mathbf{u}_{n+1} & = \mathbf{u}_n + \tfrac{1}{6}(k_1+2k_2+2k_3+k_4).
+\end{align*}
+%
+These stages can expressed algebraically as a space-time matrix. For RK4, such a matrix takes the block form:
+%
+{\footnotesize
+\begin{align}
+\begin{split}
+%\begin{pmatrix} I &  \\ -\mathcal{S} & I \end{pmatrix}\hspace{3ex}\sim\hspace{3ex}
+\begin{pmatrix}
+\ddots \\ 
+-\tfrac{1}{6}I &I &  &  &  &   & \\
+&-\delta t \mathcal{L} & I &  &  &  &  \\
+&-\delta t \mathcal{L} & -\tfrac{\delta t}{2} \mathcal{L} & I &   &  & \\
+&-\delta t \mathcal{L} &  & -\tfrac{\delta t}{2} \mathcal{L} & I  &  & \\
+&-\delta t \mathcal{L} &  &  & -\delta t \mathcal{L} & I &  \\
+&-I & -\frac{1}{6}I & -\frac{1}{3}I & -\frac{1}{3}I & -\frac{1}{6}I & I \\
+&&&&&& -\delta t \mathcal{L} & \ddots
+\end{pmatrix}
+\begin{pmatrix} \vdots \\ \mathbf{u}_n \\ k_1^{(n)} \\ k_2^{(n)} \\ k_3^{(n)} \\ k_4^{(n)} \\ \mathbf{u}_{n+1}  \\ \vdots \end{pmatrix}
+= \\
+\begin{pmatrix} \vdots \\ \mathbf{0} \\ \delta t\mathbf{g}(t_n) \\  \delta t\mathbf{g}(t_{n+\frac{1}{2}}) +
+	\tfrac{\delta t^2}{2}\mathcal{L}\mathbf{g}(t_n) \\ \delta t(I+\tfrac{\delta t}{2}\mathcal{L})\mathbf{g}(t_{n+\frac{1}{2}}) +
+	\tfrac{\delta t^3}{4}\mathcal{L}^2\mathbf{g}(t_n) \\ \delta t^2\mathcal{L}(I+\tfrac{\delta t}{2}\mathcal{L})\mathbf{g}(t_{n+\frac{1}{2}}) +
+	\tfrac{\delta t^4}{4}\mathcal{L}^3\mathbf{g}(t_n) + \delta t \mathbf{g}(t_{n+1}) \\ \mathbf{0}  \\ \vdots
+\end{pmatrix}
+\end{split}\label{eq:s_stage}
+\end{align}
+%
+}Going from the expanded $s$-stage form to a condensed $2\times 2$ block matrix can be achieved by straightforward
+elimination of variables $k_1,k_2,...$. Combining, we have 
+%
+\begin{align*}
+\mathbf{u}_{n+1} & = \mathbf{u}_n + \tfrac{1}{6}(k_1+2k_2+2k_3+k_4) \\
+	& = \mathcal{S}\mathbf{u}_n + \mathcal{G}_n, \\
+\mathcal{S} & = I + \delta t\mathcal{L} + \tfrac{\delta t^2}{2}\mathcal{L}^2 + \tfrac{\delta t^3}{6}\mathcal{L}^3 +
+	\tfrac{\delta t^4}{24}\mathcal{L}^4, \\
+\mathcal{G}_n & = \tfrac{\delta t}{6}\Big[ I  +\delta t \mathcal{L} + \tfrac{\delta t^2}{2}\mathcal{L}^2 + \tfrac{\delta t^3}{4}\mathcal{L}^3\Big] \mathbf{g}(t_{n}) +
+	\tfrac{\delta t}{3}\Big[2I + \delta t \mathcal{L} + \tfrac{\delta t^2}{4}\mathcal{L}^2\Big]\mathbf{g}(t_{n+\frac{1}{2}}) + \tfrac{\delta t}{6} \mathbf{g}(t_{n+1}).
+\end{align*}
+%
+In matrix form, this looks like
+%
+\begin{align} \label{eq:condensed}
+\begin{pmatrix} 
+I \\ -\mathcal{S} & I \\ & -\mathcal{S} & I \\ && \ddots & \ddots \end{pmatrix} \begin{pmatrix} \mathbf{u}_0 \\ \mathbf{u}_1 \\\mathbf{u}_2 \\ \vdots \end{pmatrix}
+	= \begin{pmatrix} \mathcal{G}_0 \\ \mathcal{G}_1 \\ \mathcal{G}_2 \\ \vdots \end{pmatrix}.
+\end{align}
+%
+Note that all explicit RK methods will take such a form, where $\mathcal{S}$ consists of some polynomial in $\mathcal{L}$.
+\tcb{This right-hand side seems quite complicated to this. Does MGRiT arrive at same structure? I suppose this is in the user's hands...}
+
+By the single sub-diagonal structure here, we can actually form $R_{ideal}$. In particular, operators take the form
+%
+\begin{align*}
+R_{ideal} & = \begin{pmatrix}-\mathcal{S}^2 & & & I & \\ & -\mathcal{S}^2 & & & I \\ & & \ddots & & & \ddots\end{pmatrix} \\
+R_{ideal}AP & = \begin{pmatrix} I \\ -\mathcal{S}^2 & I \\ & -\mathcal{S}^2 & I \\ & & \ddots & \ddots \end{pmatrix}.
+\end{align*}
+%
+Note that this holds regardless of interpolation to F-points. In fact, the restriction only to C-points as used in MGRiT actually makes
+sense if you form $R_{ideal}$ because that is the $\ell^2$-orthogonal projection. \tcb{Has MGRiT been tried with $R_{ideal}$ instead
+of $P_{ideal}$? In all AIR tests $R_{ideal}$ has performed better; it is also setting the error equal to zero at C-points, which is typically preferable
+to the residual, which is achieved by $P_{ideal}$..} In any case, notice this is exactly as arrived at in
+MGRiT, albeit in explicit algebraic form: the coarse-grid operator consists of taking two steps, $\mathcal{S}^2$, using the fine-grid
+time stepper. Denote $\mathcal{S}_{\delta t}$ as $\mathcal{S}$ with time step $\delta t$. Expanding, 
+%
+\begin{align*}
+\mathcal{S}_{\delta t}^2 & = \Big( I + \delta t\mathcal{L} + \tfrac{\delta t^2}{2}\mathcal{L}^2 + \tfrac{\delta t^3}{6}\mathcal{L}^3 +
+	\tfrac{\delta t^4}{24}\mathcal{L}^4\Big)^2 \\
+& = I + 2 \delta t \mathcal{L} + 2 \delta t^2\mathcal{L}^2 +  \tfrac{4\delta t^3}{3}\mathcal{L}^3 + \tfrac{2\delta t^4}{3}\mathcal{L}^4 + \tfrac{\delta t^5}{4}\mathcal{L}^5 + \tfrac{5\delta t^6}{72}\mathcal{L}^6 + \tfrac{\delta t^7}{72}\mathcal{L}^7 + \tfrac{\delta t^8}{576} \mathcal{L}^8 \\
+& = \mathcal{S}_{2\delta t} + O((\delta t\mathcal{L})^5).
+\end{align*}
+%
+That is, taking a time step of size $2\delta t$, as done in MGRiT, is, in the Taylor-sense, the best approximation to two steps on 
+the fine grid. However, this assumes that $\|\delta t\mathcal{L}\| < 1$. \tcb{Is this more or less enforced by the stability criterion
+of explicit time integrators? Also, is this unique to RK4, or for explicit RK is it generally the case that taking a time step of $2\delta t$
+is, in a Taylor-sense, the best approximation to two time steps?}
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{General RK schemes}
+
+Returning to \eqref{eq:s_stage}, one can notice that the block matrix resembles that of the Butcher Tableaux for RK4. 
+Implicit schemes generally cannot be reduced to a condensed block form, as in \eqref{eq:condensed}. However, given the Butcher
+Tablueax for an $s$-stage Runge-Kutta scheme, implicit or explicit, the matrix will take on a block structure as in \eqref{eq:s_stage}
+with the following blocks (overlapping other blocks in the first and last row/column):
+%
+\begin{align} \label{eq:gen_block}
+\begin{pmatrix} 
+I  & \mathbf{0} & \mathbf{0} & ... & \mathbf{0} & \mathbf{0}\\
+-\delta t\mathcal{L} & I - a_{11}\delta t\mathcal{L} & -a_{12}\delta t\mathcal{L} & ... &  -a_{1s}\delta t\mathcal{L} & \mathbf{0} \\
+-\delta t\mathcal{L} & -a_{21}\delta t\mathcal{L} & I -a_{22}\delta t\mathcal{L} & ... & -a_{2s}\delta t\mathcal{L} & \mathbf{0} \\ 
+\vdots  & \vdots & \vdots & \ddots & \vdots  & \vdots \\
+-\delta t\mathcal{L} & -a_{s1}\delta t\mathcal{L} & -a_{s2}\delta t\mathcal{L} & ...  & I - a_{ss}\delta t\mathcal{L} & \mathbf{0} \\ 
+-I & -b_1I & -b_2I & ... & -b_s I & I
+\end{pmatrix}
+\begin{pmatrix} \mathbf{u}_n \\ \mathbf{k}_1^{(n)} \\ \mathbf{k}_2^{(n)} \\ \vdots \\ \mathbf{k}_s^{(n)} \\ \mathbf{u}_{n+1} \end{pmatrix} =
+\end{align}
+%
+For diagonally implicit Runge-Kutta (DIRK) methods, the blocks in \eqref{eq:gen_block} are lower triangular. For explicit
+methods, they are lower triangular with unit diagonal. This allows for a natural elimination of middle stages for the condensed
+form in \eqref{eq:condensed}. \tcb{Would such a matrix be algebraically amenable to AIR-type algorithms? Unfortunately, the
+number of rows in the matrix scales with $s$...} We can also condense \eqref{eq:gen_block} using Kronecker products for a
+block matrix structure:
+%
+\begin{align*}
+\begin{pmatrix}
+I_{n\times n} &  \\
+-\delta t(\mathbf{1}_n \otimes \mathcal{L}) & I_{ns\times ns} - \delta t A\otimes \mathcal{L} &\\
+-I_{n\times n} & -\mathbf{b}\otimes I_{n\times n} & I_{n\times n} \\ 
+& & -\delta t(\mathbf{1}_n \otimes \mathcal{L}) & I_{ns\times ns} - \delta t A\otimes \mathcal{L} &  \\
+& & -I_{n\times n} & -\mathbf{b}\otimes I_{n\times n} & I_{n\times n} \\
+&&& \ddots\text{\hspace{4ex}}  & \ddots\text{\hspace{8ex}}  & \ddots
+\end{pmatrix}.
+\end{align*}
+%
+In the spirit of algebraic reduction, suppose we designate solution blocks (with identity on diagonal) as C-points and
+the $s$-stage blocks as F-points. Then,
+%
+{\footnotesize
+\begin{align*}
+-A_{cf}A_{ff}^{-1} & = \begin{pmatrix} \mathbf{0} \\ -(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1} \\
+&  -(\mathbf{b}\otimes I) (I - \delta tA\otimes \mathcal{L})^{-1} \\ & & \ddots \end{pmatrix} , \\
+R_{ideal}AP & =  \begin{pmatrix} I \\ -I -\delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L})  & I \\
+& -I - \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L})  & I \\ & & \ddots & \ddots \end{pmatrix}.
+\end{align*}
+%
+}Notice that this now takes on a form that we can apply a more traditional reduction to with an identity on the diagonal. $A_{ff}^{-1}$ is
+block diagonal and invertible. In the case of DIRK methods, $ (I - \delta tA\otimes \mathcal{L})^{-1} $ can be inverted through a block
+forward solve, almost like F-relaxation through Runge-Kutta stages. For non-DIRK methods, solving should still be feasible, but is more
+complicated. \footnote{
+We could also swap the choice of C- and F-points. Then, $A_{ff}^{-1}$ can be directly computed, but is a global, dense lower triangular
+matrix coupling all DOFs.} In any case, we are only interested in the solution at specific points in time, corresponding to C-points, and
+do not need the intermediate RK stages. Because we can exactly compute $R_{ideal}$, which gives an exact solution at C-points, all we
+need now is to solve the coarse-grid problem. Thus, we have projected the problem to dimension independent of $s$ (kind of, although
+the diagonal of $A_{ff}$ interpolates to a large problem, inverts there, and brings it back; this particularly motivates DIRK methods). 
+One idea is to apply a reduction-based multigrid, exactly as we can do with explicit RK methods.
+\tcb{What's interesting is the $\delta t$ inside of $(I - \delta tA\otimes\mathcal{L})^{-1}$.
+When we get a coarse-grid operator with an $\mathcal{S}^2$-like term on the subdiagonal, expanding the subdiagonal:
+%
+\begin{align*}
+&\Big[ -I - \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) \Big]^2 =\\
+	 & \hspace{4ex}I + 2\delta t (\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) + \delta t^2\Big[(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) \Big]^2.
+\end{align*}
+%
+Is this a flaw in the derivation approach? Is it better to do a coarse-grid time step with $2\delta t$ everywhere, or to actually use
+$\delta t$ to advance the $s$ stages and $2\delta t$ for the time step??
+}
+
+
+
+
+
+
 \end{document}
 
 
