@@ -42,7 +42,7 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
 										   int *&A_colinds, double *&A_data, double *&B,
 										   double *&X, int &localMinRow, int &localMaxRow,
-										   int &spatialDOFs, double t, double dt)
+										   int &spatialDOFs, double t)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -140,7 +140,7 @@ void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
 /* Time-independent spatial discretization of Laplacian */
 void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
 										   double *&A_data, double *&B, double *&X,
-										   int &spatialDOFs, double t, double dt)
+										   int &spatialDOFs, double t)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -217,7 +217,7 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     X = x.StealData();
 
     delete a;
-    delete m;
+//    delete m;
     delete b; 
     if (fec) {
       delete fespace;

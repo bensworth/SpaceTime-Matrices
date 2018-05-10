@@ -18,10 +18,9 @@ private:
 	void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, double dt);
+                                  int &spatialDOFs, double t);
 	void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
-                                  double *&B, double *&X, int &spatialDOFs, double t,
-                                  double dt);
+                                  double *&B, double *&X, int &spatialDOFs, double t);
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t);
 
 

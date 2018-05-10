@@ -117,7 +117,7 @@ public:
     virtual ~SpaceTimeMatrix();
 
     void BuildMatrix();
-    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename1); }
+    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
