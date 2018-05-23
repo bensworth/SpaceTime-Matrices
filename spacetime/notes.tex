@@ -9,6 +9,8 @@
 \usepackage{enumitem}
 	\setlist{nosep} % or \setlist{noitemsep} to leave space around whole list
 \usepackage{color}
+\usepackage{blkarray}
+\setcounter{MaxMatrixCols}{20}
 
 \newcommand{\tcb}{\textcolor{blue}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO\@: #1]}}
@@ -24,67 +26,83 @@
 % ------------------------------------------------------------------------------------------------------- %
 \section{Space-time discretizations}\label{sec:disc}
 
-% ------------------------------------------------------------------------------------------------------- %
-% ------------------------------------------------------------------------------------------------------- %
-\subsection{Time integrators}
-
 Consider a linear PDE of the form 
 \begin{align*}
-u_t + \mathcal{L}(u,\mathbf{x},t) = g(\mathbf{x},t).
+u_t + \mathcal{L}(u,\mathbf{x}) = g(\mathbf{x},t).
 \end{align*}
 We discretize $\mathcal{L}$ in space and, denoting $\mathbf{u}(t)$ the discrete solution in space at time $t$
 and $\mathbf{g}(t)$ the corresponding right-hand side, we arrive at the system of ODEs 
+%
 \begin{align}\label{eq:ode}
 \mathbf{u}_t + \mathcal{L}(t)\mathbf{u} = \mathbf{g}(t).
 \end{align}
-Time integrators can be largely broken down into Runge-Kutta-type methods and linear multistep methods. Runge-Kutta methods
-are one-step, $s$-stage methods, and are not amenable to building a space-time linear system. Three main classes of linear multistep
-methods are the Adams-Bashforth (explicit), Adams-Moulton (implicit), and backwards differentiation formulas (implicit), all of which
-can be framed as a sparse linear system. Suppose we have a discrete time grid with time step $\Delta t$ and time points $\{t_0,t_1,...\}$.
-Denote $\mathbf{g}(t_n) = \mathbf{g}_n$ and $\mathcal{L}(t_n) = \mathcal{L}_n$. The first three formulae for each of the linear
-multistep classes of integrators in the context of \eqref{eq:ode} are given as follows:
 %
-{\small
+Note, in finite element discretizations, there will also be a mass matrix term:
+%
+\begin{align}\label{eq:odeM}
+M\mathbf{u}_t + \mathcal{L}(t)\mathbf{u} = \mathbf{g}(t).
+\end{align}
+%
+Time integrators can be largely broken down into Runge-Kutta-type methods and linear multistep methods. Runge-Kutta methods
+are one-step, $s$-stage methods, and are addressed in Section \ref{sec:RK}. Linear multistep methods are addressed in Section
+\ref{sec:multi}.
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\section{Linear multistep methods}\label{sec:multi}
+
+Three main classes of linear multistep methods are the Adams-Bashforth (explicit), Adams-Moulton (implicit), and backwards
+differentiation formulas (BDF) (implicit), all of which can be naturally framed as a large sparse linear system. Suppose we have a
+discrete time grid with time step $\delta t$ and time points $\{t_0,t_1,...\}$. Denote $\mathbf{g}(t_n) = \mathbf{g}_n$ and
+$\mathcal{L}(t_n) = \mathcal{L}_n$. The first three formulae for each of the linear multistep classes of integrators in the context
+of \eqref{eq:odeM} are given as follows:
+%
+{\footnotesize
 \begin{align*}
-\textnormal{\textbf{Adams-Bashforth:}}\hspace{40.5ex}&\\
-\mathbf{u}_n - (I - \Delta t\mathcal{L}_{n-1})\mathbf{u}_{n-1} & =\Delta t\mathbf{g}_{n-1}  \\
-\mathbf{u}_n - (I - \tfrac{3}{2}\Delta t\mathcal{L}_{n-1})\mathbf{u}_{n-1} - \tfrac{1}{2}\Delta t\mathcal{L}_{n-2}\mathbf{u}_{n-2} & = \tfrac{3}{2}\Delta t\mathbf{g}_{n-1} - \tfrac{1}{2}\Delta t\mathbf{g}_{n-2}\\
-\mathbf{u}_n - (I - \tfrac{23}{12}\Delta t\mathcal{L}_{n-1})\mathbf{u}_{n-1} - \tfrac{4}{3}\Delta t\mathcal{L}_{n-2}\mathbf{u}_{n-2} + 
-	\tfrac{5}{12}\Delta t\mathcal{L}_{n-3}\mathbf{u}_{n-3} & = \tfrac{23}{12}\Delta t\mathbf{g}_{n-1} - \tfrac{4}{3}\Delta t\mathbf{g}_{n-2} + 
-	\tfrac{5}{12}\Delta t\mathbf{g}_{n-3}\\
-\textnormal{\textbf{Adams-Moulton:}}\hspace{42ex}&\\
-(I + \Delta t \mathcal{L}_n)\mathbf{u}_n - \mathbf{u}_{n-1} &  =  \Delta t \mathbf{g}_n \\
-(I + \tfrac{1}{2}\Delta t \mathcal{L}_n)\mathbf{u}_n - (I - \tfrac{1}{2}\Delta t \mathcal{L}_{n-1})\mathbf{u}_{n-1} & =
-	\tfrac{1}{2} \Delta t (\mathbf{g}_n + \mathbf{g}_{n-1}) \\
-(I + \tfrac{5}{12}\Delta t \mathcal{L}_n)\mathbf{u}_n - (I - \tfrac{2}{3}\Delta t \mathcal{L}_{n-1})\mathbf{u}_{n-1} - 
-	\tfrac{1}{12}\Delta t\mathcal{L}_{n-2}\mathbf{u}_{n-2}& = \tfrac{5}{12} \Delta t\mathbf{g}_n + \tfrac{2}{3} \Delta t\mathbf{g}_{n-1} -
-	\tfrac{1}{12} \Delta t\mathbf{g}_{n-2}\\
-\textnormal{\textbf{BDF:}}\hspace{55ex}&\\
-(I + \Delta t \mathcal{L}_n)\mathbf{u}_n - \mathbf{u}_{n-1} &  =  \Delta t \mathbf{g}_n \\
- (I + \tfrac{2}{3}\Delta t \mathcal{L}_n)\mathbf{u}_{n} - \tfrac{4}{3} \mathbf{u}_{n-1} + \tfrac{1}{3} \mathbf{u}_{n-2} & =
- 	\tfrac{2}{3}\Delta t\mathbf{g}_n \\
-(I + \tfrac{6}{11}\Delta t \mathcal{L}_n)\mathbf{u}_{n} - \tfrac{18}{11} \mathbf{u}_{n-1} + \tfrac{9}{11} \mathbf{u}_{n-2} -
-	\tfrac{2}{11} \mathbf{u}_{n-3} +  & =   \tfrac{6}{11}\Delta t  \mathbf{g}_n.
+%
+\textnormal{\textbf{Adams-Bashforth:}}\hspace{50.5ex}&\\
+\tfrac{1}{\delta t}M\mathbf{u}_n - (\tfrac{1}{\delta t}M - \mathcal{L}_{n-1})\mathbf{u}_{n-1} & =\mathbf{g}_{n-1}  \\
+\tfrac{1}{\delta t}M\mathbf{u}_n - (\tfrac{1}{\delta t}M - \tfrac{3}{2}\mathcal{L}_{n-1})\mathbf{u}_{n-1} -
+	\tfrac{1}{2}\mathcal{L}_{n-2}\mathbf{u}_{n-2} & = \tfrac{3}{2}\mathbf{g}_{n-1} - \tfrac{1}{2}\mathbf{g}_{n-2}\\
+\tfrac{1}{\delta t}M\mathbf{u}_n - (\tfrac{1}{\delta t}M - \tfrac{23}{12}\mathcal{L}_{n-1})\mathbf{u}_{n-1} -
+	\tfrac{4}{3}\mathcal{L}_{n-2}\mathbf{u}_{n-2} + \tfrac{5}{12}\mathcal{L}_{n-3}\mathbf{u}_{n-3} & = \tfrac{23}{12}\mathbf{g}_{n-1} -
+	\tfrac{4}{3}\mathbf{g}_{n-2} + \tfrac{5}{12}\mathbf{g}_{n-3}\\
+%
+\textnormal{\textbf{Adams-Moulton:}}\hspace{52ex}&\\
+(\tfrac{1}{\delta t}M +  \mathcal{L}_n)\mathbf{u}_n - \tfrac{1}{\delta t}M\mathbf{u}_{n-1} &  =   \mathbf{g}_n \\
+(\tfrac{1}{\delta t}M + \tfrac{1}{2} \mathcal{L}_n)\mathbf{u}_n - (\tfrac{1}{\delta t}M - \tfrac{1}{2} \mathcal{L}_{n-1})\mathbf{u}_{n-1} & =
+	\tfrac{1}{2}  (\mathbf{g}_n + \mathbf{g}_{n-1}) \\
+(\tfrac{1}{\delta t}M + \tfrac{5}{12} \mathcal{L}_n)\mathbf{u}_n - (\tfrac{1}{\delta t}M - \tfrac{2}{3} \mathcal{L}_{n-1})\mathbf{u}_{n-1} - 
+	\tfrac{1}{12}\mathcal{L}_{n-2}\mathbf{u}_{n-2}& = \tfrac{5}{12} \mathbf{g}_n + \tfrac{2}{3} \mathbf{g}_{n-1} -
+	\tfrac{1}{12} \mathbf{g}_{n-2}\\
+%
+\textnormal{\textbf{BDF:}}\hspace{65ex}&\\
+(\tfrac{1}{\delta t}M + \mathcal{L}_n)\mathbf{u}_n - \tfrac{1}{\delta t}M\mathbf{u}_{n-1} &  =   \mathbf{g}_n \\
+(\tfrac{1}{\delta t}M + \tfrac{2}{3} \mathcal{L}_n)\mathbf{u}_{n} - \tfrac{4}{3\delta t}M\mathbf{u}_{n-1} +
+ 	\tfrac{1}{3\delta t}M\mathbf{u}_{n-2} & = \tfrac{2}{3}\mathbf{g}_n \\
+(\tfrac{1}{\delta t}M + \tfrac{6}{11} \mathcal{L}_n)\mathbf{u}_{n} - \tfrac{18}{11\delta t}\mathbf{u}_{n-1} +
+	\tfrac{9}{11\delta t}M\mathbf{u}_{n-2} - \tfrac{2}{11\delta t}M\mathbf{u}_{n-3} +  & =   \tfrac{6}{11}  \mathbf{g}_n.
 \end{align*}
 }
 %
+Here, we do not multiply through by $\delta t$ because $M \sim dx^k$ for some power. Maintaining the product of $M$ and
+$\delta t$ makes sense to keep $O(1)$ operators. We also do not invert $M$ and pass it through because a mass matrix is typically
+not diagonal, and it is not clear when lumping is a good option. In the case of, e.g., finite differences, $M = C\cdot I$, where
+$C$ is some constant related to the spatial discretization, e.g., $C = \tfrac{1}{dx^2}$.
 
 Full space-time discretizations take the form of a block lower triangular matrix, $\mathcal{A}$, where each block corresponds to the full
-spatial solution at one point in time. The Adams-Bashforth methods are explicit, so the block diagonal of $\mathcal{A}$ is the identity,
+spatial solution at one point in time. The Adams-Bashforth methods are explicit, so the block diagonal of $\mathcal{A}$ is the mass matrix,
 and off-diagonal blocks given by spatial discretization terms at previous time steps. Adams-Moulton have spatial discretization blocks
 along the diagonal as well as off-diagonals. Finally, BDF methods only have the spatial discretization along the diagonal; off-diagonal
-blocks consist only of the identity. Such a structure reduces the number of matrix nonzeros and connectivity compared with an
+blocks consist only of the mass matrix. Such a structure reduces the number of matrix nonzeros and connectivity compared with an
 Adams-type scheme; however, the Adams-Moulton implicit methods gain an extra order of accuracy. For example, if we consider
-two time-neighbors away, that is, approximate $\mathbf{u}_i$ using $\mathbf{u}_{i-1}$ and $\mathbf{u}_{i-2}$, BDF is $O(\Delta t^2)$
-accurate, while Adams-Moulton is $O(\Delta t^3)$. 
+two time-neighbors away, that is, approximate $\mathbf{u}_i$ using $\mathbf{u}_{i-1}$ and $\mathbf{u}_{i-2}$, BDF is $O(\delta t^2)$
+accurate, while Adams-Moulton is $O(\delta t^3)$. 
 
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
 \subsection{Matrix structure}
-
-\tcb{Must include mass matrix integration for using finite elements in space. This will be a diagonal scaling
-on the left by $M^{-1}$. Definitely motivates using AIR because of invariance to row scaling. }
-
 
 Are these matrices M-matrices?? May help motivate AMG.. If $\mathcal{L}$ is an M-matrix, BDF1/AM1 also is, but none of the others.
 M-matrix must have non-positive off-diagonals.
@@ -102,20 +120,6 @@ Real symmetric matrix has SVD equivalent to eigendecomposition, with signs swapp
 % ------------------------------------------------------------------------------------------------------- %
 \subsection{BDF}
 
-Suppose the spatial discretization at each time step has $n_{\mathbf{x}}$ degrees of freedom (over all dimensions) and the time domain
-is discretized into $n_t$ time steps of size $\Delta t$. Let $N_p$ denote the number of processors.
-
-
-%int HYPRE IJMatrixInitialize (HYPRE IJMatrix matrix)
-%	Prepare a matrix object for setting coefficient values. 
-%
-%int HYPRE IJMatrixSetValues (HYPRE IJMatrix matrix, int nrows, int* ncols, const int* rows, const int* cols, const double* values)
-%	Sets values for nrows rows or partial rows of the matrix. The arrays ncols and rows are of dimension nrows and contain the number of columns in each row and the row indices, respectively. The array cols contains the column indices for each of the rows, and is ordered by rows. The data in the values array corresponds directly to the column entries in cols. Erases any previous values at the specified locations and replaces them with new ones, or, if there was no value there before, inserts a new one.
-%Not collective.
-%
-%HYPRE IJMatrixAssemble (HYPRE IJMatrix matrix)
-%	Finalize the construction of the matrix before using
-%
 
 % ------------------------------------------------------------------------------------------------------- %
 \subsubsection{Assume $N_p | n_t$}
@@ -167,8 +171,8 @@ These groups will be the communication packages that we build spatial discretiza
 
 For high-order integrators, there needs to be some sort of boot-strapping process such that the initial time step has sufficient
 information to be high-order accuracy. One option is to take a very small time step, for example, use BDF1 to take a step of
-size $\Delta t^2$, and proceed to use the initial condition and the solution at time $\Delta t^2$ to take a time step of size 
-$\Delta t$. However, this introduces a variably-sized time steps, and high-order BDF methods can be unstable with variable
+size $\delta t^2$, and proceed to use the initial condition and the solution at time $\delta t^2$ to take a time step of size 
+$\delta t$. However, this introduces a variably-sized time steps, and high-order BDF methods can be unstable with variable
 time steps. \todo{Talk about other options?}
 
 The goal here is to design the space-time construction code to be such that the user modifies the right-hand-side appropriately
@@ -506,7 +510,7 @@ Coarse-grid operators then take the form
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
 \newpage
-\section{Runge-Kutta}
+\section{Runge-Kutta}\label{sec:RK}
 
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
@@ -587,10 +591,10 @@ Note that all explicit RK methods will take such a form, where $\mathcal{S}$ con
 
 By the single sub-diagonal structure here, we can actually form $R_{ideal}$. In particular, operators take the form
 %
-\begin{align*}
-R_{ideal} & = \begin{pmatrix}-\mathcal{S}^2 & & & I & \\ & -\mathcal{S}^2 & & & I \\ & & \ddots & & & \ddots\end{pmatrix} \\
-R_{ideal}AP & = \begin{pmatrix} I \\ -\mathcal{S}^2 & I \\ & -\mathcal{S}^2 & I \\ & & \ddots & \ddots \end{pmatrix}.
-\end{align*}
+\begin{align}
+R_{ideal} & = \begin{pmatrix}-\mathcal{S}^2 & & & I & \\ & -\mathcal{S}^2 & & & I \\ & & \ddots & & & \ddots\end{pmatrix} \label{eq:ridealS}\\
+R_{ideal}AP & = \begin{pmatrix} I \\ -\mathcal{S}^2 & I \\ & -\mathcal{S}^2 & I \\ & & \ddots & \ddots \end{pmatrix}.\label{eq:rapS}
+\end{align}
 %
 Note that this holds regardless of interpolation to F-points. In fact, the restriction only to C-points as used in MGRiT actually makes
 sense if you form $R_{ideal}$ because that is the $\ell^2$-orthogonal projection. \tcb{Has MGRiT been tried with $R_{ideal}$ instead
@@ -653,12 +657,12 @@ In the spirit of algebraic reduction, suppose we designate solution blocks (with
 the $s$-stage blocks as F-points. Then,
 %
 {\footnotesize
-\begin{align*}
+\begin{align}
 -A_{cf}A_{ff}^{-1} & = \begin{pmatrix} \mathbf{0} \\ -(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1} \\
-&  -(\mathbf{b}\otimes I) (I - \delta tA\otimes \mathcal{L})^{-1} \\ & & \ddots \end{pmatrix} , \\
+&  -(\mathbf{b}\otimes I) (I - \delta tA\otimes \mathcal{L})^{-1} \\ & & \ddots \end{pmatrix} , \label{eq:acfaff}\\
 R_{ideal}AP & =  \begin{pmatrix} I \\ -I -\delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L})  & I \\
-& -I - \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L})  & I \\ & & \ddots & \ddots \end{pmatrix}.
-\end{align*}
+& -I - \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L})  & I \\ & & \ddots & \ddots \end{pmatrix}.\label{eq:rap}
+\end{align}
 %
 }Notice that this now takes on a form that we can apply a more traditional reduction to with an identity on the diagonal. $A_{ff}^{-1}$ is
 block diagonal and invertible. In the case of DIRK methods, $ (I - \delta tA\otimes \mathcal{L})^{-1} $ can be inverted through a block
@@ -670,21 +674,143 @@ do not need the intermediate RK stages. Because we can exactly compute $R_{ideal
 need now is to solve the coarse-grid problem. Thus, we have projected the problem to dimension independent of $s$ (kind of, although
 the diagonal of $A_{ff}$ interpolates to a large problem, inverts there, and brings it back; this particularly motivates DIRK methods). 
 One idea is to apply a reduction-based multigrid, exactly as we can do with explicit RK methods.
-\tcb{What's interesting is the $\delta t$ inside of $(I - \delta tA\otimes\mathcal{L})^{-1}$.
-When we get a coarse-grid operator with an $\mathcal{S}^2$-like term on the subdiagonal, expanding the subdiagonal:
+
+Coarse-grid correction for AMG takes the form
 %
 \begin{align*}
-&\Big[ -I - \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) \Big]^2 =\\
-	 & \hspace{4ex}I + 2\delta t (\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) + \delta t^2\Big[(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) \Big]^2.
+\mathbf{x}^{(k+1)} = \mathbf{x}^{(k)} + P(RAP)^{-1}R(b - A\mathbf{x}^{(k)}).
 \end{align*}
 %
+Recall we are only interested in the solution at C-points, which is obtained in one iteration if $R = R_{ideal}$ and we
+solve the coarse-grid exactly. Thus, suppose we take a zero initial guess on C- and F-points. Then the exact solution
+at C-points is obtained by solving
+%
+\begin{align*}
+(RAP)\overline{\mathbf{x}}_c & = \mathbf{b}_c - A_{cf}A_{ff}^{-1}\mathbf{b}_f,
+\end{align*}
+%
+where $RAP$ is as in \eqref{eq:rap}, $A_{cf}A_{ff}^{-1}$ in \eqref{eq:acfaff}, and $\mathbf{b}$ is the right-hand side
+as determined by the RK discretization. Here, we can apply an operator-based reduction method exactly as in \eqref{eq:ridealS}
+and \eqref{eq:rapS}, except now 
+%
+\begin{align*}
+\mathcal{S} & = I + \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}), \\
+\mathcal{S}^2 & = \Big[ I + \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) \Big]^2 \\
+	 & = I + 2\delta t (\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) + \delta t^2\Big[(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L}) \Big]^2.
+\end{align*}
+%
+
+
+
+\tcb{What's interesting is the $\delta t$ inside of $(I - \delta tA\otimes\mathcal{L})^{-1}$ (as opposed to $2\delta t$).
 Is this a flaw in the derivation approach? Is it better to do a coarse-grid time step with $2\delta t$ everywhere, or to actually use
 $\delta t$ to advance the $s$ stages and $2\delta t$ for the time step??
+\begin{itemize}
+\item It could actually be of great benefit if we could use the same $\delta t$ for every time internal time step. In particular, if we
+use an SDIRK scheme, this means we would only need one spatial solver for all time steps on all time levels. The memory
+requirements to have a solver for every time step size are definitely a limiting factor of the MGRiT framework for implicit, and this
+would help that situation significantly. 
+\item In the case of an explicit scheme, what does this mean? The actual propagation will be computed with $\delta t$, which,
+suppose satisfies the stability constraint. If we just extrapolate this to step size $2\delta t$, can we get around the stability
+constraint of hyperbolic problems? I feel like this could be promising, but hard to say at this point...
+\end{itemize}
 }
 
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Aggressive coarsening}
+
+In MGRiT, the speedup is typically better for more aggressive coarsening routines, raising the natural question if we can
+coarsen aggressively here and maintain matrix structure. For ease of notation, denote the sub-diagonal in \eqref{eq:rap}
+as $L = -I - \delta t(\mathbf{b}\otimes I )(I - \delta tA\otimes \mathcal{L})^{-1}(\mathbf{1}_n \otimes \mathcal{L})$. We will
+see that we can coarsen aggressively in a structured manner and retain the matrix structure in \eqref{eq:rap}.
 
 
+% ------------------------------------------------------------------------------------------------------- %
+\subsubsection{$3\times$ coarsening}
 
+%
+\begin{align*}
+A & = \begin{blockarray}{cccccccc}
+& C & F & F & C & F & F & ... \\
+\begin{block}{c(ccccccc)}
+C &  I & & & & & \\
+F &  L & I & & & & \\
+F &  & L & I & & & \\
+C &  & & L & I & & \\
+F &  & & & L & I &  \\
+F &  &  & & & L & I  \\ 
+\vdots  & & &  & & & \ddots & \ddots \\
+\end{block}
+\end{blockarray}, 
+\hspace{4ex}
+A_{fc} = \begin{pmatrix} L \\ \mathbf{0} & \mathbf{0}  \\ & L \\ & \mathbf{0} & \mathbf{0} \\ & & L & \mathbf{0} \\ &&&\ddots&\ddots \end{pmatrix}, 
+\\
+A_{cf} & = \begin{pmatrix} \mathbf{0} \\ \mathbf{0} & L \\ & \mathbf{0} & \mathbf{0} & L \\ &&& \mathbf{0} & \mathbf{0} & L \\ &&&&&\ddots&\ddots \end{pmatrix}, 
+\hspace{10ex}
+A_{ff}^{-1} = \begin{pmatrix} I \\ -L & I \\ & & I \\ & & -L & I \\ & & & \ddots & \ddots \end{pmatrix}.
+\end{align*}
+%
+Then, in F-C block ordering, 
+%
+\begin{align*}
+R_{ideal} & = \begin{pmatrix} \mathbf{0} & & & & & \Big| & I \\ -L^2 & L & & & & \Big| & & I \\ & & -L^2 & L & & \Big| &&  & I \\ & & & \ddots & \ddots & \Big| && & & \ddots\end{pmatrix}, \\
+R_{ideal}AP & = A_{cc} - A_{cf}A_{ff}^{-1}A_{fc} \\
+& = \begin{pmatrix} I \\ & I \\ & & I \\ & & & \ddots\end{pmatrix} - \begin{pmatrix} \mathbf{0} \\ -L^2 & L \\ & & -L^2 & L \\ & & & \ddots & \ddots\end{pmatrix}
+	 \begin{pmatrix} L \\ \mathbf{0} & \mathbf{0}  \\ & L \\ & \mathbf{0} & \mathbf{0} \\ & & L & \mathbf{0} \\ &&&\ddots&\ddots \end{pmatrix} \\
+& = \begin{pmatrix} I \\ L^3 & I \\ & L^3 & I \\ && \ddots &\ddots\end{pmatrix}.
+\end{align*}
+%
+Notice that we obtain the exact structure as in \eqref{eq:rapS} and \eqref{eq:rap}, now taking three time steps via $L^3$.
+
+% ------------------------------------------------------------------------------------------------------- %
+\subsubsection{$4\times$ coarsening}
+
+%
+{\footnotesize
+\begin{align*}
+A & = \begin{blockarray}{ccccccccccc}
+& C & F & F & F & C & F & F & F & ... \\
+\begin{block}{c(cccccccccc)}
+C &  I & & & & & \\
+F &  L & I & & & & \\
+F &  & L & I & & & \\
+F &  & & L & I & & \\
+C &  & & & L & I &  \\
+F &  &  & & & L & I  \\ 
+F & & &  & & & L & I  \\ 
+F & & & & & & & L & I  \\ 
+\vdots  & & &&& & & & \ddots & \ddots \\
+\end{block}
+\end{blockarray}, 
+\hspace{4ex}
+A_{fc} =  \begin{pmatrix} L \\ \mathbf{0} & \mathbf{0}  \\ & \mathbf{0}  \\ & L \\ & \mathbf{0} & \mathbf{0} \\ & & \mathbf{0} \\
+	& & L & \mathbf{0} \\ &&&\ddots&\ddots \end{pmatrix}, 
+\\
+A_{cf} & = \begin{pmatrix} \mathbf{0} \\ \mathbf{0} & \mathbf{0} & L \\ && \mathbf{0} & \mathbf{0} & \mathbf{0} & L \\
+	&& &&& \mathbf{0} & \mathbf{0} & \mathbf{0} & L \\ &&&&&&&&\ddots&\ddots \end{pmatrix}, 
+\hspace{10ex}
+A_{ff}^{-1} = \begin{pmatrix} I \\ -L & I \\ L^2 & -L & I \\ & & & I \\ & & & -L & I \\ & & & L^2 & -L & I\\ & & & & \ddots & \ddots & \ddots \end{pmatrix}.
+\end{align*}
+}
+%
+Then, in F-C block ordering, 
+%
+\begin{align*}
+R_{ideal} & = \begin{pmatrix} \mathbf{0} & & & & & & & \Big| & I \\ L^3 & -L^2 & L & & & & & \Big| & & I \\ & & & L^3 & -L^2 & L & & \Big| & & & I
+	\\ & & & & & \ddots & \ddots & \Big| && && & \ddots\end{pmatrix}, \\
+R_{ideal}AP & = A_{cc} - A_{cf}A_{ff}^{-1}A_{fc} \\
+& = \begin{pmatrix} I \\ & I \\ & & I \\ & & & \ddots\end{pmatrix} - \begin{pmatrix} \mathbf{0} \\ L^3 & -L^2 & L \\ & & & L^3 & -L^2 & L \\ & & & &  & \ddots & \ddots\end{pmatrix}
+	 \begin{pmatrix} L \\ \mathbf{0} & \mathbf{0}  \\ & \mathbf{0}  \\ & L \\ & \mathbf{0} & \mathbf{0} \\ & & \mathbf{0} \\
+	& & L & \mathbf{0} \\ &&&\ddots&\ddots \end{pmatrix}\\
+& = \begin{pmatrix} I \\ L^4 & I \\ & L^4 & I \\ && \ddots &\ddots\end{pmatrix}.
+\end{align*}
+%
+
+In general, the same result will hold for further aggressive coarsening schemes. Note that we \textit{do not} need to compute $R_{ideal}$.
+Because we know that $RAP = S_A$, we can simply compute the action of $R_{ideal}$ through F-relaxation (equivalent to $A_{ff}^{-1}$)
+and applying $A_{cf}$ to the F-points. \tcb{Without considering the choice of coarse grid, is this equivalent to MGRiT? Need to work out if
+the $\Phi$ operator in MGRiT actually takes the form of the subdiagonal $L$ in \eqref{eq:rap}. If not, we should work out algebraically what
+MGRiT does algebraically for a RK scheme to see how it compares.}
 
 
 \end{document}
