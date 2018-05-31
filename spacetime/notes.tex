@@ -178,6 +178,85 @@ time steps. \todo{Talk about other options?}
 The goal here is to design the space-time construction code to be such that the user modifies the right-hand-side appropriately
 such that the first step(s) are of an appropriate order of accuracy. This should make the code fairly general / ``non-intrusive.'' 
 
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Initialization with Runge--Kutta methods}
+To start an $s$-step multistep scheme, $s$ starting values, $\mathbf{u}_0, \mathbf{u}_1, \dots, \mathbf{u}_{s-1}$, are required to compute the first unknown $\mathbf{u}_s$. The first of which is provided by the initial condition $\mathbf{u}_0 \equiv \mathbf{u}(0)$, but the remaining $s-1$ of them need to be generated. The typical way to do this is using a one-step, multi-stage RK method (see \S \ref{sec:rk_sequential}) (see L. F. Shampine, Numerical solution of ordinary differential equations, pp. 228--231, 1994). When considering an $\mathcal{O}(k)$-accurate multistep scheme, there are two possibilities for initializing these values (which will retain the overall $\mathcal{O}(k)$ accuracy of the scheme):
+\begin{itemize}
+\item using an $\mathcal{O}(k-1)$-accurate RK scheme, or
+\item using an $\mathcal{O}(k)$-accurate RK scheme
+\end{itemize}
+The latter option is preferred because it more-or-less results in a global truncation error that would be the same as if the values were initialized with the exact solution.
+
+For explicit multistep, it makes sense to use ERK, and for implicit multistep it makes sense to use IRK. I think that in both of these cases, the multistep stability regions are a subset of those of the RK schemes, so we shouldn't run into stability issues if the RK scheme uses the same time step size as the multistep scheme. 
+
+In terms of implementation: 
+\begin{itemize}
+\item the first unknown in each space-time linear system will be $\mathbf{u}_s$
+\item the first $s$ equations, which are associated with the solution of $\mathbf{u}_s, \mathbf{u}_{s+1}, \dots, \mathbf{u}_{2s-1}$, will need to have their right hand sides modified
+\end{itemize}
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\section{Runge--Kutta methods}\label{sec:rk_sequential}
+
+It's also useful to consider the integration of \eqref{eq:odeM} using Runge--Kutta (RK) methods---especially within the context of initializing multistep methods---, which are one-step, multi-stage methods. These come in both explicit (ERK) and implicit (IRK) varieties. Here, we'll just limit our IRK considerations to so-called diagonal IRK (DIRK) schemes which are defined as IRK schemes having a lower triangular Butcher table. 
+
+In practice, we're only considering second- and third-order integrators which we can obtain with two- and three-stage RK schemes, respectively. If we consider marching from time $t_n$ to $t_{n+1}$, with step length $h = t_{n+1} - t_n$, then the following RK schemes can be used.
+
+\subsection{ERK}
+Consider a two- or three-stage ERK scheme having the following Butcher table:
+\begin{align}
+\begin{array}
+{c|ccc}
+0 & \\
+c_2 & a_{21} & \\
+c_3 & a_{31} & a_{32} & \\
+\hline
+&b_1 & b_2 & b_3
+\end{array}
+\end{align}
+Note that the two-stage method comes from having $c_3 = a_{31} = a_{32} = b_{3} = 0$.
+Then we have the scheme:
+\begin{align}
+\begin{split}
+\mathbf{u}_{n+1} &= \mathbf{u}_{n} + h(b_1 \mathbf{k}_1 + b_2 \mathbf{k}_2 + b_3 \mathbf{k}_3), \\
+M \mathbf{k}_1 &= -\mathcal{L}(t_n) \mathbf{u}_n + \mathbf{g}(t_n), \\
+M \mathbf{k}_2 &= -\mathcal{L}(t_n + c_2 h) [ \mathbf{u}_n + h a_{21} \mathbf{k}_1 ] + \mathbf{g}(t + c_2 h), \\
+M \mathbf{k}_3 &= -\mathcal{L}(t_n + c_3 h) [ \mathbf{u}_n + h(a_{31} \mathbf{k}_1 + a_{32} \mathbf{k}_2) ] + \mathbf{g}(t + c_3 h).
+\end{split}
+\end{align}
+The stage vectors $\mathbf{k}_i$ in this scheme must be computed sequentially, and each comes as the result of solving a linear system---except in the event that $M \equiv I$, then they are given explicitly.
+
+\subsection{DIRK}
+Consider a two- or three-stage DIRK scheme with the following Butcher table:
+\begin{align}
+\begin{array}
+{c|ccc}
+c_1 & a_{11} \\
+c_2 & a_{21} & a_{22} \\
+c_3 & a_{31} & a_{32} & a_{33} \\
+\hline
+&b_1 & b_2 & b_3
+\end{array}
+\end{align}
+Note that the two-stage method comes from having $c_3 = a_{31} = a_{32} = a_{33} = b_{3} = 0$.
+Then we have the scheme:
+\begin{align}
+\begin{split}
+\mathbf{u}_{n+1} &= \mathbf{u}_{n} + h(b_1 \mathbf{k}_1 + b_2 \mathbf{k}_2 + b_3 \mathbf{k}_3), \\
+[M + a_{11} h \mathcal{L}(t_n + c_1 h) ] \mathbf{k}_1 &= -\mathcal{L}(t_n + c_1 h) \mathbf{u}_n + \mathbf{g}(t_n + c_1 h), \\
+[M + a_{22} h \mathcal{L}(t_n + c_2 h) ] \mathbf{k}_2 &= -\mathcal{L}(t_n + c_2 h)[ \mathbf{u}_n + h a_{21} \mathbf{k}_1] + \mathbf{g}(t_n + c_2 h), \\
+[M + a_{33} h \mathcal{L}(t_n + c_3 h) ] \mathbf{k}_3 &= -\mathcal{L}(t_n + c_3 h)[ \mathbf{u}_n + h(a_{31} \mathbf{k}_1 +  a_{32} \mathbf{k}_2)] + \mathbf{g}(t_n + c_3 h).
+\end{split}
+\end{align}
+The stage vectors $\mathbf{k}_i$ in this scheme must be computed sequentially, and each comes as the result of solving a linear system---even in the event that $M \equiv I$.
+ 
+\tcb{Note that in the case that $\mathcal{L}$ is independent of time (BCs and PDE coefficients are time independent), the matrices multiplying the stage-vectors are time-independent; additionally, if an SDIRK scheme is used then it'll be the same matrix for each stage. This might be more of a practical detail when implementing a sequential time-stepping solver because then the same matrices (or matrix in the case of SDIRK) can be reused at every time level.}
+
+
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
