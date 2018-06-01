@@ -1,8 +1,8 @@
 # Compiler, compile options, and link options
-MFEM_DIR  = /g/g19/bs/cab/mfem
+MFEM_DIR  = /g/g19/bs/quartz/mfem
 HYPRE_DIR = $(MFEM_DIR)/../hypre/src/hypre
 METIS_DIR = $(MFEM_DIR)/../metis/build/Linux-x86_64
-CXX      = mpiicpc
+CXX      = mpicxx
 FLAGS    = -g -std=c++11
 INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include -I./src
 CXXFLAGS = $(FLAGS) $(INC)

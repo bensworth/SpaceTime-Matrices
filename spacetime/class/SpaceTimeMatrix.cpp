@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <map>
 #include "SpaceTimeMatrix.hpp"
 
 // TODO:
@@ -76,6 +77,7 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 
 void SpaceTimeMatrix::BuildMatrix()
 {
+    if (m_globRank == 0) std::cout << "Building matrix.\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
     if (m_globRank == 0) std::cout << "Space-time matrix assembled.\n";
@@ -394,7 +396,6 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // Do not rebuild solver unless parameters are changed.
         m_rebuildSolver = false;
-        delete[] grid_relax_points;
     }
 }
 
@@ -1147,8 +1148,8 @@ void SpaceTimeMatrix::AM2(int* &rowptr, int* &colinds, double* &data,
                 std::map<int, double> entries;
 
                 // Get row of mass matrix
-                for (int j=M_rowptr_1[i]; j<M_rowptr_1[i+1]; j++) {                
-                    entries[M_colinds_1[j]] -= M_data_1[j];
+                for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
+                    entries[M_colinds[j]] -= M_data[j];
                 }
 
                 // Get row of spatial discretization
@@ -2195,8 +2196,8 @@ void SpaceTimeMatrix::AM2(int* &rowptr, int* &colinds, double* &data,
             std::map<int, double> entries;
 
             // Get row of mass matrix
-            for (int j=M_rowptr_1[i]; j<M_rowptr_1[i+1]; j++) {                
-                entries[M_colinds_1[j]] -= M_data_1[j];
+            for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
+                entries[M_colinds[j]] -= M_data[j];
             }
 
             // Get row of spatial discretization

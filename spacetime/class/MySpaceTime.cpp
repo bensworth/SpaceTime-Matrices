@@ -6,40 +6,42 @@ using namespace mfem;
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
-    M_rowptr(NULL), M_colinds(NULL), M_data(NULL)
+    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
 {
     m_order = 1;
     m_refLevels = 1;
+    m_lumped = false;
 }
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double t0, double t1): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-    M_rowptr(NULL), M_colinds(NULL), M_data(NULL)
+    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
 {
     m_order = 1;
     m_refLevels = 1;
+    m_lumped = false;
 }
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          int refLevels, int order): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
-    M_rowptr(NULL), M_colinds(NULL), M_data(NULL),
+    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}
 {
-
+    m_lumped = false;
 }
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double t0, double t1, int refLevels, int order): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-    M_rowptr(NULL), M_colinds(NULL), M_data(NULL),
+    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}
 {
-
+    m_lumped = false;
 }
 
 
@@ -108,6 +110,7 @@ void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     Vector B0;
     Vector X0;
     a->Assemble();
+    a->Finalize();
     a->FormLinearSystem(ess_tdof_list, x, *b, A, X0, B0);
 
     spatialDOFs = A.GetGlobalNumRows();
@@ -127,9 +130,26 @@ void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     A_data = A_loc.GetData();
     A_loc.LoseData();
 
+    // Mass integrator (lumped) for time integration
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+        ParBilinearForm *m = new ParBilinearForm(fespace);
+        if (m_lumped) m->AddDomainIntegrator(new LumpedIntegrator(new MassIntegrator));
+        else m->AddDomainIntegrator(new MassIntegrator);
+        m->Assemble();
+        m->Finalize();
+        HypreParMatrix M;
+        m->FormSystemMatrix(ess_tdof_list, M);
+        SparseMatrix M_loc;
+        M.GetProcRows(M_loc);
+        m_M_rowptr = M_loc.GetI();
+        m_M_colinds = M_loc.GetJ();
+        m_M_data = M_loc.GetData();
+        M_loc.LoseData();
+        delete m;
+    }
+
     delete a;
     delete b;
- 
     if (fec) {
       delete fespace;
       delete fec;
@@ -190,20 +210,10 @@ void MySpaceTime::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
     BilinearForm *a = new BilinearForm(fespace);
     a->AddDomainIntegrator(new DiffusionIntegrator(one));
 
-    // Mass integrator (lumped) for time integration
-    // BilinearForm *m = new BilinearForm(fespace);
-    // m->AddDomainIntegrator(new LumpedIntegrator(new MassIntegrator));
-    // m->Assemble();
-    // m->Finalize();
-    // m->FormSystemMatrix(ess_tdof_list, M);
-    // HypreParMatrix *M = m -> ParallelAssemble();
-    // SparseMatrix M = m->SpMat();
-
-
     // Assemble bilinear form and corresponding linear system
     Vector B0;
     Vector X0;
-    SparseMatrix A, M;
+    SparseMatrix A;
     a->Assemble();
     a->FormLinearSystem(ess_tdof_list, x, *b, A, X0, B0, 0);
 
@@ -219,8 +229,24 @@ void MySpaceTime::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
     B = b->StealData();
     X = x.StealData();
 
+    // Mass integrator (lumped) for time integration
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+        BilinearForm *m = new BilinearForm(fespace);
+        if (m_lumped) m->AddDomainIntegrator(new LumpedIntegrator(new MassIntegrator));
+        else m->AddDomainIntegrator(new MassIntegrator);
+        m->Assemble();
+        m->Finalize();
+        SparseMatrix M;
+        m->FormSystemMatrix(ess_tdof_list, M);
+        m->LoseMat();
+        m_M_rowptr = M.GetI();
+        m_M_colinds = M.GetJ();
+        m_M_data = M.GetData();
+        M.LoseData();
+        delete m;
+    }
+
     delete a;
-//    delete m;
     delete b; 
     if (fec) {
       delete fespace;

@@ -11,6 +11,7 @@ class MySpaceTime : public SpaceTimeMatrix
 {
 private:
 
+	bool m_lumped;
 	int m_refLevels;
 	int m_order;
 	int m_dim;

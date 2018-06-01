@@ -25,10 +25,14 @@ int main(int argc, char *argv[])
     double solve_tol = 1e-8;
     int print_level = 3;
     int timeDisc = 11;
+    int max_iter = 100;
 
-	AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    const char* temp_prerelax = "";
-    const char* temp_postrelax = "FFC";
+    // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
+    // const char* temp_prerelax = "";
+    // const char* temp_postrelax = "FFC";
+    AMG_parameters AMG = {"A", "A", 6, 6, 0.01, 6, -1, 0.1, 0};
+    const char* temp_prerelax = "A";
+    const char* temp_postrelax = "A";
 
     OptionsParser args(argc, argv);
     args.AddOption(&timeDisc, "-t", "--time-disc",
@@ -87,9 +91,8 @@ int main(int argc, char *argv[])
         MySpaceTime STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
         STmatrix.BuildMatrix();
         STmatrix.SetAMGParameters(AMG);
-
-        if (use_gmres) STmatrix.SolveGMRES(solve_tol);
-        else STmatrix.SolveAMG(solve_tol);
+        if (use_gmres) STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
+        else STmatrix.SolveAMG(solve_tol, max_iter, print_level);
     }
 
     MPI_Finalize();

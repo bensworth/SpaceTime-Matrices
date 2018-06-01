@@ -100,14 +100,14 @@ private:
     virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                           int* &A_colinds, double* &A_data, double* &B,
                                           double* &X, int &localMinRow, int &localMaxRow,
-                                          int &spatialDOFs, double t, double dt) = 0;
+                                          int &spatialDOFs, double t) = 0;
     // Spatial discretization on one processor
     virtual void getSpatialDiscretization(int* &A_rowptr, int* &A_colinds, double* &A_data,
                                           double* &B, double* &X, int &spatialDOFs,
-                                          double t, double dt) = 0;
+                                          double t) = 0;
 
-    //
-    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
+    // Get mass matrix for time integration; only for finite element discretizations.
+    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data) { };
 
     // TODO: Add support in functions for this; make optional? 
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t) = 0;
