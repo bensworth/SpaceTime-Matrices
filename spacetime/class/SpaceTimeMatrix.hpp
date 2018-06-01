@@ -98,13 +98,16 @@ private:
     // over processors each time called, e.g., first processor in communicator gets
     // first 10 spatial DOFs, second processor next 10, and so on. 
     virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
-                                          int *&A_colinds, double *&A_data, double *&B,
-                                          double *&X, int &localMinRow, int &localMaxRow,
+                                          int* &A_colinds, double* &A_data, double* &B,
+                                          double* &X, int &localMinRow, int &localMaxRow,
                                           int &spatialDOFs, double t, double dt) = 0;
     // Spatial discretization on one processor
-    virtual void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
-                                          double *&B, double *&X, int &spatialDOFs,
+    virtual void getSpatialDiscretization(int* &A_rowptr, int* &A_colinds, double* &A_data,
+                                          double* &B, double* &X, int &spatialDOFs,
                                           double t, double dt) = 0;
+
+    //
+    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
 
     // TODO: Add support in functions for this; make optional? 
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t) = 0;

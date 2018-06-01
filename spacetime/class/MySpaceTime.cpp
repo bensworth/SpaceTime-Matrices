@@ -5,7 +5,8 @@ using namespace mfem;
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
-	SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1)
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
+    M_rowptr(NULL), M_colinds(NULL), M_data(NULL)
 {
     m_order = 1;
     m_refLevels = 1;
@@ -13,8 +14,9 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps):
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-						 double t0, double t1): 
-	SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1)
+                         double t0, double t1): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
+    M_rowptr(NULL), M_colinds(NULL), M_data(NULL)
 {
     m_order = 1;
     m_refLevels = 1;
@@ -22,27 +24,29 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-						 int refLevels, int order): 
-	SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
-	m_refLevels{refLevels}, m_order{order}
+                         int refLevels, int order): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
+    M_rowptr(NULL), M_colinds(NULL), M_data(NULL),
+    m_refLevels{refLevels}, m_order{order}
 {
 
 }
 
 
 MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-						 double t0, double t1, int refLevels, int order): 
-	SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-	m_refLevels{refLevels}, m_order{order}
+                         double t0, double t1, int refLevels, int order): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
+    M_rowptr(NULL), M_colinds(NULL), M_data(NULL),
+    m_refLevels{refLevels}, m_order{order}
 {
 
 }
 
 
-void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
-										   int *&A_colinds, double *&A_data, double *&B,
-										   double *&X, int &localMinRow, int &localMaxRow,
-										   int &spatialDOFs, double t)
+void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
+                                           int* &A_colinds, double* &A_data, double* &B,
+                                           double* &X, int &localMinRow, int &localMaxRow,
+                                           int &spatialDOFs, double t)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -138,9 +142,9 @@ void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
 
 
 /* Time-independent spatial discretization of Laplacian */
-void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
-										   double *&A_data, double *&B, double *&X,
-										   int &spatialDOFs, double t)
+void MySpaceTime::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
+                                           double* &A_data, double* &B, double* &X,
+                                           int &spatialDOFs, double t)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -191,9 +195,10 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     // m->AddDomainIntegrator(new LumpedIntegrator(new MassIntegrator));
     // m->Assemble();
     // m->Finalize();
+    // m->FormSystemMatrix(ess_tdof_list, M);
     // HypreParMatrix *M = m -> ParallelAssemble();
+    // SparseMatrix M = m->SpMat();
 
-    // TODO : SCALE BY MASS INVERSE
 
     // Assemble bilinear form and corresponding linear system
     Vector B0;
@@ -201,8 +206,6 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     SparseMatrix A, M;
     a->Assemble();
     a->FormLinearSystem(ess_tdof_list, x, *b, A, X0, B0, 0);
-    // m->FormSystemMatrix(ess_tdof_list, M);
-    // SparseMatrix M = m->SpMat();
 
     // Change ownership of matrix data to sparse matrix from bilinear form
     spatialDOFs = A.NumRows();
@@ -228,3 +231,20 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     // TODO: debug
     // A *= (1.0+t);       // Scale by t to distinguish system at different times for verification
 }
+
+
+void MySpaceTime::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
+{
+    // Check that mass matrix has been constructed
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+        std::cout << "WARNING: Mass matrix not integrated.\n";
+        return;
+    }
+
+    // Direct pointers to mass matrix data arrays
+    M_rowptr = m_M_rowptr;
+    M_colinds = m_M_colinds; 
+    M_data = m_M_data;
+}
+
+

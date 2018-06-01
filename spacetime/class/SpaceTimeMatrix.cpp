@@ -10,18 +10,6 @@
 //      - Add isTimeDependent option
 //      - Finish AB2 for spatial parallel
 //      - Add hypre timing for setup and solve (see ij.c)
-//      - May be something wrong with BDF3 implementation --> singular matrix?
-//          + lots of sing submatrices, bad/stalling overall conv.
-//          + Seems related to number of processors (actually relaxation: GS better on less proc)
-//              CON: srun -N 16 -n 256 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 8 -Ar 3 -Ac 3
-//              DNC: srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 8 -Ar 3 -Ac 3
-//      - Seems like parallel coarsening can be a problem.
-//          CON (no gmres, n16): srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 0
-//          DNC (gmres, n16): srun -N 1 -n 16 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 1
-//          DNC (no gmres, n256): srun -N 16 -n 256 -p pdebug driver -nt 128 -t 12 -o 1 -l 4 -Af 0 -Ai 6 -Ar 0 -Ac 3 -AIR 2 -AsC 0.1 -AsR 0.01 -gmres 0
-//      - Figure out why can't destroy IJ matrix
-//      - May be something wrong with BDF3 implementation --> singular matrix?
-//          + lots of sing submatrices, bad/stalling overall conv.
 //      - Something wrong with GMRES
 //            srun -N 4 -n 64 -p pdebug driver -nt 512 -t 12 -o 2 -l 4 -Af 0 -Ai 100 -AIR 2 -gmres 1
 //        doesn't converge, but does if you turn off gmres...
@@ -98,11 +86,11 @@ void SpaceTimeMatrix::BuildMatrix()
 void SpaceTimeMatrix::GetMatrix_ntLE1()
 {
     // Get local CSR structure
-    int *rowptr;
-    int *colinds;
-    double *data;
-    double *B;
-    double *X;
+    int* rowptr;
+    int* colinds;
+    double* data;
+    double* B;
+    double* X;
     int localMinRow;
     int localMaxRow;
     int spatialDOFs;
@@ -143,8 +131,8 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     HYPRE_IJMatrixInitialize(m_Aij);
 
     // Set matrix coefficients
-    int *rows = new int[onProcSize];
-    int *cols_per_row = new int[onProcSize];
+    int* rows = new int[onProcSize];
+    int* cols_per_row = new int[onProcSize];
     for (int i=0; i<onProcSize; i++) {
         rows[i] = ilower + i;
         cols_per_row[i] = rowptr[i+1] - rowptr[i];
@@ -185,11 +173,11 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
 void SpaceTimeMatrix::GetMatrix_ntGT1()
 {
     // Get local CSR structure
-    int *rowptr;
-    int *colinds;
-    double *data;
-    double *B;
-    double *X;
+    int* rowptr;
+    int* colinds;
+    double* data;
+    double* B;
+    double* X;
     int onProcSize;
     if (m_timeDisc == 11) {
         BDF1(rowptr, colinds, data, B, X, onProcSize);
@@ -226,8 +214,8 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     HYPRE_IJMatrixInitialize(m_Aij);
 
     // Set matrix coefficients
-    int *rows = new int[onProcSize];
-    int *cols_per_row = new int[onProcSize];
+    int* rows = new int[onProcSize];
+    int* cols_per_row = new int[onProcSize];
     for (int i=0; i<onProcSize; i++) {
         rows[i] = ilower + i;
         cols_per_row[i] = rowptr[i+1] - rowptr[i];
@@ -342,7 +330,7 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         std::string Fr("F");
         std::string Cr("C");
         std::string Ar("A");
-        int **grid_relax_points = new int *[4];
+        int* *grid_relax_points = new int* [4];
         grid_relax_points[0] = NULL;
         grid_relax_points[1] = new int[ns_down];
         grid_relax_points[2] = new int [ns_up];
@@ -451,28 +439,37 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
 /* ------------------------------------------------------------------------- */
 
 /* First-order BDF implicit scheme (Backward Euler / 1st-order Adams-Moulton). */
-void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
-                           double *&B, double *&X, int &onProcSize)
+void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
+                           double* &B, double* &X, int &onProcSize)
 {
     int tInd0 = m_globRank*m_ntPerProc;
     int tInd1 = tInd0 + m_ntPerProc -1;
 
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
-    double *B0;
-    double *X0;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* B0;
+    double* X0;
     int spatialDOFs;
     getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                             X0, spatialDOFs, m_dt*tInd0, m_dt);
+                             X0, spatialDOFs, m_dt*tInd0);
     int nnzPerTime = T_rowptr[spatialDOFs];    
+
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
+        M_data[i] /= m_dt;
+    }
 
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
-    onProcSize = m_ntPerProc * spatialDOFs;
-    int procNnz    = m_ntPerProc * (spatialDOFs + nnzPerTime);     // nnzs on this processor
-    if (tInd0 == 0) procNnz -= spatialDOFs;
+    onProcSize  = m_ntPerProc * spatialDOFs;
+    int procNnz = m_ntPerProc * (M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
+    if (tInd0 == 0) procNnz -= M_rowptr[spatialDOFs];
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -495,7 +492,7 @@ void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
             delete[] B0;
             delete[] X0;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, m_dt*ti, m_dt);
+                                     X0, spatialDOFs, m_dt*ti);
         }
 
         int colPlusOffd  = (ti - 1)*spatialDOFs;
@@ -592,29 +589,38 @@ void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
 
 
 /* Second-order BDF implicit scheme. */
-void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
-                           double *&B, double *&X, int &onProcSize)
+void SpaceTimeMatrix::BDF2(int* &rowptr, int* &colinds, double* &data,
+                           double* &B, double* &X, int &onProcSize)
 {
     int tInd0 = m_globRank*m_ntPerProc;
     int tInd1 = tInd0 + m_ntPerProc -1;
 
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
-    double *B0;
-    double *X0;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* B0;
+    double* X0;
     int spatialDOFs;
     getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                             X0, spatialDOFs, m_dt*tInd0, m_dt);
+                             X0, spatialDOFs, m_dt*tInd0);
     int nnzPerTime = T_rowptr[spatialDOFs];    
     
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
+        M_data[i] /= m_dt;
+    }
+
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
-    onProcSize = m_ntPerProc * spatialDOFs;
-    int procNnz    = m_ntPerProc * (2*spatialDOFs + nnzPerTime);     // nnzs on this processor
-    if (tInd0 == 0) procNnz -= 2*spatialDOFs;
-    if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= spatialDOFs;
+    onProcSize  = m_ntPerProc * spatialDOFs;
+    int procNnz = m_ntPerProc * (2*M_rowptr[spatialDOFs] + nnzPerTime);   // nnzs on this processor
+    if (tInd0 == 0) procNnz -= 2*M_rowptr[spatialDOFs];
+    if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= M_rowptr[spatialDOFs];
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -637,7 +643,7 @@ void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
             delete[] B0;
             delete[] X0;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, m_dt*ti, m_dt);
+                                     X0, spatialDOFs, m_dt*ti);
         }
 
         int colPlusDiag   = ti*spatialDOFs;
@@ -766,36 +772,48 @@ void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
     delete[] B0;
     delete[] X0;
 }
 
 
 /* Third-order BDF implicit scheme. */
-void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
-                           double *&B, double *&X, int &onProcSize)
+void SpaceTimeMatrix::BDF3(int* &rowptr, int* &colinds, double* &data,
+                           double* &B, double* &X, int &onProcSize)
 {
     int tInd0 = m_globRank*m_ntPerProc;
     int tInd1 = tInd0 + m_ntPerProc -1;
 
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
-    double *B0;
-    double *X0;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* B0;
+    double* X0;
     int spatialDOFs;
     getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                             X0, spatialDOFs, m_dt*tInd0, m_dt);
+                             X0, spatialDOFs, m_dt*tInd0);
     int nnzPerTime = T_rowptr[spatialDOFs];    
     
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
+        M_data[i] /= m_dt;
+    }
+
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
-    onProcSize = m_ntPerProc * spatialDOFs;
-    int procNnz    = m_ntPerProc * (3*spatialDOFs + nnzPerTime);     // nnzs on this processor
-    if (tInd0 == 0) procNnz -= 3*spatialDOFs;
-    if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= 2*spatialDOFs;
-    if ((tInd0 <= 2) && (tInd1 >= 2)) procNnz -= spatialDOFs;
+    onProcSize  = m_ntPerProc * spatialDOFs;
+    int procNnz = m_ntPerProc * (3*M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
+    if (tInd0 == 0) procNnz -= 3*M_rowptr[spatialDOFs];
+    if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= 2*M_rowptr[spatialDOFs];
+    if ((tInd0 <= 2) && (tInd1 >= 2)) procNnz -= M_rowptr[spatialDOFs];
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -818,7 +836,7 @@ void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
             delete[] B0;
             delete[] X0;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, m_dt*ti, m_dt);
+                                     X0, spatialDOFs, m_dt*ti);
         }
 
         int colPlusDiag   = ti*spatialDOFs;
@@ -997,37 +1015,40 @@ void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
     delete[] B0;
     delete[] X0;
 }
 
 
 /* Second-order Adams-Moulton implicit scheme (trapezoid method). */
-void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &onProcSize)
+void SpaceTimeMatrix::AM2(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &onProcSize)
 {
     int tInd0 = m_globRank*m_ntPerProc;
     int tInd1 = tInd0 + m_ntPerProc -1;
 
     // Get spatial discretization for previous time step, or first step if tInd0=0
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
-    double *Bi;
-    double *Xi;
-    int *T_rowptr_1 = NULL;
-    int *T_colinds_1 = NULL;
-    double *T_data_1 = NULL;
-    double *Bi_1 = NULL;
-    double *Xi_1 = NULL;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* Bi;
+    double* Xi;
+    int* T_rowptr_1 = NULL;
+    int* T_colinds_1 = NULL;
+    double* T_data_1 = NULL;
+    double* Bi_1 = NULL;
+    double* Xi_1 = NULL;
     int spatialDOFs;
     if (tInd0 > 0) {
         getSpatialDiscretization(T_rowptr, T_colinds, T_data, Bi, Xi,
-                                 spatialDOFs, m_dt*(tInd0-1), m_dt);
+                                 spatialDOFs, m_dt*(tInd0-1));
     }
     else {
         getSpatialDiscretization(T_rowptr, T_colinds, T_data, Bi, Xi,
-                                 spatialDOFs, m_dt*tInd0, m_dt);
+                                 spatialDOFs, m_dt*tInd0);
     }
     if (!m_isTimeDependent) {
         T_rowptr_1 = T_rowptr;
@@ -1037,6 +1058,15 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
         Xi_1 = Xi;   
     }
     int nnzPerTime = T_rowptr[spatialDOFs];    
+
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
+        M_data[i] /= m_dt;
+    }
 
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
@@ -1075,7 +1105,7 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
             Bi_1 = Bi;
             Xi_1 = Xi;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, Bi,
-                                     Xi, spatialDOFs, m_dt*ti, m_dt);
+                                     Xi, spatialDOFs, m_dt*ti);
         }
 
         // At time t=0, only have spatial discretization block.
@@ -1173,6 +1203,9 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
     delete[] Bi;
     delete[] Xi;
     if (m_isTimeDependent) {
@@ -1186,33 +1219,42 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
 
 
 /* First-order Adams-Bashforth explicit scheme (Forward Euler). */
-void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &onProcSize)
+void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &onProcSize)
 {
     int tInd0 = m_globRank*m_ntPerProc;
     int tInd1 = tInd0 + m_ntPerProc -1;
 
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
-    double *B0;
-    double *X0;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* B0;
+    double* X0;
     int spatialDOFs;
     if (tInd0 > 0) {
         getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0, X0,
-                                 spatialDOFs, m_dt*(tInd0-1), m_dt);
+                                 spatialDOFs, m_dt*(tInd0-1));
     }
     else {
         getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0, X0,
-                                 spatialDOFs, m_dt*tInd0, m_dt);
+                                 spatialDOFs, m_dt*tInd0);
     }
     int nnzPerTime = T_rowptr[spatialDOFs];    
-    
+ 
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
+        M_data[i] /= m_dt;
+    }
+
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;
-    int procNnz = m_ntPerProc * (spatialDOFs + nnzPerTime);     // nnzs on this processor
+    int procNnz = m_ntPerProc * (M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
     if (tInd0 == 0) procNnz -= nnzPerTime;
 
     rowptr  = new int[onProcSize + 1];
@@ -1236,7 +1278,7 @@ void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds, double *&data,
             delete[] B0;
             delete[] X0;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, m_dt*ti, m_dt);
+                                     X0, spatialDOFs, m_dt*ti);
         }
 
         int colPlusOffd  = (ti - 1)*spatialDOFs;
@@ -1314,37 +1356,40 @@ void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
     delete[] B0;
     delete[] X0;
 }
 
 
 /* Second-order Adams-Bashforth explicit scheme. */
-void SpaceTimeMatrix::AB2(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &onProcSize)
+void SpaceTimeMatrix::AB2(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &onProcSize)
 {
     int tInd0 = m_globRank*m_ntPerProc;
     int tInd1 = tInd0 + m_ntPerProc - 1;
 
     // Pointers to CSR arrays for A_{ti} and A_{ti-1}
-    int *T_rowptr_1;
-    int *T_colinds_1;
-    double *T_data_1;
-    double *Bi_1;
-    double *Xi_1;
-    int *T_rowptr_2 = NULL;
-    int *T_colinds_2 = NULL;
-    double *T_data_2 = NULL;
-    double *Bi_2 = NULL;
-    double *Xi_2 = NULL;
+    int* T_rowptr_1;
+    int* T_colinds_1;
+    double* T_data_1;
+    double* Bi_1;
+    double* Xi_1;
+    int* T_rowptr_2 = NULL;
+    int* T_colinds_2 = NULL;
+    double* T_data_2 = NULL;
+    double* Bi_2 = NULL;
+    double* Xi_2 = NULL;
     int spatialDOFs;
     if (tInd0 <= 1) {
         getSpatialDiscretization(T_rowptr_1, T_colinds_1, T_data_1,
-                                 Bi_1, Xi_1, spatialDOFs, 0, m_dt);
+                                 Bi_1, Xi_1, spatialDOFs, 0);
     }
     else {
         getSpatialDiscretization(T_rowptr_1, T_colinds_1, T_data_1, Bi_1,
-                                 Xi_1, spatialDOFs, m_dt*(tInd0-2), m_dt);
+                                 Xi_1, spatialDOFs, m_dt*(tInd0-2));
     }
     if (!m_isTimeDependent) {
         T_rowptr_2 = T_rowptr_1;
@@ -1356,10 +1401,19 @@ void SpaceTimeMatrix::AB2(int *&rowptr, int *&colinds, double *&data,
 
     int nnzPerTime = T_rowptr_1[spatialDOFs];    
 
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
+        M_data[i] /= m_dt;
+    }
+
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;
-    int procNnz = m_ntPerProc * (2*nnzPerTime + spatialDOFs);     // nnzs on this processor
+    int procNnz = m_ntPerProc * (2*nnzPerTime + M_rowptr[spatialDOFs]);     // nnzs on this processor
     if (tInd0 == 0) procNnz -= 2*nnzPerTime;
     if ((tInd0 <= 1) && (tInd1 >= 1)) procNnz -= nnzPerTime;
 
@@ -1395,7 +1449,7 @@ void SpaceTimeMatrix::AB2(int *&rowptr, int *&colinds, double *&data,
             Bi_2 = Bi_1;
             Xi_2 = Xi_1;
             getSpatialDiscretization(T_rowptr_1, T_colinds_1, T_data_1, Bi_1,
-                                     Xi_1, spatialDOFs, m_dt*(ti-1), m_dt);
+                                     Xi_1, spatialDOFs, m_dt*(ti-1));
         }
 
         // At time t=0, only have identity block on diagonal
@@ -1519,6 +1573,9 @@ void SpaceTimeMatrix::AB2(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr_1;
     delete[] T_colinds_1;
     delete[] T_data_1;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
     delete[] Bi_1;
     delete[] Xi_1;
     if (m_isTimeDependent) {
@@ -1536,24 +1593,33 @@ void SpaceTimeMatrix::AB2(int *&rowptr, int *&colinds, double *&data,
 /* ------------------------------------------------------------------------- */
 
 /* First-order BDF implicit scheme (Backward Euler / 1st-order Adams-Moulton). */
-void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &localMinRow,
+void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &localMinRow,
                           int &localMaxRow, int &spatialDOFs)
 {
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
     getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                              B, X, localMinRow, localMaxRow, spatialDOFs,
-                             m_dt*m_timeInd, m_dt);
+                             m_dt*m_timeInd);
     int procRows = localMaxRow - localMinRow + 1;
     int nnzPerTime = T_rowptr[procRows];    
+
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[procRows]; i++) {
+        M_data[i] /= m_dt;
+    }
 
     // Get number nnz on this processor.
     int procNnz;
     if (m_timeInd == 0) procNnz = nnzPerTime;
-    else procNnz = nnzPerTime + procRows;
+    else procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
 
     // Allocate CSR structure.
     rowptr  = new int[procRows + 1];
@@ -1642,29 +1708,41 @@ void SpaceTimeMatrix::BDF1(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
 }
 
 
 /* Second-order BDF implicit scheme. */
-void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &localMinRow,
+void SpaceTimeMatrix::BDF2(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &localMinRow,
                           int &localMaxRow, int &spatialDOFs)
 {
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
     getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                              B, X, localMinRow, localMaxRow, spatialDOFs,
-                             m_dt*m_timeInd, m_dt);
+                             m_dt*m_timeInd);
     int procRows = localMaxRow - localMinRow + 1;
     int nnzPerTime = T_rowptr[procRows];    
+
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[procRows]; i++) {
+        M_data[i] /= m_dt;
+    }
     
     // Get number nnz on this processor.
     int procNnz;
     if (m_timeInd == 0) procNnz = nnzPerTime;
-    else if (m_timeInd == 1) procNnz = nnzPerTime + procRows;
-    else procNnz = nnzPerTime + 2*procRows;
+    else if (m_timeInd == 1) procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
+    else procNnz = nnzPerTime + 2*(M_rowptr[procRows] - M_rowptr[0]);
 
     // Allocate CSR structure.
     rowptr  = new int[procRows + 1];
@@ -1795,30 +1873,42 @@ void SpaceTimeMatrix::BDF2(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
 }
 
 
 /* Third-order BDF implicit scheme. */
-void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &localMinRow,
+void SpaceTimeMatrix::BDF3(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &localMinRow,
                           int &localMaxRow, int &spatialDOFs)
 {
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
     getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                              B, X, localMinRow, localMaxRow, spatialDOFs,
-                             m_dt*m_timeInd, m_dt);
+                             m_dt*m_timeInd);
     int procRows = localMaxRow - localMinRow + 1;
     int nnzPerTime = T_rowptr[procRows];    
+
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[procRows]; i++) {
+        M_data[i] /= m_dt;
+    }
     
     // Get number nnz on this processor.
     int procNnz;
     if (m_timeInd == 0) procNnz = nnzPerTime;
-    else if (m_timeInd == 1) procNnz = nnzPerTime + procRows;
-    else if (m_timeInd == 2) procNnz = nnzPerTime + 2*procRows;
-    else procNnz = nnzPerTime + 3*procRows;
+    else if (m_timeInd == 1) procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
+    else if (m_timeInd == 2) procNnz = nnzPerTime + 2*(M_rowptr[procRows] - M_rowptr[0]);
+    else procNnz = nnzPerTime + 3*(M_rowptr[procRows] - M_rowptr[0]);
 
     // Allocate CSR structure.
     rowptr  = new int[procRows + 1];
@@ -1997,31 +2087,43 @@ void SpaceTimeMatrix::BDF3(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
 }
 
 
 /* Second-order Adams-Moulton implicit scheme (trapezoid method). */
-void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
-                          double *&B, double *&X, int &localMinRow,
+void SpaceTimeMatrix::AM2(int* &rowptr, int* &colinds, double* &data,
+                          double* &B, double* &X, int &localMinRow,
                           int &localMaxRow, int &spatialDOFs)
 {
     // Get spatial discretization for previous time step, or first step if m_timeInd0=0
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
-    double *Bi = NULL;
-    double *Xi = NULL;
-    int *T_rowptr_1 = NULL;
-    int *T_colinds_1 = NULL;
-    double *T_data_1 = NULL;
-    double *Bi_1 = NULL;
-    double *Xi_1 = NULL;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* Bi = NULL;
+    double* Xi = NULL;
+    int* T_rowptr_1 = NULL;
+    int* T_colinds_1 = NULL;
+    double* T_data_1 = NULL;
+    double* Bi_1 = NULL;
+    double* Xi_1 = NULL;
     int procNnz;
     getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                              B, X, localMinRow, localMaxRow, spatialDOFs,
-                             m_dt*(m_timeInd), m_dt);
+                             m_dt*(m_timeInd));
     int procRows = localMaxRow - localMinRow + 1;
     procNnz = T_rowptr[procRows];
+
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[procRows]; i++) {
+        M_data[i] /= m_dt;
+    }
 
     // Get discretization at time ti-1 for Adams-Moulton if m_timeInd!=0. 
     if (m_timeInd > 0) {
@@ -2029,7 +2131,7 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
         int localMaxRow_1;
         getSpatialDiscretization(m_spatialComm, T_rowptr_1, T_colinds_1, T_data_1,
                                  B, X, localMinRow_1, localMaxRow_1,
-                                 spatialDOFs, m_dt*(m_timeInd-1), m_dt);
+                                 spatialDOFs, m_dt*(m_timeInd-1));
      
         // Check that discretization at time ti and ti-1 allocate the same rows
         // to this processor.
@@ -2148,6 +2250,9 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
     delete[] Bi;
     delete[] Xi;
     delete[] T_rowptr_1;
@@ -2159,32 +2264,41 @@ void SpaceTimeMatrix::AM2(int *&rowptr, int *&colinds, double *&data,
 
 
 /* First-order Adams-Bashforth explicit scheme (Forward Euler). */
-void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds,  double *&data,
-                          double *&B, double *&X, int &localMinRow,
+void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
+                          double* &B, double* &X, int &localMinRow,
                           int &localMaxRow, int &spatialDOFs)
 {
     // Get spatial discretization for first time step on this processor
-    int *T_rowptr;
-    int *T_colinds;
-    double *T_data;
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
     if (m_timeInd == 0) {    
         getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                                  B, X, localMinRow, localMaxRow, spatialDOFs,
-                                 m_dt*m_timeInd, m_dt);
+                                 m_dt*m_timeInd);
     }
     else {
         getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                                  B, X, localMinRow, localMaxRow, spatialDOFs,
-                                 m_dt*(m_timeInd-1), m_dt);
+                                 m_dt*(m_timeInd-1));
     }
     int procRows = localMaxRow - localMinRow + 1;
     int nnzPerTime = T_rowptr[procRows];    
 
+    // Get mass matrix and scale by 1/dt
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    for (int i=0; i<M_rowptr[procRows]; i++) {
+        M_data[i] /= m_dt;
+    }
+
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     int procNnz;
-    if (m_timeInd == 0) procNnz = procRows;
-    else procNnz = nnzPerTime + procRows;
+    if (m_timeInd == 0) procNnz = (M_rowptr[procRows] - M_rowptr[0]);
+    else procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
 
     // Allocate CSR structure.
     rowptr  = new int[procRows + 1];
@@ -2268,5 +2382,8 @@ void SpaceTimeMatrix::AB1(int *&rowptr, int *&colinds,  double *&data,
     delete[] T_rowptr;
     delete[] T_colinds;
     delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
 }
 
