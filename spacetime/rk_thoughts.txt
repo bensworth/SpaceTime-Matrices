@@ -1,0 +1,39 @@
+As to how the RK schemes are written, I think it depends on how the processors are distributed for the problem. I think it'll be pretty easy to end up with some sort of bottleneck if we're not careful. 
+
+To look at a concrete example, say we're considering AB3 on pp. 2 of the "initializing_multi_notes.pdf" on the repo. Then we need starting values u0, u1 and u2 to go into the RHS vector.
+
+Say we have 1 processor allocated per block row (i.e. one time level), then the processors 1, 2 and 3 (which own block rows 1, 2 and 3) all have to use an RK solver to generate starting values from u0. However, these processors are going to have a much bigger work load than all the other processors because solving the linear systems in the RK schemes is relatively expensive.  
+
+And then all this becomes much more complicated if we have 1 processor split over more than 1 block row, or if we have multiple processors per block row. 
+
+An idea I have is to allocate a separate group of processors that can do the RK integration in a distributed fashion, e.g., solve the linear systems in parallel, so that then end result would be u1 and u2 distributed over this processor group. Then, they could be communicated out to appropriate processors to go into the RHS vector (i.e. those owning block rows 1, 2 and 3). But I have no idea how this would work and if the communication would be too expensive.  
+
+I really have no idea what a good (or even plausible, haha) strategy is here...
+
+
+----------------
+HYPRE functions:
+----------------
+
+What's the difference between functions prefixed with "hypre" vs "HYPRE"? Some of the examples below don't have "HYPRE" counterparts... the ones with the lowercase prefix seem like they take pointers to hypre objects??
+
+In _hypre_parcsr_mv.h have:
+	1. HYPRE_Int hypre_ParCSRMatrixMatvecOutOfPlace ( HYPRE_Complex alpha , hypre_ParCSRMatrix *A , hypre_ParVector *x , HYPRE_Complex beta , hypre_ParVector *b, hypre_ParVector *y );
+		which computes y = alpha*A*x + beta*b
+
+	2. HYPRE_Int hypre_ParCSRMatrixMatvec ( HYPRE_Complex alpha , hypre_ParCSRMatrix *A , hypre_ParVector *x , HYPRE_Complex beta , hypre_ParVector *y );
+		which computes y = alpha*A*x + beta*y
+
+	There is also this version: HYPRE_Int HYPRE_ParCSRMatrixMatvec ( HYPRE_Complex alpha , HYPRE_ParCSRMatrix A , HYPRE_ParVector x , HYPRE_Complex beta , HYPRE_ParVector y );
+
+	3. HYPRE_Int HYPRE_ParVectorScale ( HYPRE_Complex value , HYPRE_ParVector x );
+
+	4. HYPRE_Int HYPRE_ParVectorAxpy ( HYPRE_Complex alpha , HYPRE_ParVector x , HYPRE_ParVector y );
+		This seems like it does y += alpha*x. Not documented very well. I've traced this back to seq_mv/vector.c
+
+	5. HYPRE_ParVectorCopy( HYPRE_ParVector x, HYPRE_ParVector y )
+		This seems like it populates y with data from x. Again, not document very well, traced back into seq_mv/vector.c
+
+In HYPRE_IJ_MV.h
+	1. HYPRE_Int HYPRE_IJVectorGetLocalRange(HYPRE_IJVector  vector, HYPRE_Int *jlower, HYPRE_Int *jupper);
+		Returns range of the part of the vector owned by this processor.

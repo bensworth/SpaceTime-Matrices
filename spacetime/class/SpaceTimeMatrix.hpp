@@ -5,6 +5,16 @@
 #include "HYPRE_parcsr_ls.h"
 #include "HYPRE_krylov.h"
 
+/* Struct containing Butcher table for RK methods */
+struct RK_butcher
+{
+    int num_stages; 
+    double ** a; // Matrix of coefficients.
+    double * b;
+    double * c; 
+    int isSDIRK; 
+};
+
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
     std::string prerelax;
@@ -93,6 +103,9 @@ private:
               double *&X, int &onProcSize);
     void AB2(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
+
+    // Runge--Kutta schemes
+    
 
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
