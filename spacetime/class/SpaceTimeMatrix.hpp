@@ -5,13 +5,17 @@
 #include "HYPRE_parcsr_ls.h"
 #include "HYPRE_krylov.h"
 
+#include "_hypre_parcsr_mv.h"
+
 /* Struct containing Butcher table for RK methods */
 struct RK_butcher
 {
+    // Assume have no more than 3 stages.
     int num_stages; 
-    double ** a; // Matrix of coefficients.
-    double * b;
-    double * c; 
+    double a[3][3]; // Matrix of coefficients.
+    double b[3];
+    double c[3]; 
+    int isImplicit;
     int isSDIRK; 
 };
 
@@ -105,8 +109,11 @@ private:
               double *&X, int &onProcSize);
 
     // Runge--Kutta schemes
-    
+    void getButcher(RK_butcher butch, int option);
+    void ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, HYPRE_ParVector * par_u0, double t0, double delta_t, int ilower, int iupper, int * M_rowptr, int * M_colinds, double * M_data, int * L_rowptr, int * L_colinds, double * L_data, double * g_data);
+    void DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, HYPRE_ParVector * par_u0, double t0, double delta_t, int ilower, int iupper, int * M_rowptr, int * M_colinds, double * M_data, int * L_rowptr, int * L_colinds, double * L_data, double * g_data);
 
+    
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
     // first 10 spatial DOFs, second processor next 10, and so on. 
@@ -130,7 +137,7 @@ public:
     virtual ~SpaceTimeMatrix();
 
     void BuildMatrix();
-    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename1); }
+    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); } // this said filename1?
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();

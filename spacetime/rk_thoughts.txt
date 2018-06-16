@@ -15,7 +15,7 @@ I really have no idea what a good (or even plausible, haha) strategy is here...
 HYPRE functions:
 ----------------
 
-What's the difference between functions prefixed with "hypre" vs "HYPRE"? Some of the examples below don't have "HYPRE" counterparts... the ones with the lowercase prefix seem like they take pointers to hypre objects??
+What's the difference between functions prefixed with "hypre" vs "HYPRE"? Some of the examples below don't have "HYPRE" counterparts... the ones with the lowercase prefix seem like they take pointers to hypre objects?? I think HYPRE types are pointers to hypre types.
 
 In _hypre_parcsr_mv.h have:
 	1. HYPRE_Int hypre_ParCSRMatrixMatvecOutOfPlace ( HYPRE_Complex alpha , hypre_ParCSRMatrix *A , hypre_ParVector *x , HYPRE_Complex beta , hypre_ParVector *b, hypre_ParVector *y );

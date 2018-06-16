@@ -217,7 +217,7 @@ void MySpaceTime::getSpatialDiscretization(int *&A_rowptr, int *&A_colinds,
     X = x.StealData();
 
     delete a;
-    delete m;
+    //delete m; no m declared here??
     delete b; 
     if (fec) {
       delete fespace;
