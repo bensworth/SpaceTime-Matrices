@@ -1,10 +1,10 @@
-#include "MySpaceTime.hpp"
+#include "CGdiffusion.hpp"
 #include "mfem.hpp"
 using namespace mfem;
 
 
 
-MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
+CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
 {
@@ -14,7 +14,7 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps):
 }
 
 
-MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double t0, double t1): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
@@ -25,7 +25,7 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          int refLevels, int order): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
@@ -35,7 +35,7 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double t0, double t1, int refLevels, int order): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
@@ -45,7 +45,7 @@ MySpaceTime::MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
+void CGdiffusion::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
                                            int* &A_colinds, double* &A_data, double* &B,
                                            double* &X, int &localMinRow, int &localMaxRow,
                                            int &spatialDOFs, double t)
@@ -162,7 +162,7 @@ void MySpaceTime::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
 
 
 /* Time-independent spatial discretization of Laplacian */
-void MySpaceTime::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
+void CGdiffusion::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
                                            double* &A_data, double* &B, double* &X,
                                            int &spatialDOFs, double t)
 {
@@ -259,7 +259,7 @@ void MySpaceTime::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
 }
 
 
-void MySpaceTime::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
+void CGdiffusion::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
 {
     // Check that mass matrix has been constructed
     if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {

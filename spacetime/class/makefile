@@ -12,7 +12,7 @@ LDLIBS   = -lmfem -lHYPRE -lmetis
 # Files to compile
 #	TODO : Maybe should put class files in subdirectory so can use wildcard.
 # SOURCE_FILES  = $(wildcard *.cpp)
-SOURCE_FILES  = SpaceTimeMatrix.cpp MySpaceTime.cpp
+SOURCE_FILES  = SpaceTimeMatrix.cpp CGdiffusion.cpp DGadvection.cpp $(wildcard ./src/*.cpp)
 OBJECT_FILES  = $(SOURCE_FILES:.cpp=.o)
 EXEC_FILES    = driver
 

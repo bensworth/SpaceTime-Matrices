@@ -1,13 +1,14 @@
-#include "SpaceTimeMatrix.hpp"
+#ifndef SPACETIMEMATRIX
+	#include "SpaceTimeMatrix.hpp"
+#endif
 
-
-// TODO:
+// TODO
 //	- Add option to set h^l ~ dt^k, where l is the spatial order and k
 //	  time order, that way accuracy same in space and time
 
 
 
-class MySpaceTime : public SpaceTimeMatrix
+class CGdiffusion : public SpaceTimeMatrix
 {
 private:
 
@@ -30,13 +31,13 @@ private:
 
 public:
 
-	MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps);
-	MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps);
+	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				double t0, double t1);
-	MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				int refLevels, int order);
-	MySpaceTime(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				double t0, double t1, int refLevels, int order);
-    ~MySpaceTime() { };
+    ~CGdiffusion() { };
 
 };
