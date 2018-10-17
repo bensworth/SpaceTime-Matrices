@@ -10,5 +10,6 @@
 *.blg
 *dSYM
 *.out*
-*.gitignore
 driver
+*.core
+makefile
