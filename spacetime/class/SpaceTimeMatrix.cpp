@@ -1109,7 +1109,7 @@ void SpaceTimeMatrix::AM2(int* &rowptr, int* &colinds, double* &data,
                                      Xi, spatialDOFs, m_dt*ti);
         }
 
-        // At time t=0, only have spatial discretization block.
+        // At time t=0, only have diagonal spatial discretization block.
         if (ti == 0) {
             // Loop over each row in spatial discretization at time ti
             for (int i=0; i<spatialDOFs; i++) {

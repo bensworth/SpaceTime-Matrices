@@ -1,4 +1,6 @@
-#include "SpaceTimeMatrix.hpp"
+#ifndef SPACETIMEMATRIX
+	#include "SpaceTimeMatrix.hpp"
+#endif
 #include "/g/g19/bs/quartz/AIR_tests/src/Quadrature.hpp"
 #include "mfem.hpp"
 using namespace mfem;

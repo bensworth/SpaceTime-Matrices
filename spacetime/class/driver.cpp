@@ -93,7 +93,6 @@ int main(int argc, char *argv[])
     // get destroyed before MPI_Finalize() is called. 
     if (spatialDisc == 1) {
         CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
-        // DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
         STmatrix.BuildMatrix();
         STmatrix.SetAMGParameters(AMG);
         if (use_gmres) STmatrix.SolveGMRES(solve_tol, max_iter, print_level);

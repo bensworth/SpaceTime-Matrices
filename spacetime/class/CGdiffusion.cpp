@@ -3,6 +3,8 @@
 using namespace mfem;
 
 
+// TODO : make sure this is discretizing -\Delta u = f
+
 
 CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
