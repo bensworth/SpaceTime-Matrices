@@ -434,6 +434,655 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
     HYPRE_GMRESSolve(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
 }
 
+/* ------------------------------------------------------------------------- */
+/* ------------------------- Runge--Kutta schemes -------------------------- */
+/* ------------------------------------------------------------------------- */
+/* 
+-TODO:
+    -Is it a good idea to have L and M passed to the schemes?? Maybe M yes. But maybe not L... It makes things kind of messy.
+    -Linear solvers & Preconditioners for inverting matrices
+    -I'm not really sure what the procedure is after altering a HYPRE object's values. Should it be reinitialized?
+    -Get some Butcher tables. Probably steal these from MFEM ODE solvers...
+    -Make non-mass matrix versions
+    -Clarify what getMassMatrix() does in the case that there isn't a mass matrix, I'm just assuming
+        the CSR components are NULL pointers.
+*/
+
+
+void SpaceTimeMatrix::getButcher(RK_butcher & butch, int option) {
+    // options prefixed with 1 are ERK
+    // options prefixed with 2 are DIRK
+
+    /* --- ERK tables --- */
+    // Forward Euler: 1st-order
+    if (option == 11) {
+        butch.isImplicit = 0;
+        butch.num_stages = 1;
+        butch.b[0] = 1;
+        butch.c[0] = 0.0;
+
+    // Heun's method: 2nd-order
+    } else if (option == 12) {
+        butch.isImplicit = 0;
+        butch.num_stages = 2;
+        butch.a[1][0] = 1.0;
+        butch.b[0] = 0.5;
+        butch.b[1] = 0.5;
+        butch.c[1] = 1.0;
+        
+    // TODO : 3rd-order
+    } else if (option == 13) {
+        butch.isImplicit = 0;
+        
+
+    /* --- DIRK tables --- */
+    // Backward Euler: 1st-order
+    } else if (option == 21) {
+        butch.isImplicit = 1;
+        butch.isSDIRK = 1;
+        butch.isImplicit = 1;
+        butch.num_stages = 1;
+        butch.a[0][0] = 1.0;
+        butch.b[0] = 1.0;
+        butch.c[1] = 0.0;
+
+    // TODO : 2nd-order
+    } else if (option == 22) {
+        butch.isImplicit = 1;
+        butch.isSDIRK = 1;
+    
+    
+    // TODO : 3rd-order
+    } else if (option == 23) { 
+        butch.isImplicit = 1;   
+        butch.isSDIRK = 1;
+    }
+}
+
+
+/* DIRK2/3 with mass matrix: 
+    step solution of M*du/dt = -L(t)*u + g(t) from solution u0 at t=t0 up to t=t0 + dt.
+
+-The RK updates are
+    u = u0 + dt*(b1*k1 + b2*k2 + b3*k3), with
+    [M + a11*dt*L(t_n+c1*dt)]*k1 = -L(t0)*u0 + g(t0)
+    [M + a22*dt*L(t_n+c1*dt)]*k2 = -L(t + c2*dt)*(u0 + dt*a21*k1) + g(t0 + c2*dt)
+    [M + a33*dt*L(t_n+c1*dt)]*k3 = -L(t + c3*dt)*(u0 + dt*a31*k1 + dt*a32*k2) + g(t0 + c3*dt)
+
+-NOTES:
+*/
+void SpaceTimeMatrix::DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
+                            HYPRE_ParVector * par_u0, double t0, double dt, 
+                            int ilower, int iupper, int * M_rowptr, int * M_colinds, 
+                            double * M_data) {
+
+    
+    /* ---------------------------------------------------------------- */
+    /* --- Initial processing of data for creation of HYPRE objects --- */
+    /* ---------------------------------------------------------------- */
+    int rebuild_L = m_isTimeDependent; // Do we need to rebuild L for each stage?
+    int rebuild_A = (rebuild_L || !butch.isSDIRK); // Do we need to rebuild A to compute each stage?
+    
+    // Build spatial disc components L and g at t = t0 + c[0]*dt.
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* B0;
+    double* X0;
+    int spatialDOFs;
+    getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                             X0, spatialDOFs, t0 + butch.c[0]*dt);
+    int T_nnz = T_rowptr[spatialDOFs]; // TODO : is this the Length of T_colinds and T_data?
+
+    // The number of rows owned by this processor?
+    int onProcSize = iupper - ilower - 1; // TODO: Is this correct??
+
+    // Process M so that it can be added to HYPRE matrices later 
+    int * rows = new int[onProcSize]; // Reuse this many times
+    int * cols_per_row_T = new int[onProcSize];
+    int * cols_per_row_M = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        rows[i] = ilower + i;
+        cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+        cols_per_row_M[i] = M_rowptr[i+1] - M_rowptr[i];
+    } 
+    
+    // Get L data to populate A.
+    double * A_data = new double[T_nnz];
+    double fac = butch.a[0][0]*dt;
+    for (int i = 0; i < T_nnz; i++) {
+        A_data[i] = fac*T_data[i];
+    }   
+    
+    /* ------------------------------------------ */
+    /* --- Initial set up of HYPRE components --- */
+    /* ------------------------------------------ */
+    // Initialize soluton vector: u <- u0
+    HYPRE_ParVectorCopy(*par_u0, *par_u); 
+
+    // Stage vectors to be found
+    HYPRE_IJVector k1;
+    HYPRE_ParVector par_k1;
+    HYPRE_IJVector k2;
+    HYPRE_ParVector par_k2;
+    HYPRE_IJVector k3;
+    HYPRE_ParVector par_k3;
+    
+    // Initialize a dummy RHS vector b.
+    HYPRE_IJVector b;
+    HYPRE_ParVector par_b;
+    HYPRE_IJVectorCreate(comm, ilower, iupper, &b); 
+    HYPRE_IJVectorSetObjectType(b, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(b);
+    HYPRE_IJVectorAssemble(b);
+    HYPRE_IJVectorGetObject(b, (void **) &par_b);
+
+    // Initialize a dummy temp vector; it's used in constructing later stage vectors.
+    HYPRE_IJVector temp;
+    HYPRE_ParVector par_temp;
+    if (butch.num_stages > 1) {
+        HYPRE_IJVectorCreate(comm, ilower, iupper, &temp); 
+        HYPRE_IJVectorSetObjectType(temp, HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(temp);
+        HYPRE_IJVectorAssemble(temp);
+        HYPRE_IJVectorGetObject(temp, (void **) &par_temp);
+    }
+
+    // Spatial discretization vector g
+    HYPRE_IJVector g;
+    HYPRE_ParVector par_g;
+    HYPRE_IJVectorCreate(comm, ilower, iupper, &g);
+    HYPRE_IJVectorSetObjectType(g, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(g);
+    HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);
+    HYPRE_IJVectorAssemble(g);
+    HYPRE_IJVectorGetObject(g, (void **) &par_g);
+
+    // Matrix in the stage linear systems & spatial disc matrix.
+    HYPRE_IJMatrix A;
+    HYPRE_ParCSRMatrix parcsr_A;
+    HYPRE_IJMatrix L; 
+    HYPRE_ParCSRMatrix parcsr_L;
+
+    // Initialize matrices
+    HYPRE_IJMatrixCreate(comm, ilower, iupper, ilower, iupper, &A);
+    HYPRE_IJMatrixSetObjectType(A, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(A);
+    HYPRE_IJMatrixCreate(comm, ilower, iupper, ilower, iupper, &L);
+    HYPRE_IJMatrixSetObjectType(L, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(L);
+
+    // Set matrix values
+    HYPRE_IJMatrixSetValues(A, onProcSize, cols_per_row_T, rows, T_colinds, A_data);
+    HYPRE_IJMatrixAddToValues(A, onProcSize, cols_per_row_M, rows, M_colinds, M_data); // A <- A + M.
+    HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+
+    // Finalize construction of matrices
+    HYPRE_IJMatrixAssemble(A);
+    HYPRE_IJMatrixGetObject(A, (void **) &parcsr_A);
+    HYPRE_IJMatrixAssemble(L);
+    HYPRE_IJMatrixGetObject(L, (void **) &parcsr_L);
+
+    
+    /* --------------------------------------------------------------------------------------------- */
+    /* --- SOLVE for k1: A*k1 == [M + a11*dt*L(t0+c1*dt)]*k1 = b == -L(t0)*u0 + g(t0) --- */
+    /* --------------------------------------------------------------------------------------------- */ 
+    // Populate RHS vector b <- -L*u0 + g
+    hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, parcsr_L, *par_u0, 1.0, par_g, par_b);
+
+    // Set up and finalize k1, but don't set its values yet.
+    HYPRE_IJVectorCreate(comm, ilower, iupper, &k1); 
+    HYPRE_IJVectorSetObjectType(k1, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(k1);
+    HYPRE_IJVectorAssemble(k1);
+    HYPRE_IJVectorGetObject(k1, (void **) &par_k1);
+
+    
+    // Solve linear system for k1
+    // TODO: What should the initial guess for k1 be?? Probably b?
+    HYPRE_ParVectorCopy(par_b, par_k1); // Populate k1 with b as initial guess.
+
+    // TODO: apply linear solve
+    // HYPRE_Solve(comm, &parcsr_A, par_b, par_k1);
+
+    // Update ODE solution: u <- u + dt*b1*k1
+    HYPRE_ParVectorAxpy(dt*butch.b[0], par_k1, *par_u);
+
+
+    /* ------------------------------------------------------------------------- */
+    /* --- SOLVE for k2: 
+        A*k2 == [M + a22*dt*L(t0+c1*dt)]*k2 = b 
+            == -L(t0 + c2*dt)*(u0 + dt*a21*k1) + g(t0 + c2*dt) --- */
+    /* ------------------------------------------------------------------------- */
+    if (butch.num_stages > 1) {
+        // Rebuild the spatial disc at time t=t0 + c2*delta_t ONLY if it's time dependent. 
+        // Allow for changes in sparsity pattern.
+        if (rebuild_L) {
+            delete[] T_rowptr;
+            delete[] T_colinds;
+            delete[] T_data;
+            delete[] B0;
+            delete[] X0;
+            delete[] cols_per_row_T;
+            
+            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                                     X0, spatialDOFs, t0 + butch.c[1]*dt);
+            T_nnz = T_rowptr[spatialDOFs];
+
+            cols_per_row_T = new int[onProcSize];
+            for (int i = 0; i < onProcSize; i++) {
+                rows[i] = ilower + i;
+                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+            } 
+            
+            // Update L matrix and G vector values
+            // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
+            HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+            HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);            
+        }
+
+        // Rebuild A if neccessary
+        if (rebuild_A) {
+            delete[] A_data;
+            A_data = new double[T_nnz];
+            fac = butch.a[1][1]*dt;
+            for (int i = 0; i < T_nnz; i++) {
+                A_data[i] = fac*T_data[i];
+            }
+            // TODO : as above with L, will this call remove existing entries of A even if they aren't in its possibly new sparsity pattern
+            HYPRE_IJMatrixSetValues(A, onProcSize, cols_per_row_T, rows, T_colinds, A_data);
+            HYPRE_IJMatrixAddToValues(A, onProcSize, cols_per_row_M, rows, M_colinds, M_data); // A <- A + M.
+        }
+
+        // Populate RHS vector b <- -L*(u0 + dt*a21*k1) + g
+        HYPRE_ParVectorCopy(*par_u0, par_temp); // temp <- u0
+        HYPRE_ParVectorAxpy(butch.a[1][0], par_k1, par_temp); // temp <- temp + a21*k1
+        hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, parcsr_L, par_temp, 1.0, par_g, par_b); // b = -L*temp + g
+
+        // Set up and finalize k2, but don't set its values yet.
+        HYPRE_IJVectorCreate(comm, ilower, iupper, &k2); 
+        HYPRE_IJVectorSetObjectType(k2, HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(k2);
+        HYPRE_IJVectorAssemble(k2);
+        HYPRE_IJVectorGetObject(k2, (void **) &par_k2);
+
+        // TODO: What should the initial guess for k2 be?? Probably b?
+        HYPRE_ParVectorCopy(par_b, par_k2); // Populate k2 with b as initial guess.
+
+        // TODO: Apply linear solver
+        // HYPRE_Solve(comm, &parcsr_A, par_b, par_k2);
+
+        // Update ODE solution: u += dt*b2*k2
+        HYPRE_ParVectorAxpy(dt*butch.b[1], par_k2, *par_u); 
+    }
+
+
+    /* --------------------------------------------------------------------------------------- */
+    /* --- SOLVE for k3: 
+        A*k1 == [M + a33*dt*L(t_n+c1*dt)]*k3 = 
+            -L(t + c3*dt)*(u0 + dt*a31*k1 + dt*a32*k2) + g(t0 + c3*dt) --- */
+    /* --------------------------------------------------------------------------------------- */
+    if (butch.num_stages > 2) {
+        // Rebuild the spatial disc at time t0 + c3*dt ONLY if it's time dependent. 
+        // Allow for changes in sparsity pattern.
+        if (rebuild_L) {
+            delete[] T_rowptr;
+            delete[] T_colinds;
+            delete[] T_data;
+            delete[] B0;
+            delete[] X0;
+            delete[] cols_per_row_T;
+            
+            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                                     X0, spatialDOFs, t0 + butch.c[2]*dt);
+            T_nnz = T_rowptr[spatialDOFs];
+
+            cols_per_row_T = new int[onProcSize];
+            for (int i = 0; i < onProcSize; i++) {
+                rows[i] = ilower + i;
+                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+            } 
+            
+            // Update L matrix and G vector values
+            // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
+            HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+            HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);            
+        }
+
+        // Rebuild A if neccessary
+        if (rebuild_A) {
+            delete[] A_data;
+            A_data = new double[T_nnz];
+            fac = butch.a[2][2]*dt;
+            for (int i = 0; i < onProcSize; i++) {
+                A_data[i] = fac*T_data[i];
+            }
+            // TODO : as above with L, will this call remove existing entries of A even if they aren't in its possibly new sparsity pattern
+            HYPRE_IJMatrixSetValues(A, onProcSize, cols_per_row_T, rows, T_colinds, A_data);
+            HYPRE_IJMatrixAddToValues(A, onProcSize, cols_per_row_M, rows, M_colinds, M_data); // A <- A + M.
+        }
+
+        // Populate RHS vector b <- -L*(u0 + dt*a31*k1 + dt*a32*k2) + g(t0 + dt*c3)
+        HYPRE_ParVectorCopy(*par_u0, par_temp); // temp <- u0
+        HYPRE_ParVectorAxpy(butch.a[2][0], par_k1, par_temp); // temp <- temp + a31*k1
+        HYPRE_ParVectorAxpy(butch.a[2][1], par_k2, par_temp); // temp <- temp + a32*k1
+        hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, parcsr_L, par_temp, 1.0, par_g, par_b); // b <- -L*temp + g
+
+        // Set up and finalize k3, but don't set its values yet.
+        HYPRE_IJVectorCreate(comm, ilower, iupper, &k3); 
+        HYPRE_IJVectorSetObjectType(k3, HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(k3);
+        HYPRE_IJVectorAssemble(k3);
+        HYPRE_IJVectorGetObject(k3, (void **) &par_k3);
+
+        
+        // Solve linear system for k3
+        // TODO: What should the initial guess for k3 be?? Probably b?
+        HYPRE_ParVectorCopy(par_b, par_k3); // Populate k3 with b as initial guess.
+
+        // TODO: Apply linear solve
+        // HYPRE_Solve(comm, &parcsr_A, par_b, par_k3);
+    
+        // Update ODE solution: u <- u + dt*b3*k3;
+        HYPRE_ParVectorAxpy(dt*butch.b[2], par_k3, *par_u); 
+    }
+
+      
+    /*----------------- */
+    /* --- Clean up --- */
+    /* ---------------- */
+    delete[] rows;
+    delete[] cols_per_row_M;
+    delete[] cols_per_row_T;
+    delete[] T_rowptr;
+    delete[] T_colinds;
+    delete[] T_data;
+    delete[] B0;
+    delete[] X0;
+    
+    HYPRE_IJVectorDestroy(g);
+    HYPRE_IJVectorDestroy(b);
+    HYPRE_IJVectorDestroy(k1);
+    HYPRE_IJMatrixDestroy(A);
+    HYPRE_IJMatrixDestroy(L);
+    
+    if (butch.num_stages > 1) {
+        HYPRE_IJVectorDestroy(k2);
+        HYPRE_IJVectorDestroy(temp);
+        if (butch.num_stages > 2) {
+            HYPRE_IJVectorDestroy(k3);
+        } 
+    }
+}
+/* End of DIRK with mass matrix */
+
+/* ERK with mass matrix */
+void SpaceTimeMatrix::ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
+                            HYPRE_ParVector * par_u0, double t0, double dt, 
+                            int ilower, int iupper, int * M_rowptr, int * M_colinds, 
+                            double * M_data) {
+
+    /* ---------------------------------------------------------------- */
+    /* --- Initial processing of data for creation of HYPRE objects --- */
+    /* ---------------------------------------------------------------- */
+    int rebuild_L = m_isTimeDependent; // Do we need to rebuild L for each stage?
+        
+    // Build spatial disc components L and g at t = t0 + c[0]*dt.
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double* B0;
+    double* X0;
+    int spatialDOFs;
+    getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                             X0, spatialDOFs, t0 + butch.c[0]*dt);
+
+    // The number of rows owned by this processor?
+    int onProcSize = iupper - ilower - 1; // TODO: Is this correct??
+
+    // Process M so that it can be added to HYPRE matrices later 
+    int * rows = new int[onProcSize]; // Reuse this many times
+    int * cols_per_row_T = new int[onProcSize];
+    int * cols_per_row_M = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        rows[i] = ilower + i;
+        cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+        cols_per_row_M[i] = M_rowptr[i+1] - M_rowptr[i];
+    }    
+    
+    /* ------------------------------------------ */
+    /* --- Initial set up of HYPRE components --- */
+    /* ------------------------------------------ */
+    // Initialize soluton vector: u <- u0
+    HYPRE_ParVectorCopy(*par_u0, *par_u); 
+
+    // Stage vectors to be found
+    HYPRE_IJVector k1;
+    HYPRE_ParVector par_k1;
+    HYPRE_IJVector k2;
+    HYPRE_ParVector par_k2;
+    HYPRE_IJVector k3;
+    HYPRE_ParVector par_k3;
+    
+    // Initialize a dummy RHS vector b.
+    HYPRE_IJVector b;
+    HYPRE_ParVector par_b;
+    HYPRE_IJVectorCreate(comm, ilower, iupper, &b); 
+    HYPRE_IJVectorSetObjectType(b, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(b);
+    HYPRE_IJVectorAssemble(b);
+    HYPRE_IJVectorGetObject(b, (void **) &par_b);
+
+    // Initialize a dummy temp vector; it's used in constructing later stage vectors.
+    HYPRE_IJVector temp;
+    HYPRE_ParVector par_temp;
+    if (butch.num_stages > 1) {
+        HYPRE_IJVectorCreate(comm, ilower, iupper, &temp); 
+        HYPRE_IJVectorSetObjectType(temp, HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(temp);
+        HYPRE_IJVectorAssemble(temp);
+        HYPRE_IJVectorGetObject(temp, (void **) &par_temp);
+    }
+
+    // Spatial discretization vector g
+    HYPRE_IJVector g;
+    HYPRE_ParVector par_g;
+    HYPRE_IJVectorCreate(comm, ilower, iupper, &g);
+    HYPRE_IJVectorSetObjectType(g, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(g);
+    HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);
+    HYPRE_IJVectorAssemble(g);
+    HYPRE_IJVectorGetObject(g, (void **) &par_g);
+
+    // Matrix in the stage linear systems & spatial disc matrix.
+    HYPRE_IJMatrix A;
+    HYPRE_ParCSRMatrix parcsr_A;
+    HYPRE_IJMatrix L; 
+    HYPRE_ParCSRMatrix parcsr_L;
+
+    // Initialize matrices
+    HYPRE_IJMatrixCreate(comm, ilower, iupper, ilower, iupper, &A);
+    HYPRE_IJMatrixSetObjectType(A, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(A);
+    HYPRE_IJMatrixCreate(comm, ilower, iupper, ilower, iupper, &L);
+    HYPRE_IJMatrixSetObjectType(L, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(L);
+
+    // Set matrix values
+    HYPRE_IJMatrixSetValues(A, onProcSize, cols_per_row_M, rows, M_colinds, M_data); // A <- M.
+    HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+
+    // Finalize construction of matrices
+    HYPRE_IJMatrixAssemble(A);
+    HYPRE_IJMatrixGetObject(A, (void **) &parcsr_A);
+    HYPRE_IJMatrixAssemble(L);
+    HYPRE_IJMatrixGetObject(L, (void **) &parcsr_L);
+
+    
+    /* --------------------------------------------------------------------------------------------- */
+    /* --- SOLVE for k1: 
+        M*k1 = b == -L(t0)*u0 + g(t0) --- */
+    /* --------------------------------------------------------------------------------------------- */ 
+    // Populate RHS vector b <- -L*u0 + g
+    hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, parcsr_L, *par_u0, 1.0, par_g, par_b);
+
+    // Set up and finalize k1, but don't set its values yet.
+    HYPRE_IJVectorCreate(comm, ilower, iupper, &k1); 
+    HYPRE_IJVectorSetObjectType(k1, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(k1);
+    HYPRE_IJVectorAssemble(k1);
+    HYPRE_IJVectorGetObject(k1, (void **) &par_k1);
+
+    
+    // Solve linear system for k1
+    // TODO: What should the initial guess for k1 be?? Probably b?
+    HYPRE_ParVectorCopy(par_b, par_k1); // Populate k1 with b as initial guess.
+
+    // TODO: apply linear solve
+    // HYPRE_Solve(comm, &parcsr_A, par_b, par_k1);
+
+    // Update ODE solution: u <- u + dt*b1*k1
+    HYPRE_ParVectorAxpy(dt*butch.b[0], par_k1, *par_u);
+
+
+    /* ------------------------------------------------------------------------- */
+    /* --- SOLVE for k2: 
+        M*k2 = b == -L(t0 + c2*dt)*(u0 + dt*a21*k1) + g(t0 + c2*dt) --- */
+    /* ------------------------------------------------------------------------- */
+    if (butch.num_stages > 1) {
+        // Rebuild the spatial disc at time t=t0 + c2*delta_t ONLY if it's time dependent. 
+        // Allow for changes in sparsity pattern.
+        if (rebuild_L) {
+            delete[] T_rowptr;
+            delete[] T_colinds;
+            delete[] T_data;
+            delete[] B0;
+            delete[] X0;
+            delete[] cols_per_row_T;
+            
+            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                                     X0, spatialDOFs, t0 + butch.c[1]*dt);
+
+            cols_per_row_T = new int[onProcSize];
+            for (int i = 0; i < onProcSize; i++) {
+                rows[i] = ilower + i;
+                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+            } 
+            
+            // Update L matrix and G vector values
+            // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
+            HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+            HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);            
+        }
+
+        // Populate RHS vector b <- -L*(u0 + dt*a21*k1) + g
+        HYPRE_ParVectorCopy(*par_u0, par_temp); // temp <- u0
+        HYPRE_ParVectorAxpy(butch.a[1][0], par_k1, par_temp); // temp <- temp + a21*k1
+        hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, parcsr_L, par_temp, 1.0, par_g, par_b); // b = -L*temp + g
+
+        // Set up and finalize k2, but don't set its values yet.
+        HYPRE_IJVectorCreate(comm, ilower, iupper, &k2); 
+        HYPRE_IJVectorSetObjectType(k2, HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(k2);
+        HYPRE_IJVectorAssemble(k2);
+        HYPRE_IJVectorGetObject(k2, (void **) &par_k2);
+
+        // TODO: What should the initial guess for k2 be?? Probably b?
+        HYPRE_ParVectorCopy(par_b, par_k2); // Populate k2 with b as initial guess.
+
+        // TODO: Apply linear solver
+        // HYPRE_Solve(comm, &parcsr_A, par_b, par_k2);
+
+        // Update ODE solution: u += dt*b2*k2
+        HYPRE_ParVectorAxpy(dt*butch.b[1], par_k2, *par_u); 
+    }
+
+
+    /* --------------------------------------------------------------------------------------- */
+    /* --- SOLVE for k3: 
+        M*k3 = -L(t + c3*dt)*(u0 + dt*a31*k1 + dt*a32*k2) + g(t0 + c3*dt) --- */
+    /* --------------------------------------------------------------------------------------- */
+    if (butch.num_stages > 2) {
+        // Rebuild the spatial disc at time t0 + c3*dt ONLY if it's time dependent. 
+        // Allow for changes in sparsity pattern.
+        if (rebuild_L) {
+            delete[] T_rowptr;
+            delete[] T_colinds;
+            delete[] T_data;
+            delete[] B0;
+            delete[] X0;
+            delete[] cols_per_row_T;
+            
+            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                                     X0, spatialDOFs, t0 + butch.c[2]*dt);
+
+            cols_per_row_T = new int[onProcSize];
+            for (int i = 0; i < onProcSize; i++) {
+                rows[i] = ilower + i;
+                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+            } 
+            
+            // Update L matrix and G vector values
+            // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
+            HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+            HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);            
+        }
+
+        // Populate RHS vector b <- -L*(u0 + dt*a31*k1 + dt*a32*k2) + g(t0 + dt*c3)
+        HYPRE_ParVectorCopy(*par_u0, par_temp); // temp <- u0
+        HYPRE_ParVectorAxpy(butch.a[2][0], par_k1, par_temp); // temp <- temp + a31*k1
+        HYPRE_ParVectorAxpy(butch.a[2][1], par_k2, par_temp); // temp <- temp + a32*k1
+        hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, parcsr_L, par_temp, 1.0, par_g, par_b); // b <- -L*temp + g
+
+        // Set up and finalize k3, but don't set its values yet.
+        HYPRE_IJVectorCreate(comm, ilower, iupper, &k3); 
+        HYPRE_IJVectorSetObjectType(k3, HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(k3);
+        HYPRE_IJVectorAssemble(k3);
+        HYPRE_IJVectorGetObject(k3, (void **) &par_k3);
+
+        
+        // Solve linear system for k3
+        // TODO: What should the initial guess for k3 be?? Probably b?
+        HYPRE_ParVectorCopy(par_b, par_k3); // Populate k3 with b as initial guess.
+
+        // TODO: Apply linear solve
+        // HYPRE_Solve(comm, &parcsr_A, par_b, par_k3);
+    
+        // Update ODE solution: u <- u + dt*b3*k3;
+        HYPRE_ParVectorAxpy(dt*butch.b[2], par_k3, *par_u); 
+    }
+
+      
+    /*----------------- */
+    /* --- Clean up --- */
+    /* ---------------- */
+    delete[] rows;
+    delete[] cols_per_row_M;
+    delete[] cols_per_row_T;
+    delete[] T_rowptr;
+    delete[] T_colinds;
+    delete[] T_data;
+    delete[] B0;
+    delete[] X0;
+    
+    HYPRE_IJVectorDestroy(g);
+    HYPRE_IJVectorDestroy(b);
+    HYPRE_IJVectorDestroy(k1);
+    HYPRE_IJMatrixDestroy(A);
+    HYPRE_IJMatrixDestroy(L);
+    
+    if (butch.num_stages > 1) {
+        HYPRE_IJVectorDestroy(k2);
+        HYPRE_IJVectorDestroy(temp);
+        if (butch.num_stages > 2) {
+            HYPRE_IJVectorDestroy(k3);
+        } 
+    }
+}
+/* End of ERK with mass matrix */
+
+
 
 /* ------------------------------------------------------------------------- */
 /* ----------------- More than one time step per processor ----------------- */

@@ -1,7 +1,8 @@
 #ifndef SPACETIMEMATRIX
 	#include "SpaceTimeMatrix.hpp"
 #endif
-#include "/g/g19/bs/quartz/AIR_tests/src/Quadrature.hpp"
+//#include "/g/g19/bs/quartz/AIR_tests/src/Quadrature.hpp" // 
+#include "src/Quadrature.hpp" // Is this the same file Ben has included above?
 #include "mfem.hpp"
 using namespace mfem;
 

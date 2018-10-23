@@ -4,7 +4,21 @@
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
 #include "HYPRE_krylov.h"
+
+#include "_hypre_parcsr_mv.h"
 #define SPACETIMEMATRIX
+
+/* Struct containing Butcher table for RK methods */
+struct RK_butcher
+{
+    // Assume have no more than 3 stages.
+    int num_stages; 
+    double a[3][3]; // Matrix of coefficients.
+    double b[3];
+    double c[3]; 
+    int isImplicit;
+    int isSDIRK; 
+};
 
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
@@ -65,6 +79,17 @@ private:
     void GetMatrix_ntGT1();
     void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);
 
+    // Runge--Kutta schemes to initialize multistep methods above
+    void getButcher(RK_butcher &butch, int option);
+    void ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
+                HYPRE_ParVector * par_u0, double t0, double dt, 
+                int ilower, int iupper, int * M_rowptr, int * M_colinds, 
+                double * M_data);
+    void DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
+                HYPRE_ParVector * par_u0, double t0, double dt, 
+                int ilower, int iupper, int * M_rowptr, int * M_colinds, 
+                double * M_data);
+
     // Routines to build space-time matrices when the spatial discretization
     // takes up one or more processors.
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
@@ -94,6 +119,10 @@ private:
               double *&X, int &onProcSize);
     void AB2(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
+
+              
+    
+
 
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
