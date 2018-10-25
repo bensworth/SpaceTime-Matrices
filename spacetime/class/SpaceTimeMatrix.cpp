@@ -77,10 +77,61 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 
 void SpaceTimeMatrix::BuildMatrix()
 {
+    
+    int* T_rowptr = NULL;
+    int* T_colinds = NULL;
+    double* T_data = NULL;
+    double* B0 = NULL;
+    double* X0 = NULL;
+    int * cols_per_row_T = NULL;
+    int spatialDOFs;
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    
+    // // Calling getMassMatrix here doesn't yield weird results, except I can't free the mass pointers...
+    // getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0,
+    //                                     X0, spatialDOFs, 0.0, cols_per_row_T);
+    // 
+    // getMassMatrix(M_rowptr, M_colinds, M_data);
+    // std::cout << "----------- spatialDOFs = " << spatialDOFs << '\n';
+    // std::cout << "----------- nnz(L) = " << T_rowptr[spatialDOFs] << '\n';
+    // std::cout << "----------- nnz(M) = " << M_rowptr[spatialDOFs] << '\n';
+    // // I can free these...
+    // delete[] T_rowptr;
+    // delete[] T_colinds;
+    // delete[] T_data;
+    // // But when I try to free these pointers I get null pointer....
+    // // delete[] M_rowptr;
+    // // delete[] M_colinds;
+    // // delete[] M_data;
+    
     if (m_globRank == 0) std::cout << "Building matrix.\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
+    
+    // Now when I use getMassMatrix down here, I get weird behaviour..., 
+    // e.g. nnz(M) is trying to access something it shouldn't be...
+    // but some of the time it's right...
+    getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0,
+                                        X0, spatialDOFs, 0.0, cols_per_row_T);   
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    std::cout << "zzzzzzzzzzz spatialDOFs = " << spatialDOFs << '\n';
+    std::cout << "zzzzzzzzzzz nnz(L) = " << T_rowptr[spatialDOFs] << '\n';
+    std::cout << "zzzzzzzzzzz nnz(M) = " << M_rowptr[spatialDOFs] << '\n';
+    // Can't free these arrays
+    // delete[] M_rowptr;
+    // delete[] M_colinds;
+    // delete[] M_data;
+    
     if (m_globRank == 0) std::cout << "Space-time matrix assembled.\n";
+    
+    // Update global RHS vector
+    // TODO : is this the right way to just have a single processor execute this update RHS code?
+    if (m_globComm == 0) {
+        updateMultiRHS_ntGT1(MPI_COMM_SELF);
+    }
+    
 }
 
 
@@ -434,18 +485,375 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
     HYPRE_GMRESSolve(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
 }
 
+
+/* ------------------------------------------------------------------------- */
+/* ----------------------- Multistep initialization ------------------------ */
+/* ------------------------------------------------------------------------- */
+
+/* Update RHS when using more than 1 time step per processor */
+/* Even though this is only done on one processor, we need a communicator to 
+use HYPRE on. So just create communicator with a single proc. */
+
+/* TODO : 
+    - Need to get initial condition u0, where is this?
+    - how to get spatialDOFs without calling the spatial discretization?
+    - is spatialDOFs always time independent?
+*/
+
+// Helper to get spatial discretization to save retyping these things all the time
+void SpaceTimeMatrix::getSpatialDiscretization_helper(int *&T_rowptr, int *&T_colinds, double *&T_data, 
+                                                        double *&B0, double *&X0, int &spatialDOFs, double t, 
+                                                        int *&cols_per_row_T) {
+    
+    // If these components are previously allocated, clear them first
+    // Note this requires that on the first pass the be explicitly set to NULL.
+    if (T_rowptr) {
+        delete[] T_rowptr;
+        delete[] T_colinds;
+        delete[] T_data;
+        delete[] B0;
+        delete[] X0;
+        delete[] cols_per_row_T;
+    }
+    
+    getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
+                             X0, spatialDOFs, t);
+    
+    int onProcSize = spatialDOFs;
+    cols_per_row_T = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
+    }
+}
+
+void SpaceTimeMatrix::updateMultiRHS_ntGT1(MPI_Comm comm) {
+    
+    // int* T_rowptr = NULL;
+    // int* T_colinds = NULL;
+    // double* T_data = NULL;
+    // double* B0 = NULL;
+    // double* X0 = NULL;
+    // int * cols_per_row_T = NULL;
+    // int spatialDOFs = 18;
+    // getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0,
+    //                                     X0, spatialDOFs, 0.0, cols_per_row_T);
+    // 
+    // std::cout << "................ENTERED update RHS..............\n";
+    // int rank, size;
+    // MPI_Comm_rank(comm, &rank);
+    // MPI_Comm_size(comm, &size);
+    // std::cout << "I am process " << rank << " out of " << size << " processes\n";
+    // 
+    // 
+    // RK_butcher butch;
+    // 
+    // // TODO : how do we obtain this number without calling spatial disc???
+    // 
+    // int onProcSize = spatialDOFs; // TODO : is this and the things below it correct?
+    // int ilower = 0;
+    // int iupper = onProcSize-1;
+    // 
+    // // Get mass matrix 
+    // int* M_rowptr;
+    // int* M_colinds;
+    // double* M_data;
+    // 
+    // getMassMatrix(M_rowptr, M_colinds, M_data);
+    // std::cout << "spatialDOFs = " << spatialDOFs << '\n';
+    // std::cout << "nnz(M) = " << M_rowptr[spatialDOFs] << '\n';
+    // 
+    // 
+    // double * M_data_scaled = new double[M_rowptr[spatialDOFs]];
+    // for (int i = 0; i < M_rowptr[spatialDOFs]; i++) {
+    //     M_data_scaled[i] = M_data[i] / m_dt; // Scale data by 1/dt
+    //     std::cout << "M_data[%d] = "<< i << "%.2e" << M_data_scaled[i] << '\n';
+    // }
+    // 
+    // // Process M so that it can be added to HYPRE matrices later 
+    // int * rows = new int[onProcSize]; // Reuse this many times
+    // int * cols_per_row_M = new int[onProcSize];
+    // for (int i = 0; i < onProcSize; i++) {
+    //     rows[i] = ilower + i;
+    //     cols_per_row_M[i] = M_rowptr[i+1] - M_rowptr[i];
+    //     std::cout << "rows[%d] = "<< i << rows[i] << "cols_per_row = " << cols_per_row_M[i] << '\n';
+    // }
+    // 
+    // std::cout << "passed 0" << '\n';
+    // 
+    // // // 
+    // // // 
+    // // // // Initialize solution vectors to be computed
+    // HYPRE_IJVector temp; // Need 1 dummy vector as a place holder
+    // HYPRE_ParVector par_temp;
+    // HYPRE_IJVector u0;
+    // HYPRE_ParVector par_u0;
+    // HYPRE_IJVector u1;
+    // HYPRE_ParVector par_u1;
+    // HYPRE_IJVector u2;
+    // HYPRE_ParVector par_u2;
+    // HYPRE_IJVectorCreate(comm, ilower, iupper, &temp);
+    // HYPRE_IJVectorSetObjectType(temp, HYPRE_PARCSR);
+    // HYPRE_IJVectorInitialize(temp);
+    // HYPRE_IJVectorAssemble(temp);
+    // HYPRE_IJVectorGetObject(temp, (void **) &par_temp);
+    // std::cout << "passed 1" << '\n';
+    // HYPRE_IJVectorCreate(comm, ilower, iupper, &u0); 
+    // HYPRE_IJVectorSetObjectType(u0, HYPRE_PARCSR);
+    // HYPRE_IJVectorInitialize(u0);
+    // HYPRE_IJVectorAssemble(u0);
+    // HYPRE_IJVectorGetObject(u0, (void **) &par_u0);
+    // std::cout << "passed 2" << '\n';
+    // HYPRE_IJVectorCreate(comm, ilower, iupper, &u1);
+    // HYPRE_IJVectorSetObjectType(u1, HYPRE_PARCSR);
+    // HYPRE_IJVectorInitialize(u1);
+    // HYPRE_IJVectorAssemble(u1);
+    // HYPRE_IJVectorGetObject(u1, (void **) &par_u1);
+    // std::cout << "passed 3" << '\n';
+    // HYPRE_IJVectorCreate(comm, ilower, iupper, &u2); 
+    // HYPRE_IJVectorSetObjectType(u2, HYPRE_PARCSR);
+    // HYPRE_IJVectorInitialize(u2);
+    // HYPRE_IJVectorAssemble(u2);
+    // HYPRE_IJVectorGetObject(u2, (void **) &par_u2);
+    // std::cout << "passed 4" << '\n';
+    // // // 
+    // // // Create HYPRE version of mass matrix to perform MATVECs
+    // HYPRE_IJMatrix M_scaled;
+    // HYPRE_ParCSRMatrix parcsr_M_scaled;
+    // HYPRE_IJMatrixCreate(comm, ilower, iupper, ilower, iupper, &M_scaled); // TODO : is this spatialDOFs or spatialDOFs-1??
+    // HYPRE_IJMatrixSetObjectType(M_scaled, HYPRE_PARCSR);
+    // HYPRE_IJMatrixInitialize(M_scaled);
+    // 
+    // HYPRE_IJMatrixSetValues(M_scaled, onProcSize, cols_per_row_M, rows, M_colinds, M_data_scaled); // M_scaled <- M/dt
+    // 
+    // std::cout << "passed 4.5" << '\n';
+    // 
+    // HYPRE_IJMatrixAssemble(M_scaled);
+    // HYPRE_IJMatrixGetObject(M_scaled, (void **) &parcsr_M_scaled);
+    // std::cout << "passed 5" << '\n';
+    
+    // // // // Might need to build spatial discretization, so make appropriate declarations 
+    // HYPRE_IJMatrix T;
+    // HYPRE_ParCSRMatrix parcsr_T;
+    // int built_spatial_disc = 0;
+    // // int* T_rowptr;
+    // // int* T_colinds;
+    // // double* T_data;
+    // // double* B0;
+    // // double* X0;
+    // // int * cols_per_row_T;
+    // 
+    // // All of these discretizations require L0, so build it once only
+    // if (m_timeDisc == 22 || m_timeDisc == 23 || m_timeDisc == 31 || m_timeDisc == 32 || m_timeDisc == 33) {
+    //     built_spatial_disc = 1; // Set flag
+    //     getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0,
+    //                                         X0, spatialDOFs, 0.0, cols_per_row_T);
+    // 
+    //     // Put spatial disc into HYPRE matrix
+    //     HYPRE_IJMatrixCreate(comm, 0, spatialDOFs-1, 0, spatialDOFs-1, &T); // TODO : is this spatialDOFs or spatialDOFs-1??
+    //     HYPRE_IJMatrixSetObjectType(T, HYPRE_PARCSR);
+    //     HYPRE_IJMatrixInitialize(T);
+    //     HYPRE_IJMatrixSetValues(T, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+    //     HYPRE_IJMatrixAssemble(T);
+    //     HYPRE_IJMatrixGetObject(T, (void **) &parcsr_T);
+    // }
+    // 
+    // 
+    // 
+    // // BDF1 or AM1 (they're the same). No need to use RK.
+    // if (m_timeDisc == 11 || m_timeDisc == 21) {
+    //     //HYPRE_ParCSRMatrixMatvec(1.0, parcsr_M_scaled, par_u0, 0.0, par_temp); // temp <- 1/(dt)*M*u0
+    //     // TODO: update first block of global vector: b1 <- b1 + temp
+    // 
+    // // BDF2
+    // } else if (m_timeDisc == 12) {
+    //     getButcher(butch, 22);
+    //     DIRK(comm, butch, &par_u1, &par_u0, 0.0, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u1 from u0
+    // 
+    //     // Vector for updating first block of global RHS vector
+    //     HYPRE_ParVectorCopy(par_u0, par_temp); // temp <- u0
+    //     HYPRE_ParVectorScale(-1.0, par_temp); // temp <- -u0
+    //     HYPRE_ParVectorAxpy(4.0, par_u2, par_temp); // temp <- 4*u1 - u0
+    //     HYPRE_ParCSRMatrixMatvec(1.0/3.0, parcsr_M_scaled, par_temp, 0.0, par_u0); // u0 <- 1/(3dt)*M*temp
+    //     // TODO: update first block of global vector: b2 <- b2 + u0
+    // 
+    //     // Vector for updating second block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(-1.0/3.0, parcsr_M_scaled, par_u1, 0.0, par_temp); // temp <- -1/(3dt)*M*u1
+    //     // TODO: update second block of global vector: b3 <- b3 + temp
+    // }
+    // 
+    // // BDF3
+    // else if (m_timeDisc == 13) {
+    //     getButcher(butch, 23);
+    //     DIRK(comm, butch, &par_u1, &par_u0, 0.0, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u1 from u0
+    //     DIRK(comm, butch, &par_u2, &par_u1, 0.0 + m_dt, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u2 from u1
+    // 
+    //     // Vector for updating first block of global RHS vector
+    //     HYPRE_ParVectorCopy(par_u0, par_temp); // temp <- u0
+    //     HYPRE_ParVectorScale(2.0, par_temp); // temp <- 2*u0
+    //     HYPRE_ParVectorAxpy(-9.0, par_u1, par_temp); // temp <- -9*u1 + 2*u0
+    //     HYPRE_ParVectorAxpy(18.0, par_u2, par_temp); // temp <- 18*u2 - 9*u1 + 2*u0
+    //     HYPRE_ParCSRMatrixMatvec(1.0/11.0, parcsr_M_scaled, par_temp, 0.0, par_u0); // u0 <- 1/(11dt)*M*temp
+    //     // TODO: update first block of global vector: b3 <- b3 + u0
+    // 
+    //     // Vector for updating second block of global RHS vector
+    //     HYPRE_ParVectorCopy(par_u1, par_temp); // temp <- u1
+    //     HYPRE_ParVectorScale(2.0, par_temp); // temp <- 2*u1
+    //     HYPRE_ParVectorAxpy(-9.0, par_u2, par_temp); // temp <- -9*u2 + 2*u1
+    //     HYPRE_ParCSRMatrixMatvec(1.0/11.0, parcsr_M_scaled, par_temp, 0.0, par_u1); // u1 <- 1/(11dt)*M*temp
+    //     // TODO: update second block of global vector: b4 <- b4 + u1
+    // 
+    //     // Vector for updating third block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(2.0/11.0, parcsr_M_scaled, par_u2, 0.0, par_temp); // temp <- 2/(11dt)*M*u2
+    //     // TODO: update third block of global vector: b5 <- b5 + temp
+    // 
+    // 
+    // // AM2. No need to use RK.
+    // } else if (m_timeDisc == 22) {
+    //     // Vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_M_scaled, par_u0, 0.0, par_temp); // temp <- 1/(dt)*M*u0
+    //     HYPRE_ParCSRMatrixMatvec(-0.5, parcsr_T, par_u0, 0.0, par_temp); // temp <- -1/2*L0*u0 + 1/(dt)*M*u0
+    //     // TODO: update first block of global vector: b1 <- b1 + temp
+    // 
+    // // AM3
+    // } else if (m_timeDisc == 23) {
+    //     getButcher(butch, 13);  
+    //     ERK(comm, butch, &par_u1, &par_u0, 0.0, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u1 from u0      
+    // 
+    //     // Create vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(1.0/12.0, parcsr_T, par_u0, 0.0, par_temp); // temp <- 1/12*L0*u0
+    // 
+    //     // Rebuild L at t = dt if it's time dependent: L1
+    //     if (m_isTimeDependent) {
+    //         getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0,
+    //                                             X0, spatialDOFs, m_dt, cols_per_row_T);
+    //         HYPRE_IJMatrixSetValues(T, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+    //     } 
+    // 
+    //     // Update vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(-2.0/3.0, parcsr_T, par_u1, 0.0, par_temp); // temp <- -2/3*L1*u1 + 1/12*L0*u0
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_M_scaled, par_u1, 0.0, par_temp); // temp <- 1/dt*M*u1 -2/3*L1*u1 + 1/12*L0*u0
+    //     // TODO: update first block of global vector: b2 <- b2 + temp
+    // 
+    // 
+    // // AB1. No need to use RK
+    // } else if (m_timeDisc == 31) {
+    //     // Vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_M_scaled, par_u0, 0.0, par_temp); // temp <- 1/(dt)*M*u0
+    //     HYPRE_ParCSRMatrixMatvec(-1.0, parcsr_T, par_u0, 0.0, par_temp); // temp <- -L0*u0 + 1/(dt)*M*u0
+    //     // TODO: update first block of global vector: b1 <- b1 + temp    
+    // 
+    // // AB2
+    // } else if (m_timeDisc == 32) {
+    //     getButcher(butch, 12);
+    //     ERK(comm, butch, &par_u1, &par_u0, 0.0, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u1 from u0
+    // 
+    //     // Create vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(0.5, parcsr_T, par_u0, 0.0, par_temp); // temp <- 1/2*L0*u0
+    // 
+    //     // Rebuild L at t = dt if it's time dependent: L1
+    //     if (m_isTimeDependent) {
+    //         getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, m_dt, cols_per_row_T);
+    //         HYPRE_IJMatrixSetValues(T, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+    //     }
+    // 
+    //     // Create vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(-3.0/2.0, parcsr_T, par_u1, 1.0, par_temp); // temp <- -3/2*L1*u1 + 1/2*L0*u0
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_M_scaled, par_u1, 1.0, par_u0); // u0 <- 1/(dt)*M*u1 -3/2*L1*u1 + 1/2*L0*u0
+    //     // TODO: b2 <- b2 + u0
+    // 
+    //     // Create vector for updating second block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(0.5, parcsr_T, par_u1, 0.0, par_temp); // temp <- 1/2*L1*u1
+    //     // TODO: b3 <- b3 + temp
+    // 
+    // // AB3
+    // } else if (m_timeDisc == 33) {
+    //     getButcher(butch, 13);
+    //     ERK(comm, butch, &par_u1, &par_u0, 0.0, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u1 from u0
+    //     ERK(comm, butch, &par_u2, &par_u1, 0.0 + m_dt, m_dt, 0, spatialDOFs-1, M_rowptr, M_colinds, M_data); // Compute u2 from u1
+    // 
+    //     // Create vector for updating first block of global RHS vector
+    //     HYPRE_ParCSRMatrixMatvec(0.5, parcsr_T, par_u0, 0.0, par_temp); // temp <- -5/12*L0*u0
+    //     HYPRE_ParVectorCopy(par_temp, par_u0); // u0 <- -5/12*L0*u0
+    // 
+    //     // Rebuild L at t = dt if it's time dependent: L1
+    //     if (m_isTimeDependent) {
+    //         getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, m_dt, cols_per_row_T);
+    //         HYPRE_IJMatrixSetValues(T, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+    //     }
+    // 
+    //     // Append to vector for updating first block of global vector
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_T, par_u1, 0.0, par_temp); // temp <- L1*u1
+    //     HYPRE_ParVectorAxpy(4.0/3.0, par_temp, par_u0); // u0 <- 4/3*L1*u1 - 5/12*L0*u0
+    // 
+    //     // Create vector for updating second block of global RHS vector
+    //     HYPRE_ParVectorCopy(par_temp, par_u1); // u1 <- L1*u1
+    //     HYPRE_ParVectorScale(-5.0/12.0 , par_u1); // u1 <- -5/12*L1*u1
+    // 
+    //     // Rebuild L at t = 2*dt if it's time dependent: L2
+    //     if (m_isTimeDependent) {
+    //         getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, 2*m_dt, cols_per_row_T);
+    //         HYPRE_IJMatrixSetValues(T, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
+    //     }
+    // 
+    //     // Do matvec L2*u2
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_T, par_u2, 0.0, par_temp); // temp <- L2*u2
+    // 
+    //     // Append to vector for updating first block of global vector
+    //     HYPRE_ParVectorAxpy(-23.0/12.0, par_temp, par_u0); // u0 <- -23/12*L2*u2 + 4/3*L1*u1 - 5/12*L0*u0
+    //     HYPRE_ParCSRMatrixMatvec(1.0, parcsr_M_scaled, par_u2, 1.0, par_u0); // u0 <- 1/(dt)*M*u2 -23/12*L2*u2 + 4/3*L1*u1 - 5/12*L0*u0
+    //     // TODO: b3 <- b3 + u0
+    // 
+    //     // Append to vector for updating second block of global RHS vector
+    //     HYPRE_ParVectorAxpy(4.0/3.0, par_temp, par_u1); // u1 <- 4.0/3.0*L2*u2 -5/12*L1*u1
+    //     // TODO: b4 <- b4 + u1
+    // 
+    //     // Create vector for updating third block of global RHS vector
+    //     HYPRE_ParVectorScale(-5.0/12.0 , par_temp); // temp <- -5/12*L2*u2
+    //     // TODO: b5 <- b5 + temp
+    // }
+    // 
+    // // Clean up
+    // if (built_spatial_disc) {
+    //     HYPRE_IJMatrixDestroy(T);
+    //     delete[] T_rowptr;
+    //     delete[] T_colinds;
+    //     delete[] T_data;
+    //     delete[] B0;
+    //     delete[] X0;
+    //     delete[] cols_per_row_T;
+    // }
+    // 
+    // delete[] M_rowptr;
+    // delete[] M_colinds;
+    // delete[] M_data;
+    // delete[] M_data_scaled;
+    // delete[] rows;
+    // delete[] cols_per_row_M;
+    // 
+    // HYPRE_IJVectorDestroy(temp);
+    // HYPRE_IJVectorDestroy(u0);
+    // HYPRE_IJVectorDestroy(u1);
+    // HYPRE_IJVectorDestroy(u2);
+    // HYPRE_IJMatrixDestroy(M_scaled);
+    
+    std::cout << ".......Exiting update RHS.........\n\n\n";
+}
+
+
+
+/* Update RHS when using at most 1 time step per processor */
+void SpaceTimeMatrix::updateMultiRHS_ntLT1() {
+    
+}
+
 /* ------------------------------------------------------------------------- */
 /* ------------------------- Runge--Kutta schemes -------------------------- */
 /* ------------------------------------------------------------------------- */
 /* 
 -TODO:
-    -Is it a good idea to have L and M passed to the schemes?? Maybe M yes. But maybe not L... It makes things kind of messy.
     -Linear solvers & Preconditioners for inverting matrices
     -I'm not really sure what the procedure is after altering a HYPRE object's values. Should it be reinitialized?
     -Get some Butcher tables. Probably steal these from MFEM ODE solvers...
-    -Make non-mass matrix versions
-    -Clarify what getMassMatrix() does in the case that there isn't a mass matrix, I'm just assuming
-        the CSR components are NULL pointers.
 */
 
 
@@ -456,6 +864,7 @@ void SpaceTimeMatrix::getButcher(RK_butcher & butch, int option) {
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
     if (option == 11) {
+        butch.isSDIRK = 0;
         butch.isImplicit = 0;
         butch.num_stages = 1;
         butch.b[0] = 1;
@@ -463,6 +872,7 @@ void SpaceTimeMatrix::getButcher(RK_butcher & butch, int option) {
 
     // Heun's method: 2nd-order
     } else if (option == 12) {
+        butch.isSDIRK = 0;
         butch.isImplicit = 0;
         butch.num_stages = 2;
         butch.a[1][0] = 1.0;
@@ -472,7 +882,9 @@ void SpaceTimeMatrix::getButcher(RK_butcher & butch, int option) {
         
     // TODO : 3rd-order
     } else if (option == 13) {
+        butch.isSDIRK = 0;
         butch.isImplicit = 0;
+        
         
 
     /* --- DIRK tables --- */
@@ -614,7 +1026,7 @@ void SpaceTimeMatrix::DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * pa
 
     // Set matrix values
     HYPRE_IJMatrixSetValues(A, onProcSize, cols_per_row_T, rows, T_colinds, A_data);
-    HYPRE_IJMatrixAddToValues(A, onProcSize, cols_per_row_M, rows, M_colinds, M_data); // A <- A + M.
+    HYPRE_IJMatrixAddToValues(A, onProcSize, cols_per_row_M, rows, M_colinds, M_data); // A <- L + M.
     HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
 
     // Finalize construction of matrices
@@ -657,24 +1069,8 @@ void SpaceTimeMatrix::DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * pa
     if (butch.num_stages > 1) {
         // Rebuild the spatial disc at time t=t0 + c2*delta_t ONLY if it's time dependent. 
         // Allow for changes in sparsity pattern.
-        if (rebuild_L) {
-            delete[] T_rowptr;
-            delete[] T_colinds;
-            delete[] T_data;
-            delete[] B0;
-            delete[] X0;
-            delete[] cols_per_row_T;
-            
-            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, t0 + butch.c[1]*dt);
-            T_nnz = T_rowptr[spatialDOFs];
-
-            cols_per_row_T = new int[onProcSize];
-            for (int i = 0; i < onProcSize; i++) {
-                rows[i] = ilower + i;
-                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
-            } 
-            
+        if (rebuild_L) {            
+            getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, t0 + butch.c[1]*dt, cols_per_row_T);
             // Update L matrix and G vector values
             // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
             HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
@@ -725,24 +1121,8 @@ void SpaceTimeMatrix::DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * pa
     if (butch.num_stages > 2) {
         // Rebuild the spatial disc at time t0 + c3*dt ONLY if it's time dependent. 
         // Allow for changes in sparsity pattern.
-        if (rebuild_L) {
-            delete[] T_rowptr;
-            delete[] T_colinds;
-            delete[] T_data;
-            delete[] B0;
-            delete[] X0;
-            delete[] cols_per_row_T;
-            
-            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, t0 + butch.c[2]*dt);
-            T_nnz = T_rowptr[spatialDOFs];
-
-            cols_per_row_T = new int[onProcSize];
-            for (int i = 0; i < onProcSize; i++) {
-                rows[i] = ilower + i;
-                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
-            } 
-            
+        if (rebuild_L) {            
+            getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, t0 + butch.c[2]*dt, cols_per_row_T);
             // Update L matrix and G vector values
             // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
             HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
@@ -952,29 +1332,14 @@ void SpaceTimeMatrix::ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par
     if (butch.num_stages > 1) {
         // Rebuild the spatial disc at time t=t0 + c2*delta_t ONLY if it's time dependent. 
         // Allow for changes in sparsity pattern.
-        if (rebuild_L) {
-            delete[] T_rowptr;
-            delete[] T_colinds;
-            delete[] T_data;
-            delete[] B0;
-            delete[] X0;
-            delete[] cols_per_row_T;
-            
-            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, t0 + butch.c[1]*dt);
-
-            cols_per_row_T = new int[onProcSize];
-            for (int i = 0; i < onProcSize; i++) {
-                rows[i] = ilower + i;
-                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
-            } 
-            
+        if (rebuild_L) {            
+            getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, t0 + butch.c[1]*dt, cols_per_row_T);
             // Update L matrix and G vector values
             // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
             HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
             HYPRE_IJVectorSetValues(g, onProcSize, rows, B0);            
         }
-
+        
         // Populate RHS vector b <- -L*(u0 + dt*a21*k1) + g
         HYPRE_ParVectorCopy(*par_u0, par_temp); // temp <- u0
         HYPRE_ParVectorAxpy(butch.a[1][0], par_k1, par_temp); // temp <- temp + a21*k1
@@ -1005,23 +1370,8 @@ void SpaceTimeMatrix::ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par
     if (butch.num_stages > 2) {
         // Rebuild the spatial disc at time t0 + c3*dt ONLY if it's time dependent. 
         // Allow for changes in sparsity pattern.
-        if (rebuild_L) {
-            delete[] T_rowptr;
-            delete[] T_colinds;
-            delete[] T_data;
-            delete[] B0;
-            delete[] X0;
-            delete[] cols_per_row_T;
-            
-            getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, t0 + butch.c[2]*dt);
-
-            cols_per_row_T = new int[onProcSize];
-            for (int i = 0; i < onProcSize; i++) {
-                rows[i] = ilower + i;
-                cols_per_row_T[i] = T_rowptr[i+1] - T_rowptr[i];
-            } 
-            
+        if (rebuild_L) {            
+            getSpatialDiscretization_helper(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, t0 + butch.c[2]*dt, cols_per_row_T);
             // Update L matrix and G vector values
             // TODO : will this erase all previous elements nz in L if they don't fall inside the possibly new sparsity pattern? Test this.
             HYPRE_IJMatrixSetValues(L, onProcSize, cols_per_row_T, rows, T_colinds, T_data);
@@ -1081,8 +1431,11 @@ void SpaceTimeMatrix::ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par
     }
 }
 /* End of ERK with mass matrix */
+/* ---------------------- End of Runge--Kutta schemes ---------------------- */
 
-
+/* ------------------------------------------------------------------------- */
+/* --------------------------- Multistep methods --------------------------- */
+/* ------------------------------------------------------------------------- */
 
 /* ------------------------------------------------------------------------- */
 /* ----------------- More than one time step per processor ----------------- */
@@ -1114,7 +1467,10 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
         M_data[i] /= m_dt;
     }
-
+    
+    std::cout << "spatialDOFs = " << spatialDOFs << '\n';
+    std::cout << "nnz(M) = " << M_rowptr[spatialDOFs] << '\n';
+    
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;

@@ -79,7 +79,9 @@ private:
     void GetMatrix_ntGT1();
     void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);
 
-    // Runge--Kutta schemes to initialize multistep methods above
+    // Runge--Kutta schemes to initialize multistep methods
+    void updateMultiRHS_ntGT1(MPI_Comm comm);
+    void updateMultiRHS_ntLT1();
     void getButcher(RK_butcher &butch, int option);
     void ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
                 HYPRE_ParVector * par_u0, double t0, double dt, 
@@ -121,7 +123,9 @@ private:
               double *&X, int &onProcSize);
 
               
-    
+    void getSpatialDiscretization_helper(int *&T_rowptr, int *&T_colinds, double *&T_data, 
+                                            double *&B0, double *&X0, int &spatialDOFs, double t, 
+                                            int *&cols_per_row_T);
 
 
     // Spatial discretization on more than one processor. Must same row distribution
