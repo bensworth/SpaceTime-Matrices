@@ -69,30 +69,14 @@ private:
     // takes up one or more processors.
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-    void BDF2(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-    void BDF3(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-    void AM2(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-    // void AB2(int *&rowptr, int *&colinds, double *&data, double *&B,
-    //           double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
 
     // Routines to build space-time matrices when more than one time
     // step are allocated per processor.
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
-    void BDF2(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &onProcSize);
-    void BDF3(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &onProcSize);
-    void AM2(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &onProcSize);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &onProcSize);
-    void AB2(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
 
     // Spatial discretization on more than one processor. Must same row distribution
