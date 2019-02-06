@@ -93,7 +93,7 @@ private:
                                           double t) = 0;
 
     // Get mass matrix for time integration; only for finite element discretizations.
-    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data) { };
+    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
 
     // TODO: Add support in functions for this; make optional? 
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t) = 0;

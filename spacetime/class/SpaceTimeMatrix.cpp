@@ -99,18 +99,6 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     if (m_timeDisc == 11) {
         BDF1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
     }
-    else if (m_timeDisc == 12) {
-        BDF2(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    }
-    else if (m_timeDisc == 13) {
-        BDF3(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    }
-    else if (m_timeDisc == 21) {
-        BDF1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    }
-    else if (m_timeDisc == 22) {
-        AM2(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    }
     else if (m_timeDisc == 31) {
         AB1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
     }
@@ -184,23 +172,8 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     if (m_timeDisc == 11) {
         BDF1(rowptr, colinds, data, B, X, onProcSize);
     }
-    else if (m_timeDisc == 12) {
-        BDF2(rowptr, colinds, data, B, X, onProcSize);
-    }
-    else if (m_timeDisc == 13) {
-        BDF3(rowptr, colinds, data, B, X, onProcSize);
-    }
-    else if (m_timeDisc == 21) {
-        BDF1(rowptr, colinds, data, B, X, onProcSize);
-    }
-    else if (m_timeDisc == 22) {
-        AM2(rowptr, colinds, data, B, X, onProcSize);
-    }
     else if (m_timeDisc == 31) {
         AB1(rowptr, colinds, data, B, X, onProcSize);
-    }
-    else if (m_timeDisc == 32) {
-        AB2(rowptr, colinds, data, B, X, onProcSize);
     }
     else {
         std::cout << "WARNING: invalid choice of time integration.\n";
@@ -438,6 +411,13 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
     HYPRE_GMRESSolve(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
 }
 
+
+void buildMassMatrix( )
+{
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+
+    }
+}
 
 /* ------------------------------------------------------------------------- */
 /* ----------------- More than one time step per processor ----------------- */
