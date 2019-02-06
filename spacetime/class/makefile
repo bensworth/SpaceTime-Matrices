@@ -4,7 +4,7 @@ HYPRE_DIR = $(MFEM_DIR)/../hypre/src/hypre
 METIS_DIR = $(MFEM_DIR)/../metis/build/Linux-x86_64
 CXX      = mpicxx
 FLAGS    = -g -std=c++11
-INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include -I./src
+INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include
 CXXFLAGS = $(FLAGS) $(INC)
 LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis
 LDLIBS   = -lmfem -lHYPRE -lmetis

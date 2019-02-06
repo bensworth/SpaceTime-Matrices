@@ -50,7 +50,7 @@ CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 void CGdiffusion::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
                                            int* &A_colinds, double* &A_data, double* &B,
                                            double* &X, int &localMinRow, int &localMaxRow,
-                                           int &spatialDOFs, double t)
+                                           int &spatialDOFs, double t, int &bsize)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -150,6 +150,9 @@ void CGdiffusion::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
         delete m;
     }
 
+    double temp0, temp1;
+    pmesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
+
     delete a;
     delete b;
     if (fec) {
@@ -166,7 +169,7 @@ void CGdiffusion::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
 /* Time-independent spatial discretization of Laplacian */
 void CGdiffusion::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
                                            double* &A_data, double* &B, double* &X,
-                                           int &spatialDOFs, double t)
+                                           int &spatialDOFs, double t, int &bsize)
 {
     // Read mesh from mesh file
     const char *mesh_file = "../../meshes/beam-quad.mesh";
@@ -247,6 +250,9 @@ void CGdiffusion::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
         M.LoseData();
         delete m;
     }
+
+    double temp0, temp1;
+    mesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
 
     delete a;
     delete b; 

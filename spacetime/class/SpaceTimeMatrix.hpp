@@ -3,6 +3,7 @@
 #include <string>
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
+#include "_hypre_parcsr_mv.h"
 #include "HYPRE_krylov.h"
 #define SPACETIMEMATRIX
 
@@ -11,13 +12,14 @@ struct AMG_parameters {
    double distance_R;
    std::string prerelax;
    std::string postrelax;
+   int interp_type;
+   int relax_type;
+   int coarsen_type;
    double strength_tolC;
    double strength_tolR;
    double filter_tolR;
-   int interp_type;
-   int relax_type;
-   double filterA_tol;
-   int coarsen_type;
+   double filter_tolA;
+   int cycle_type;
 
     // AMG_parameters() : 
     //     prerelax(""), postrelax(""), relax_type(-1),
@@ -41,6 +43,7 @@ private:
     int     m_numProc;
     int     m_ntPerProc;
     int     m_Np_x;
+    int     m_bsize;
     int     m_spCommSize;
     bool    m_useSpatialParallel;
     bool    m_isTimeDependent;
@@ -86,11 +89,11 @@ private:
     virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                           int* &A_colinds, double* &A_data, double* &B,
                                           double* &X, int &localMinRow, int &localMaxRow,
-                                          int &spatialDOFs, double t) = 0;
+                                          int &spatialDOFs, double t, int &bsize) = 0;
     // Spatial discretization on one processor
     virtual void getSpatialDiscretization(int* &A_rowptr, int* &A_colinds, double* &A_data,
                                           double* &B, double* &X, int &spatialDOFs,
-                                          double t) = 0;
+                                          double t, int &bsize) = 0;
 
     // Get mass matrix for time integration; only for finite element discretizations.
     virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
@@ -103,6 +106,8 @@ protected:
     int*    m_M_rowptr;
     int*    m_M_colinds;
     double* m_M_data;
+    double  m_hmin;
+    double  m_hmax;
 
 public:
 
@@ -118,5 +123,5 @@ public:
     void SetAMGParameters(AMG_parameters &params);
     void SolveAMG(double tol=1e-8, int maxiter=250, int printLevel=3);
     void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3, int precondition=1);
-
+    void PrintMeshData();
 };

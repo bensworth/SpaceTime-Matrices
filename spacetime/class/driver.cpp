@@ -18,21 +18,20 @@ int main(int argc, char *argv[])
     // Parameters
     bool isTimeDependent = true;
     int numTimeSteps = 2;
-    int refLevels = 1;
-    int order = 1;
-   	int dim = 2;
-   	int use_gmres = 1;
-    bool save_mat = false;
+    int refLevels    = 1;
+    int order        = 1;
+   	int dim          = 2;
+   	int use_gmres    = 0;
+    int cycle_type   = 1;
+    int save_mat     = 0;
     double solve_tol = 1e-8;
-    int print_level = 3;
-    int timeDisc = 11;
-    int spatialDisc = 1;
-    int max_iter = 100;
+    int print_level  = 3;
+    int timeDisc     = 11;
+    int spatialDisc  = 1;
+    int max_iter     = 100;
 
     // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    // const char* temp_prerelax = "";
-    // const char* temp_postrelax = "FFC";
-    AMG_parameters AMG = {"A", "A", 6, 6, 0.01, 6, -1, 0.1, 0};
+    AMG_parameters AMG = {1.5, "A", "FFC", 6, 10, 6, 0.1, 0.01, 0.0, 0.0, 1};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "A";
 
@@ -40,7 +39,7 @@ int main(int argc, char *argv[])
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
                    "Spatial discretization (1=CG diffusion, 2=DG advection");
     args.AddOption(&timeDisc, "-t", "--time-disc",
-                  "Time discretization (11=BDF1; 12=BDF2; 13=BDF3; 21=AM1; 22=AM2; 31=AB1; 32=AB2).");
+                  "Time discretization (11=BDF1; 31=AB1).");
     args.AddOption(&order, "-o", "--order",
                   "Finite element order.");
     args.AddOption(&refLevels, "-l", "--level",
@@ -55,6 +54,10 @@ int main(int argc, char *argv[])
                   "Number of time steps.");
     args.AddOption(&use_gmres, "-gmres", "--use-gmres",
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
+    args.AddOption(&save_mat, "-save", "--save-mat",
+                  "Boolean to save matrix to file.");
+    args.AddOption(&cycle_type, "-c", "--cycle-type",
+                  "Cycle type; 0=F, 1=V, 2=W.");
     args.AddOption(&(AMG.distance_R), "-AIR", "--AIR-distance",
                   "Distance restriction neighborhood if using AIR (D<=0 implies P^TAP).");
     args.AddOption(&(AMG.interp_type), "-Ai", "--AMG-interpolation",
@@ -65,7 +68,9 @@ int main(int argc, char *argv[])
                    "Theta value determining strong connections for AMG (coarsening).");
     args.AddOption(&(AMG.strength_tolR), "-AsR", "--AMG-strengthR",
                    "Theta value determining strong connections for AMG (restriction).");
-    args.AddOption(&(AMG.filterA_tol), "-Af", "--AMG-filter",
+    args.AddOption(&(AMG.filter_tolR), "-AfR", "--AIR-filterR",
+                   "Theta value eliminating small entries in restriction (after building).");
+    args.AddOption(&(AMG.filter_tolA), "-Af", "--AMG-filter",
                   "Theta value to eliminate small connections in AMG hierarchy. Use -1 to specify O(h).");
     args.AddOption(&(AMG.relax_type), "-Ar", "--AMG-relaxation",
                   "Index for hypre relaxation routine.");
@@ -94,16 +99,32 @@ int main(int argc, char *argv[])
     if (spatialDisc == 1) {
         CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
         STmatrix.BuildMatrix();
+        if (save_mat) {
+            STmatrix.SaveMatrix("test.mm");
+        }
         STmatrix.SetAMGParameters(AMG);
-        if (use_gmres) STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
-        else STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+        if (use_gmres) {
+            STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
+        }
+        else {
+            STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+        }
+        STmatrix.PrintMeshData();
     }
     else {
         DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
         STmatrix.BuildMatrix();
+        if (save_mat) {
+            STmatrix.SaveMatrix("test.mm");
+        }
         STmatrix.SetAMGParameters(AMG);
-        if (use_gmres) STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
-        else STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+        if (use_gmres) {
+            STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
+        }
+        else {
+            STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+        }
+        STmatrix.PrintMeshData();
     }
 
     MPI_Finalize();

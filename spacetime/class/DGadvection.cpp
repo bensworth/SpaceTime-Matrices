@@ -1,62 +1,48 @@
 #include "DGadvection.hpp"
 #include <cstdio>
 #include <vector>
+#include <algorithm>
 #include <iostream>
 using namespace mfem;
 
 
-class CoefficientWithState : public Coefficient
-{
-protected:
-    double (*Function)(const Vector &, const Vector &);
-
-public:
-    /// Define a time-independent coefficient from a C-function
-    CoefficientWithState(double (*f)(const Vector &, const Vector &))
-    {
-      Function = f;
+double sigma_function(const Vector &x) {
+    int dim = x.Size();
+    if (dim == 2) {
+        double x1 = x(0);
+        double x2 = x(1);
+        double val_abs = x1*x2 + x1*x1 + 1.;
+        return val_abs;
     }
-
-    /// Evaluate coefficient
-    virtual double Eval(ElementTransformation &T,
-                       const IntegrationPoint &ip) {
-        double x[3];
-        Vector transip(x, 3);
-        T.Transform(ip, transip);
-        return ((*Function)(state_, transip));
+    else {
+        double x1 = x(0);
+        double x2 = x(1);
+        double x3 = x(2);
+        double val_abs = x1*x2 + x1*x1 + 1.;
+        return val_abs;
     }
-    
-    void SetState(Vector state) { 
-        state_.SetSize(state.Size());
-        state_ = state;
+}
+
+double Q_function(const Vector &x) {
+    int dim = x.Size();
+    if (dim == 2) {
+        return 1;
     }
+    else {
+        return 0;
+    }
+}
 
-private:
-   Vector state_;
-};
 
-
-// freq used in definition of psi_function2(omega,x)
-#define PI 3.14159265358979323846
-double freq = 1.52;
-double sigma_t_function(const Vector &x);
-double sigma_s_function(const Vector &x);
-double psi_function2(const Vector &omega, const Vector &x);
-double Q_function2(const Vector &omega, const Vector &x);
-double inflow_function2(const Vector &omega, const Vector &x);
-
-struct AIR_parameters {
-   double distance;
-   std::string prerelax;
-   std::string postrelax;
-   double strength_tolC;
-   double strength_tolR;
-   double filter_tolR;
-   int interp_type;
-   int relax_type;
-   double filterA_tol;
-   int coarsening;
-};
+double inflow_function(const Vector &x) {
+    int dim = x.Size();
+    if (dim == 2) {
+        return 1;
+    }
+    else {
+        return 1;
+    }
+}
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
@@ -66,6 +52,23 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps):
     m_refLevels = 1;
     m_lumped = false;
     m_dim = 2;
+
+    /* Define angle of flow, coefficients and integrators */
+    // TODO: change this to support moving flow, i.e., FunctionCoefficient instead
+    //       of VectorConstantCoefficient
+    m_omega.SetSize(m_dim);
+    if (m_dim == 2) {
+        double theta = PI/4.0;
+        m_omega(0) = cos(theta);
+        m_omega(1) = sin(theta);
+    }
+    else {
+        double theta1 = PI/4.0;
+        double theta2 = PI/4.0;
+        m_omega(0) = sin(theta1)*cos(theta2);
+        m_omega(1) = sin(theta1)*sin(theta2);       
+        m_omega(1) = cos(theta1);       
+    }
 }
 
 
@@ -77,6 +80,21 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_refLevels = 1;
     m_lumped = false;
     m_dim = 2;
+
+    /* Define angle of flow, coefficients and integrators */
+    m_omega.SetSize(m_dim);
+    if (m_dim == 2) {
+        double theta = PI/4.0;
+        m_omega(0) = cos(theta);
+        m_omega(1) = sin(theta);
+    }
+    else {
+        double theta1 = PI/4.0;
+        double theta2 = PI/4.0;
+        m_omega(0) = sin(theta1)*cos(theta2);
+        m_omega(1) = sin(theta1)*sin(theta2);       
+        m_omega(1) = cos(theta1);       
+    }
 }
 
 
@@ -87,6 +105,21 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 {
     m_lumped = false;
     m_dim = 2;
+
+    /* Define angle of flow, coefficients and integrators */
+    m_omega.SetSize(m_dim);
+    if (m_dim == 2) {
+        double theta = PI/4.0;
+        m_omega(0) = cos(theta);
+        m_omega(1) = sin(theta);
+    }
+    else {
+        double theta1 = PI/4.0;
+        double theta2 = PI/4.0;
+        m_omega(0) = sin(theta1)*cos(theta2);
+        m_omega(1) = sin(theta1)*sin(theta2);       
+        m_omega(1) = cos(theta1);       
+    }
 }
 
 
@@ -97,41 +130,53 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 {
     m_lumped = false;
     m_dim = 2;
+
+    /* Define angle of flow, coefficients and integrators */
+    m_omega.SetSize(m_dim);
+    if (m_dim == 2) {
+        double theta = PI/4.0;
+        m_omega(0) = cos(theta);
+        m_omega(1) = sin(theta);
+    }
+    else {
+        double theta1 = PI/4.0;
+        double theta2 = PI/4.0;
+        m_omega(0) = sin(theta1)*cos(theta2);
+        m_omega(1) = sin(theta1)*sin(theta2);       
+        m_omega(1) = cos(theta1);       
+    }
 }
 
 
 void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
                                            int* &A_colinds, double* &A_data, double* &B,
                                            double* &X, int &localMinRow, int &localMaxRow,
-                                           int &spatialDOFs, double t)
+                                           int &spatialDOFs, double t, int &bsize)
 {
     int meshOrder  = m_order;
-    int angle_ind  = g_nAngles / 2;     // Select angle from all angles in "g_quad"
     int basis_type = 1;
-    double alpha_mesh = 0.1;
-    int blocksize;
-    if (m_dim == 2) blocksize = (m_order+1)*(m_order+1);
-    else blocksize = (m_order+1)*(m_order+1)*(m_order+1);
+    if (m_dim == 2) {
+        bsize = (m_order+1)*(m_order+1);
+    }
+    else {
+        bsize = (m_order+1)*(m_order+1)*(m_order+1);
+    }
 
     /* Set up a curved mesh and a finite element space */
     std::string mesh_file;
     if (m_dim == 2) {
-        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        // mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
     }
     else {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
     }
     Mesh mesh(mesh_file.c_str(), 1, 1);
-    for (int lev = 0; lev<3; lev++) {
+    for (int lev = 0; lev<std::min(3,m_refLevels); lev++) {
         mesh.UniformRefinement();
     }
 
     DG_FECollection fec(m_order, m_dim, basis_type);
-    FiniteElementSpace fes(&mesh, &fec);
-    if (m_dim == 2) {
-        bool is_2D = true;
-        g_quad.set2DFlag(is_2D);   
-    }
 
     /* Define a parallel mesh by partitioning the serial mesh. */
     ParMesh pmesh(spatialComm, mesh);
@@ -140,30 +185,35 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     }
     ParFiniteElementSpace pfes(&pmesh, &fec);
 
-    /* Define angle of flow, coefficients and integrators */
-    Vector omega;
-    std::vector<double> omega0 = g_quad.getOmega(angle_ind);
-    omega.SetSize(omega0.size());
-    for (int j=0; j<omega0.size(); ++j) {
-        omega(j) = omega0[j];
-        // if (myid == 0) std::cout << omega0[j];
+    // Determine list of true (i.e. conforming) essential boundary dofs.
+    // In this example, the boundary conditions are defined by marking all
+    // the boundary attributes from the mesh as essential (Dirichlet) and
+    // converting them to a list of true dofs.
+    Array<int> ess_tdof_list;
+    if (pmesh.bdr_attributes.Size()) {
+        Array<int> ess_bdr(pmesh.bdr_attributes.Max());
+        ess_bdr = 1;
+        pfes.GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
     }
-    CoefficientWithState inflow_coeff(inflow_function2);
-    CoefficientWithState Q_coeff(Q_function2);  
-    inflow_coeff.SetState(omega);
-    Q_coeff.SetState(omega);
-    FunctionCoefficient sigma_t_coeff(sigma_t_function);
-    VectorConstantCoefficient *direction = new VectorConstantCoefficient(omega); 
+
+    // Define functions and coefficients 
+    FunctionCoefficient inflow_coeff(inflow_function);
+    FunctionCoefficient Q_coeff(Q_function);  
+    FunctionCoefficient sigma_coeff(sigma_function);
+    VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
+
+    // Define solution vector x as finite element grid function corresponding to pfes.
+    // Initialize x with initial guess of zero, which satisfies the boundary conditions.
+    ParGridFunction x(&pfes);
+    x = 0.0;
 
     /* Set up the bilinear form for this angle */
     ParBilinearForm *bl_form = new ParBilinearForm(&pfes);
-    bl_form -> AddDomainIntegrator(new MassIntegrator(sigma_t_coeff));
+    bl_form -> AddDomainIntegrator(new MassIntegrator(sigma_coeff));
     bl_form -> AddDomainIntegrator(new TransposeIntegrator(
                 new ConvectionIntegrator(*direction, -1.0), 0));
     bl_form -> AddInteriorFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));  // Interior face integrators
     bl_form -> AddBdrFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));       // Boundary face integrators
-    bl_form -> Assemble();
-    bl_form -> Finalize();
 
     /* Form the right-hand side */
     ParLinearForm *l_form = new ParLinearForm(&pfes);
@@ -174,23 +224,25 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     // Assemble bilinear form and corresponding linear system
     int spatialRank;
     MPI_Comm_rank(spatialComm, &spatialRank);
-    HypreParMatrix *A = bl_form -> ParallelAssemble();
-    HypreParVector *B0 = l_form -> ParallelAssemble();
-    Vector X0(pfes.GetVSize());
-    X0 = 0.0;
+    HypreParMatrix A;
+    Vector B0;
+    Vector X0;
+    bl_form -> Assemble();
+    bl_form -> Finalize();
+    bl_form -> FormLinearSystem(ess_tdof_list, x, *l_form, A, X0, B0);
 
-    spatialDOFs = A->GetGlobalNumRows();
-    int *rowStarts = A->GetRowStarts();
+    spatialDOFs = A.GetGlobalNumRows();
+    int *rowStarts = A.GetRowStarts();
     localMinRow = rowStarts[0];
     localMaxRow = rowStarts[1]-1;
 
     // Steal vector data to pointers
-    B = B0->StealData();
+    B = B0.StealData();
     X = X0.StealData();
 
     // Compress diagonal and off-diagonal blocks of hypre matrix to local CSR
     SparseMatrix A_loc;
-    A->GetProcRows(A_loc);
+    A.GetProcRows(A_loc);
     A_rowptr = A_loc.GetI();
     A_colinds = A_loc.GetJ();
     A_data = A_loc.GetData();
@@ -203,19 +255,20 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
         else m->AddDomainIntegrator(new MassIntegrator);
         m->Assemble();
         m->Finalize();
-        HypreParMatrix *M = m->ParallelAssemble();
+        HypreParMatrix M;
+        m->FormSystemMatrix(ess_tdof_list, M);
         SparseMatrix M_loc;
-        M->GetProcRows(M_loc);
+        M.GetProcRows(M_loc);
         m_M_rowptr = M_loc.GetI();
         m_M_colinds = M_loc.GetJ();
         m_M_data = M_loc.GetData();
         M_loc.LoseData();
-        delete M;
         delete m;
     }
 
-    delete A;
-    delete B0;
+    double temp0, temp1;
+    pmesh.GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
+
     delete bl_form;
     delete l_form;
     // TODO: debug
@@ -226,54 +279,42 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
 /* Time-independent spatial discretization of Laplacian */
 void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
                                            double* &A_data, double* &B, double* &X,
-                                           int &spatialDOFs, double t)
+                                           int &spatialDOFs, double t, int &bsize)
 {
-    int meshOrder  = m_order;
-    int angle_ind  = g_nAngles / 2;     // Select angle from all angles in "g_quad"
     int basis_type = 1;
-    double alpha_mesh = 0.1;
-    int blocksize;
-    if (m_dim == 2) blocksize = (m_order+1)*(m_order+1);
-    else blocksize = (m_order+1)*(m_order+1)*(m_order+1);    
+    if (m_dim == 2) {
+        bsize = (m_order+1)*(m_order+1);
+    }
+    else {
+        bsize = (m_order+1)*(m_order+1)*(m_order+1);    
+    }
 
     /* Set up a curved mesh and a finite element space */
     std::string mesh_file;
     if (m_dim == 2) {
-        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        // mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
     }
     else {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
     }
     Mesh mesh(mesh_file.c_str(), 1, 1);
-    for (int lev = 0; lev<3; lev++) {
+    for (int lev = 0; lev<m_refLevels; lev++) {
         mesh.UniformRefinement();
     }
 
     DG_FECollection fec(m_order, m_dim, basis_type);
     FiniteElementSpace fes(&mesh, &fec);
-    if (m_dim == 2) {
-        bool is_2D = true;
-        g_quad.set2DFlag(is_2D);   
-    }
 
-    /* Define angle of flow, coefficients and integrators */
-    Vector omega;
-    std::vector<double> omega0 = g_quad.getOmega(angle_ind);
-    omega.SetSize(omega0.size());
-    for (int j=0; j<omega0.size(); ++j) {
-        omega(j) = omega0[j];
-        // if (myid == 0) std::cout << omega0[j];
-    }
-    CoefficientWithState inflow_coeff(inflow_function2);
-    CoefficientWithState Q_coeff(Q_function2);  
-    inflow_coeff.SetState(omega);
-    Q_coeff.SetState(omega);
-    FunctionCoefficient sigma_t_coeff(sigma_t_function);
-    VectorConstantCoefficient *direction = new VectorConstantCoefficient(omega); 
+    // Define functions and coefficients 
+    FunctionCoefficient inflow_coeff(inflow_function);
+    FunctionCoefficient Q_coeff(Q_function);  
+    FunctionCoefficient sigma_coeff(sigma_function);
+    VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
 
     /* Set up the bilinear form for this angle */
     BilinearForm *bl_form = new BilinearForm(&fes);
-    bl_form -> AddDomainIntegrator(new MassIntegrator(sigma_t_coeff));
+    bl_form -> AddDomainIntegrator(new MassIntegrator(sigma_coeff));
     bl_form -> AddDomainIntegrator(new TransposeIntegrator(
                 new ConvectionIntegrator(*direction, -1.0), 0));
     bl_form -> AddInteriorFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));  // Interior face integrators
@@ -318,6 +359,9 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
         delete m;
     }
 
+    double temp0, temp1;
+    mesh.GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
+
     delete bl_form;
     delete l_form; 
 
@@ -341,124 +385,5 @@ void DGadvection::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data
 }
 
 
-double psi_function(const Vector &x) {
-    if (m_dim == 2) {
-        double x1 = x(0);
-        double x2 = x(1);
-        double psi = .5 * (x1*x1 + x2*x2 + 1.) + std::cos(freq*(x1+x2));
-        psi = psi * (g_omega_g(0)*g_omega_g(0) + g_omega_g(1));
-        return psi;
-    }
-    else {
-        double x1 = x(0);
-        double x2 = x(1);
-        double x3 = x(2);
-        double psi = .5 * (x1*x1 + x2*x2 + x3*x3 + 1.) + std::cos(freq*(x1+x2+x3));
-        psi = psi * (g_omega_g(0)*g_omega_g(0) + g_omega_g(1)*g_omega_g(2) + g_omega_g(1));
-        return psi;
-    }
-}
-
-
-double psi_function2(const Vector &omega, const Vector &x) {
-    if (m_dim == 2) {
-        double x1 = x(0);
-        double x2 = x(1);
-        double psi = .5 * (x1*x1 + x2*x2 + 1.) + std::cos(freq*(x1+x2));
-        psi = psi * (omega(0)*omega(0) + omega(1));
-        return psi;
-    }
-    else {
-        double x1 = x(0);
-        double x2 = x(1);
-        double x3 = x(2);
-        double psi = .5 * (x1*x1 + x2*x2 + x3*x3 + 1.) + std::cos(freq*(x1+x2+x3));
-        psi = psi * (omega(0)*omega(0) + omega(1)*omega(2) + omega(1));
-        return psi;
-    }
-}
-
-
-double sigma_s_function(const Vector &x) {
-    if (m_dim == 2) {
-        return 0.;
-    }
-    else {
-        double x1 = x(0);
-        double x2 = x(1);
-        double x3 = x(2);
-        return (x1*x2 + x1*x1 + .2);       
-    }
-}
-
-
-double sigma_t_function(const Vector &x) {
-    if (m_dim == 2) {
-        double x1 = x(0);
-        double x2 = x(1);
-        double val_abs = x1*x2 + x1*x1 + 1.;
-        double sig_s = sigma_s_function(x);
-        return val_abs + sig_s;
-    }
-    else {
-        double x1 = x(0);
-        double x2 = x(1);
-        double x3 = x(2);
-        double val_abs = x1*x2 + x1*x1 + 1.;
-        double sig_s = sigma_s_function(x);
-        return val_abs + sig_s;
-    }
-}
-
-
-double phi_function2(const Vector &x)
-{
-    double phi = 0;
-    Vector omega(3);
-    for (int angle=0; angle < g_nAngles; ++angle)
-    {
-        std::vector<double> omega0 = g_quad.getOmega(angle);
-        double w = g_quad.getWt(angle);
-        omega(0) = omega0[0];
-        omega(1) = omega0[1];
-        omega(2) = omega0[2];
-        phi = phi + w * psi_function2(omega,x);
-    }
-    return phi; 
-}
-
-
-double Q_function2(const Vector &omega, const Vector &x) {
-    if (m_dim == 2) {
-        double x1 = x(0);
-        double x2 = x(1);
-        double sig = sigma_t_function(x);
-        double val_sin = freq * std::sin(freq*(x1+x2));
-        double psi_dx_dot_v = omega(0)*(x1-val_sin) + omega(1)*(x2-val_sin);
-        psi_dx_dot_v = psi_dx_dot_v * (omega(0)*omega(0) + omega(1));
-        double psi = psi_function2(omega, x);
-        return psi_dx_dot_v + sig * psi;
-    }
-    else {
-        double pi = 3.1415926535897;
-        double x1 = x(0);
-        double x2 = x(1);
-        double x3 = x(2);
-        double sig = sigma_t_function(x);
-        double val_sin = freq * std::sin(freq*(x1+x2+x3));
-        double psi_dx_dot_v = omega(0)*(x1-val_sin) + omega(1)*(x2-val_sin) + omega(2)*(x3-val_sin);
-        psi_dx_dot_v = psi_dx_dot_v * (omega(0)*omega(0) + omega(1)*omega(2) + omega(1));
-        double psi = psi_function2(omega, x);
-        double phi = phi_function2(x);
-        double sig_s = sigma_s_function(x);
-        return psi_dx_dot_v + sig * psi - sig_s/(4*pi) * phi;
-    }
-}
-
-
-double inflow_function2(const Vector &omega, const Vector &x) {
-    double psi = psi_function2(omega, x);
-    return psi;
-}
 
 

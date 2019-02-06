@@ -1,19 +1,15 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <algorithm>
 #include "SpaceTimeMatrix.hpp"
 
 // TODO:
-//      - Add scaling by mass inverse in MySpaceTime.cpp. **Include dt -> (M / dt)^{-1}.
-//          Then don't scale by dt in SpaceTimeMatrix.cpp
-//      - Add function or capability to eliminate zeros from spatial
-//        discretization.
 //      - Add isTimeDependent option
-//      - Finish AB2 for spatial parallel
 //      - Add hypre timing for setup and solve (see ij.c)
-//      - Something wrong with GMRES
-//            srun -N 4 -n 64 -p pdebug driver -nt 512 -t 12 -o 2 -l 4 -Af 0 -Ai 100 -AIR 2 -gmres 1
-//        doesn't converge, but does if you turn off gmres...
+
+//      - GMRES does not converge while BoomerAMG does, must be bug
+
 
 
 
@@ -21,14 +17,18 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int numTimeSteps, double t0, double t1)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_numTimeSteps{numTimeSteps},
       m_t0{t0}, m_t1{t1}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), 
-      m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false)
+      m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
+      m_bsize(1), m_hmin(-1), m_hmax(-1)
 {
-    // Set member variables
-    m_dt = (m_t1-m_t0) / m_numTimeSteps;
-
     // Get number of processes
     MPI_Comm_rank(m_globComm, &m_globRank);
     MPI_Comm_size(m_globComm, &m_numProc);
+
+    // Set member variables
+    m_dt = (m_t1-m_t0) / m_numTimeSteps;
+    if (m_globRank == 0) {
+        std::cout << "dt = " << m_dt << "\n";
+    }
 
     // Check that number of time steps divides the number MPI processes or vice versa.
     if (m_numTimeSteps <= m_numProc) {
@@ -49,6 +49,9 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
         MPI_Comm_split(m_globComm, m_timeInd, m_globRank, &m_spatialComm);
         MPI_Comm_rank(m_spatialComm, &m_spatialRank);
         MPI_Comm_size(m_spatialComm, &m_spCommSize);
+    
+        std::cout << m_globRank << "/" << m_numProc << ", " << m_spatialRank << "/" << m_spCommSize << "\n";
+
     }
     else {
         m_useSpatialParallel = false;
@@ -77,7 +80,7 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 
 void SpaceTimeMatrix::BuildMatrix()
 {
-    if (m_globRank == 0) std::cout << "Building matrix.\n";
+    if (m_globRank == 0) std::cout << "Building matrix, " << m_useSpatialParallel << "\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
     if (m_globRank == 0) std::cout << "Space-time matrix assembled.\n";
@@ -102,10 +105,6 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     else if (m_timeDisc == 31) {
         AB1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
     }
-    // else if (m_timeDisc == 32) {
-    //     // AB2(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    //     // TODO: implement
-    // }
     else {
         std::cout << "WARNING: invalid choice of time integration.\n";
         MPI_Finalize();
@@ -238,8 +237,9 @@ void SpaceTimeMatrix::SetAMG()
    m_solverOptions.coarsen_type = 6;
    m_solverOptions.distance_R = -1;
    m_solverOptions.strength_tolR = -1;
-   m_solverOptions.filterA_tol = 0.0;
+   m_solverOptions.filter_tolA = 0.0;
    m_solverOptions.filter_tolR = 0.0;
+   m_solverOptions.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -255,8 +255,9 @@ void SpaceTimeMatrix::SetAIR()
    m_solverOptions.coarsen_type = 6;
    m_solverOptions.distance_R = 1.5;
    m_solverOptions.strength_tolR = 0.005;
-   m_solverOptions.filterA_tol = 0.0;
+   m_solverOptions.filter_tolA = 0.0;
    m_solverOptions.filter_tolR = 0.0;
+   m_solverOptions.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -272,8 +273,9 @@ void SpaceTimeMatrix::SetAIRHyperbolic()
    m_solverOptions.coarsen_type = 6;
    m_solverOptions.distance_R = 1.5;
    m_solverOptions.strength_tolR = 0.005;
-   m_solverOptions.filterA_tol = 0.0001;
+   m_solverOptions.filter_tolA = 0.0001;
    m_solverOptions.filter_tolR = 0.0;
+   m_solverOptions.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -283,6 +285,15 @@ void SpaceTimeMatrix::SetAMGParameters(AMG_parameters &params)
 {
     // TODO: does this copy the structure by value?
     m_solverOptions = params;
+}
+
+
+void SpaceTimeMatrix::PrintMeshData()
+{
+    if (m_globRank == 0) {
+        std::cout << "Space-time mesh:\n\thmin = " << m_hmin <<
+        "\n\thmax = " << m_hmax << "\n\tdt   = " << m_dt << "\n\n";
+    }
 }
 
 
@@ -363,16 +374,19 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_coarse, 3);
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_down,   1);
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_up,     2);
-        if (m_solverOptions.filterA_tol > 0) {
-            HYPRE_BoomerAMGSetADropTol(m_solver, m_solverOptions.filterA_tol);
+        if (m_solverOptions.filter_tolA > 0) {
+            HYPRE_BoomerAMGSetADropTol(m_solver, m_solverOptions.filter_tolA);
         }
         // type = -1: drop based on row inf-norm
-        else if (m_solverOptions.filterA_tol == -1) {
+        else if (m_solverOptions.filter_tolA == -1) {
             HYPRE_BoomerAMGSetADropType(m_solver, -1);
         }
 
         // Do not rebuild solver unless parameters are changed.
         m_rebuildSolver = false;
+
+        // Set cycle type for solve 
+        HYPRE_BoomerAMGSetCycleType(m_solver, m_solverOptions.cycle_type);
     }
 }
 
@@ -380,8 +394,22 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel)
 {
     SetupBoomerAMG(printLevel, maxiter, tol);
-    HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x);
-    HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
+
+    bool m_blockInvScale = false;
+    if (m_blockInvScale) {
+        HYPRE_ParCSRMatrix A_s;
+        hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);
+        hypre_ParCSRMatrixDropSmallEntries(A_s, 1e-15, 1);
+        HYPRE_ParVector b_s;
+        hypre_ParvecBdiagInvScal(m_b, m_bsize, &b_s, m_A);
+
+        HYPRE_BoomerAMGSetup(m_solver, A_s, b_s, m_x);
+        HYPRE_BoomerAMGSolve(m_solver, A_s, b_s, m_x);
+    }
+    else {
+        HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x);
+        HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
+    }
 }
 
 
@@ -412,6 +440,7 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
 }
 
 
+// TODO : this function may be unnecessary if mass matrix is stored as member variables...
 void SpaceTimeMatrix::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
 {
     // TODO : set to sparse identity matrix here
@@ -442,7 +471,7 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     double* X0;
     int spatialDOFs;
     getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                             X0, spatialDOFs, m_dt*tInd0);
+                             X0, spatialDOFs, m_dt*tInd0, m_bsize);
     int nnzPerTime = T_rowptr[spatialDOFs];    
 
     // Get mass matrix and scale by 1/dt
@@ -481,7 +510,7 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
             delete[] B0;
             delete[] X0;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, m_dt*ti);
+                                     X0, spatialDOFs, m_dt*ti, m_bsize);
         }
 
         int colPlusOffd  = (ti - 1)*spatialDOFs;
@@ -508,9 +537,11 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
                 // Add spatial discretization and mass matrix to global matrix
                 for (it=entries.begin(); it!=entries.end(); it++) {
-                    colinds[dataInd] = colPlusDiag + it->first;
-                    data[dataInd] = it->second;
-                    dataInd += 1;
+                    if (std::abs(it->second) > 1e-16) {
+                        colinds[dataInd] = colPlusDiag + it->first;
+                        data[dataInd] = it->second;
+                        dataInd += 1;
+                    }
                 }
 
                 // Add right hand side and initial guess for this row to global problem
@@ -532,10 +563,12 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
                 // Add row of off-diagonal block, -(M/dt)*u_{i-1}
                 for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                    colinds[dataInd] = colPlusOffd + M_colinds[j];
-                    data[dataInd] = -M_data[j];
-                    dataInd += 1;
-                    entries[M_colinds[j]] += M_data[j];
+                    if (std::abs(M_data[j]) > 1e-16){
+                        colinds[dataInd] = colPlusOffd + M_colinds[j];
+                        data[dataInd] = -M_data[j];
+                        dataInd += 1;
+                        entries[M_colinds[j]] += M_data[j];
+                    }
                 }
 
                 // Get row of spatial discretization
@@ -545,9 +578,11 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
                 // Add spatial discretization and mass matrix to global matrix
                 for (it=entries.begin(); it!=entries.end(); it++) {
-                    colinds[dataInd] = colPlusDiag + it->first;
-                    data[dataInd] = it->second;
-                    dataInd += 1;
+                    if (std::abs(it->second) > 1e-16) {
+                        colinds[dataInd] = colPlusDiag + it->first;
+                        data[dataInd] = it->second;
+                        dataInd += 1;
+                    }
                 }
 
                 // Add right hand side and initial guess for this row to global problem
@@ -593,11 +628,11 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
     int spatialDOFs;
     if (tInd0 > 0) {
         getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0, X0,
-                                 spatialDOFs, m_dt*(tInd0-1));
+                                 spatialDOFs, m_dt*(tInd0-1), m_bsize);
     }
     else {
         getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0, X0,
-                                 spatialDOFs, m_dt*tInd0);
+                                 spatialDOFs, m_dt*tInd0, m_bsize);
     }
     int nnzPerTime = T_rowptr[spatialDOFs];    
  
@@ -637,7 +672,7 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
             delete[] B0;
             delete[] X0;
             getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-                                     X0, spatialDOFs, m_dt*ti);
+                                     X0, spatialDOFs, m_dt*ti, m_bsize);
         }
 
         int colPlusOffd  = (ti - 1)*spatialDOFs;
@@ -652,9 +687,11 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
                 
                 // Add mass matrix as diagonal block, M/dt
                 for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                    colinds[dataInd] = colPlusDiag + M_colinds[j];
-                    data[dataInd] = M_data[j];
-                    dataInd += 1;
+                    if (std::abs(M_data[j]) > 1e-16) {
+                        colinds[dataInd] = colPlusDiag + M_colinds[j];
+                        data[dataInd] = M_data[j];
+                        dataInd += 1;
+                    }
                 }
 
                 // Assume user implements boundary conditions to rhs
@@ -684,16 +721,20 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
                 // Add spatial discretization and mass matrix to global matrix
                 // for off-diagonal block
                 for (it=entries.begin(); it!=entries.end(); it++) {
-                    colinds[dataInd] = colPlusOffd + it->first;
-                    data[dataInd] = it->second;
-                    dataInd += 1;
+                    if (std::abs(it->second) > 1e-16) {
+                        colinds[dataInd] = colPlusOffd + it->first;
+                        data[dataInd] = it->second;
+                        dataInd += 1;
+                    }
                 }
 
                 // Add mass matrix as diagonal block, M/dt
                 for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                    colinds[dataInd] = colPlusDiag + M_colinds[j];
-                    data[dataInd] = M_data[j];
-                    dataInd += 1;
+                    if (std::abs(M_data[j]) > 1e-16) {
+                        colinds[dataInd] = colPlusDiag + M_colinds[j];
+                        data[dataInd] = M_data[j];
+                        dataInd += 1;
+                    }
                 }
 
                 // Add right hand side and initial guess for this row to global problem
@@ -738,7 +779,7 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     double* T_data;
     getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                              B, X, localMinRow, localMaxRow, spatialDOFs,
-                             m_dt*m_timeInd);
+                             m_dt*m_timeInd, m_bsize);
     int procRows = localMaxRow - localMinRow + 1;
     int nnzPerTime = T_rowptr[procRows];    
 
@@ -766,9 +807,12 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     // Column indices for this processor given the time index and the first row
     // stored on this processor of the spatial discretization (zero if whole
     // spatial problem stored on one processor).
-    int colPlusOffd = (m_timeInd - 1)*spatialDOFs + localMinRow;
+    int colPlusOffd = (m_timeInd - 1)*spatialDOFs;
     int colPlusDiag = m_timeInd*spatialDOFs;
     std::map<int, double>::iterator it;
+    // int colPlusOffd = (m_timeInd - 1)*spatialDOFs + localMinRow; 
+    // OLD - I think this was incorrect -- Mass matrix and spatial matrix have
+    //      column indices global w.r.t. the spatial discretization
 
     // At time t=0, only have spatial discretization block
     if (m_timeInd == 0) {
@@ -789,13 +833,12 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
             // Add spatial discretization and mass matrix to global matrix
             for (it=entries.begin(); it!=entries.end(); it++) {
-                colinds[dataInd] = colPlusDiag + it->first;
-                data[dataInd] = it->second;
-                dataInd += 1;
+                if (std::abs(it->second) > 1e-16) {
+                    colinds[dataInd] = colPlusDiag + it->first;
+                    data[dataInd] = it->second;
+                    dataInd += 1;
+                }
             }
-
-            // Add right hand side and initial guess for this row to global problem
-            B[i] *= 1;
 
             // Total nonzero for this row on processor is one for off-diagonal block
             // and the total nnz in this row of T (T_rowptr[i+1] - T_rowptr[i]).
@@ -809,10 +852,12 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
             // Add row of off-diagonal block, -(M/dt)*u_{i-1}
             for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                colinds[dataInd] = colPlusOffd + M_colinds[j];
-                data[dataInd] = -M_data[j];
-                dataInd += 1;
-                entries[M_colinds[j]] += M_data[j];
+                if (std::abs(M_data[j]) > 1e-16) {
+                    colinds[dataInd] = colPlusOffd + M_colinds[j];
+                    data[dataInd] = -M_data[j];
+                    dataInd += 1;
+                    entries[M_colinds[j]] += M_data[j];
+                }
             }
 
             // Get row of spatial discretization
@@ -822,13 +867,12 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
             // Add spatial discretization and mass matrix to global matrix
             for (it=entries.begin(); it!=entries.end(); it++) {
-                colinds[dataInd] = colPlusDiag + it->first;
-                data[dataInd] = it->second;
-                dataInd += 1;
+                if (std::abs(it->second) > 1e-16) {
+                    colinds[dataInd] = colPlusDiag + it->first;
+                    data[dataInd] = it->second;
+                    dataInd += 1;
+                }
             }
-
-            // Add right hand side and initial guess for this row to global problem
-            B[i] *= 1;
 
             // Total nonzero for this row on processor is one for off-diagonal block
             // and the total nnz in this row of T (T_rowptr[i+1] - T_rowptr[i]).
@@ -861,12 +905,12 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     if (m_timeInd == 0) {    
         getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                                  B, X, localMinRow, localMaxRow, spatialDOFs,
-                                 m_dt*m_timeInd);
+                                 m_dt*m_timeInd, m_bsize);
     }
     else {
         getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data,
                                  B, X, localMinRow, localMaxRow, spatialDOFs,
-                                 m_dt*(m_timeInd-1));
+                                 m_dt*(m_timeInd-1), m_bsize);
     }
     int procRows = localMaxRow - localMinRow + 1;
     int nnzPerTime = T_rowptr[procRows];    
@@ -878,7 +922,15 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     getMassMatrix(M_rowptr, M_colinds, M_data);
     for (int i=0; i<M_rowptr[procRows]; i++) {
         M_data[i] /= m_dt;
+        // if (m_globRank == 3) std::cout << M_data[i] << ", ";
     }
+
+    // if (m_globRank == 3) {
+    //     std::cout << "\n\n";
+    //     for (int i=0; i<T_rowptr[procRows]; i++) {
+    //         std::cout << T_data[i] << ", ";
+    //     }
+    // }
 
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
@@ -897,7 +949,10 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     // column indices. Only need to account for min row indexing for the
     // diagonal block.
     int colPlusOffd = (m_timeInd - 1)*spatialDOFs;
-    int colPlusDiag = m_timeInd*spatialDOFs + localMinRow;
+    // int colPlusDiag = m_timeInd*spatialDOFs + localMinRow;
+    // OLD - I think this was incorrect -- Mass matrix and spatial matrix have
+    //      column indices global w.r.t. the spatial discretization
+    int colPlusDiag = m_timeInd*spatialDOFs;
     std::map<int, double>::iterator it;
 
     // At time t=0, only have identity block on diagonal
@@ -908,14 +963,12 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
 
             // Add mass matrix as diagonal block, M/dt
             for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                colinds[dataInd] = colPlusDiag + M_colinds[j];
-                data[dataInd] = M_data[j];
-                dataInd += 1;
+                if (std::abs(M_data[j]) > 1e-16) {
+                    colinds[dataInd] = colPlusDiag + M_colinds[j];
+                    data[dataInd] = M_data[j];
+                    dataInd += 1;
+                }
             }
-
-            // Assume user implements boundary conditions to rhs
-            B[i] = 0.0;
-            // X[i] = X0[i];
 
             // One nonzero for this row
             rowptr[i+1] = dataInd;
@@ -940,20 +993,21 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
             // Add spatial discretization and mass matrix to global matrix
             // for off-diagonal block
             for (it=entries.begin(); it!=entries.end(); it++) {
-                colinds[dataInd] = colPlusOffd + it->first;
-                data[dataInd] = it->second;
-                dataInd += 1;
+                if (std::abs(it->second) > 1e-16) {
+                    colinds[dataInd] = colPlusOffd + it->first;
+                    data[dataInd] = it->second;
+                    dataInd += 1;
+                }
             }
 
             // Add mass matrix as diagonal block, M/dt
             for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                colinds[dataInd] = colPlusDiag + M_colinds[j];
-                data[dataInd] = M_data[j];
-                dataInd += 1;
+                if (std::abs(M_data[j]) > 1e-16) {
+                    colinds[dataInd] = colPlusDiag + M_colinds[j];
+                    data[dataInd] = M_data[j];
+                    dataInd += 1;
+                }
             }
-
-            // Add right hand side and initial guess for this row to global problem
-            // X[i] = X0[i];
 
             // Total nonzero for this row on processor is one for off-diagonal block
             // and the total nnz in this row of T (T_rowptr[i+1] - T_rowptr[i]).
@@ -962,7 +1016,7 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     }
 
     // Check if sufficient data was allocated
-    if (dataInd != procNnz) {
+    if (dataInd > procNnz) {
         std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
     }
     delete[] T_rowptr;
