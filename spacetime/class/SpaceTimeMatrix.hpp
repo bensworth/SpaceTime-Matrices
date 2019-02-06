@@ -98,6 +98,11 @@ private:
     // TODO: Add support in functions for this; make optional? 
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t) = 0;
 
+protected:
+
+    int*    m_M_rowptr;
+    int*    m_M_colinds;
+    double* m_M_data;
 
 public:
 

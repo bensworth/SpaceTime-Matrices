@@ -21,9 +21,6 @@ private:
 	int m_refLevels;
 	int m_order;
 	int m_dim;
-	int* m_M_rowptr;
-	int* m_M_colinds;
-	double* m_M_data;
 	Vector m_omega_g;
 	std::string m_transformName;
 

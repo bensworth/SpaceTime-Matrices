@@ -60,43 +60,43 @@ struct AIR_parameters {
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
-    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1)
 {
     m_order = 1;
     m_refLevels = 1;
     m_lumped = false;
+    m_dim = 2;
 }
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double t0, double t1): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1)
 {
     m_order = 1;
     m_refLevels = 1;
     m_lumped = false;
+    m_dim = 2;
 }
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          int refLevels, int order): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
-    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
+    m_dim = 2;
 }
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double t0, double t1, int refLevels, int order): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
+    m_dim = 2;
 }
 
 
@@ -110,26 +110,25 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     int basis_type = 1;
     double alpha_mesh = 0.1;
     int blocksize;
-    if (g_dim == 2) blocksize = (m_order+1)*(m_order+1);
+    if (m_dim == 2) blocksize = (m_order+1)*(m_order+1);
     else blocksize = (m_order+1)*(m_order+1)*(m_order+1);
 
     /* Set up a curved mesh and a finite element space */
     std::string mesh_file;
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
     }
     else {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
     }
-    Mesh mesh(mesh_file, 1, 1);
-    dim = mesh.Dimension();
+    Mesh mesh(mesh_file.c_str(), 1, 1);
     for (int lev = 0; lev<3; lev++) {
         mesh.UniformRefinement();
     }
 
-    DG_FECollection fec(m_order, g_dim, basis_type);
+    DG_FECollection fec(m_order, m_dim, basis_type);
     FiniteElementSpace fes(&mesh, &fec);
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         bool is_2D = true;
         g_quad.set2DFlag(is_2D);   
     }
@@ -234,26 +233,25 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
     int basis_type = 1;
     double alpha_mesh = 0.1;
     int blocksize;
-    if (g_dim == 2) blocksize = (m_order+1)*(m_order+1);
+    if (m_dim == 2) blocksize = (m_order+1)*(m_order+1);
     else blocksize = (m_order+1)*(m_order+1)*(m_order+1);    
 
     /* Set up a curved mesh and a finite element space */
     std::string mesh_file;
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
     }
     else {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
     }
-    Mesh mesh(mesh_file, 1, 1);
-    dim = mesh.Dimension();
+    Mesh mesh(mesh_file.c_str(), 1, 1);
     for (int lev = 0; lev<3; lev++) {
         mesh.UniformRefinement();
     }
 
-    DG_FECollection fec(m_order, g_dim, basis_type);
+    DG_FECollection fec(m_order, m_dim, basis_type);
     FiniteElementSpace fes(&mesh, &fec);
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         bool is_2D = true;
         g_quad.set2DFlag(is_2D);   
     }
@@ -344,10 +342,10 @@ void DGadvection::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data
 
 
 double psi_function(const Vector &x) {
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         double x1 = x(0);
         double x2 = x(1);
-        double psi = .5 * (x1*x1 + x2*x2 + 1.) + std::cos(g_freq*(x1+x2));
+        double psi = .5 * (x1*x1 + x2*x2 + 1.) + std::cos(freq*(x1+x2));
         psi = psi * (g_omega_g(0)*g_omega_g(0) + g_omega_g(1));
         return psi;
     }
@@ -355,7 +353,7 @@ double psi_function(const Vector &x) {
         double x1 = x(0);
         double x2 = x(1);
         double x3 = x(2);
-        double psi = .5 * (x1*x1 + x2*x2 + x3*x3 + 1.) + std::cos(g_freq*(x1+x2+x3));
+        double psi = .5 * (x1*x1 + x2*x2 + x3*x3 + 1.) + std::cos(freq*(x1+x2+x3));
         psi = psi * (g_omega_g(0)*g_omega_g(0) + g_omega_g(1)*g_omega_g(2) + g_omega_g(1));
         return psi;
     }
@@ -363,10 +361,10 @@ double psi_function(const Vector &x) {
 
 
 double psi_function2(const Vector &omega, const Vector &x) {
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         double x1 = x(0);
         double x2 = x(1);
-        double psi = .5 * (x1*x1 + x2*x2 + 1.) + std::cos(g_freq*(x1+x2));
+        double psi = .5 * (x1*x1 + x2*x2 + 1.) + std::cos(freq*(x1+x2));
         psi = psi * (omega(0)*omega(0) + omega(1));
         return psi;
     }
@@ -374,7 +372,7 @@ double psi_function2(const Vector &omega, const Vector &x) {
         double x1 = x(0);
         double x2 = x(1);
         double x3 = x(2);
-        double psi = .5 * (x1*x1 + x2*x2 + x3*x3 + 1.) + std::cos(g_freq*(x1+x2+x3));
+        double psi = .5 * (x1*x1 + x2*x2 + x3*x3 + 1.) + std::cos(freq*(x1+x2+x3));
         psi = psi * (omega(0)*omega(0) + omega(1)*omega(2) + omega(1));
         return psi;
     }
@@ -382,7 +380,7 @@ double psi_function2(const Vector &omega, const Vector &x) {
 
 
 double sigma_s_function(const Vector &x) {
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         return 0.;
     }
     else {
@@ -395,7 +393,7 @@ double sigma_s_function(const Vector &x) {
 
 
 double sigma_t_function(const Vector &x) {
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         double x1 = x(0);
         double x2 = x(1);
         double val_abs = x1*x2 + x1*x1 + 1.;
@@ -431,11 +429,11 @@ double phi_function2(const Vector &x)
 
 
 double Q_function2(const Vector &omega, const Vector &x) {
-    if (g_dim == 2) {
+    if (m_dim == 2) {
         double x1 = x(0);
         double x2 = x(1);
         double sig = sigma_t_function(x);
-        double val_sin = g_freq * std::sin(g_freq*(x1+x2));
+        double val_sin = freq * std::sin(freq*(x1+x2));
         double psi_dx_dot_v = omega(0)*(x1-val_sin) + omega(1)*(x2-val_sin);
         psi_dx_dot_v = psi_dx_dot_v * (omega(0)*omega(0) + omega(1));
         double psi = psi_function2(omega, x);
@@ -447,7 +445,7 @@ double Q_function2(const Vector &omega, const Vector &x) {
         double x2 = x(1);
         double x3 = x(2);
         double sig = sigma_t_function(x);
-        double val_sin = g_freq * std::sin(g_freq*(x1+x2+x3));
+        double val_sin = freq * std::sin(freq*(x1+x2+x3));
         double psi_dx_dot_v = omega(0)*(x1-val_sin) + omega(1)*(x2-val_sin) + omega(2)*(x3-val_sin);
         psi_dx_dot_v = psi_dx_dot_v * (omega(0)*omega(0) + omega(1)*omega(2) + omega(1));
         double psi = psi_function2(omega, x);

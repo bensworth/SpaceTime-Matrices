@@ -21,7 +21,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int numTimeSteps, double t0, double t1)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_numTimeSteps{numTimeSteps},
       m_t0{t0}, m_t1{t1}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), 
-      m_rebuildSolver(false)
+      m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false)
 {
     // Set member variables
     m_dt = (m_t1-m_t0) / m_numTimeSteps;
@@ -350,7 +350,7 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         if (m_solverOptions.distance_R > 0) {
             HYPRE_BoomerAMGSetRestriction(m_solver, m_solverOptions.distance_R);
             HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_solverOptions.strength_tolR);
-            HYPRE_BoomerAMGSetFilterThresholdR(amg_precond, m_solverOptions.filter_tolR);
+            HYPRE_BoomerAMGSetFilterThresholdR(m_solver, m_solverOptions.filter_tolR);
         }
         HYPRE_BoomerAMGSetInterpType(m_solver, m_solverOptions.interp_type);
         HYPRE_BoomerAMGSetCoarsenType(m_solver, m_solverOptions.coarsen_type);
@@ -412,11 +412,15 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
 }
 
 
-void buildMassMatrix( )
+void SpaceTimeMatrix::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
 {
+    // TODO : set to sparse identity matrix here
     if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
 
     }
+
+    // TODO : set input pointers to address of member variables
+
 }
 
 /* ------------------------------------------------------------------------- */
