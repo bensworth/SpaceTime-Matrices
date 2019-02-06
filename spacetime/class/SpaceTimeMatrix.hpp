@@ -8,15 +8,16 @@
 
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
-    std::string prerelax;
-    std::string postrelax;
-    int relax_type;
-    int interp_type;
-    double strength_tolC;
-    int coarsen_type;
-    int distance_R;
-    double strength_tolR;
-    double filterA_tol;
+   double distance_R;
+   std::string prerelax;
+   std::string postrelax;
+   double strength_tolC;
+   double strength_tolR;
+   double filter_tolR;
+   int interp_type;
+   int relax_type;
+   double filterA_tol;
+   int coarsen_type;
 
     // AMG_parameters() : 
     //     prerelax(""), postrelax(""), relax_type(-1),
@@ -25,7 +26,7 @@ struct AMG_parameters {
     // {
 
     // }
- };
+};
 
 
 class SpaceTimeMatrix

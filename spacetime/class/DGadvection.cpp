@@ -1,22 +1,62 @@
 #include "DGadvection.hpp"
-#include "./src/MeshLoader.hpp"
-#include "./src/CoefficientWithState.hpp"
-#include "./src/Quadrature.hpp"
+#include <cstdio>
+#include <vector>
+#include <iostream>
+using namespace mfem;
 
 
-double g_freq = 1.52;
-int snOrder = 2;
-Quadrature g_quad(snOrder);
-Vector g_omega_g(2);
-int g_dim = 2;
-int g_nAngles = g_quad.getNumAngles();
-double psi_function(const Vector &x);
+class CoefficientWithState : public Coefficient
+{
+protected:
+    double (*Function)(const Vector &, const Vector &);
+
+public:
+    /// Define a time-independent coefficient from a C-function
+    CoefficientWithState(double (*f)(const Vector &, const Vector &))
+    {
+      Function = f;
+    }
+
+    /// Evaluate coefficient
+    virtual double Eval(ElementTransformation &T,
+                       const IntegrationPoint &ip) {
+        double x[3];
+        Vector transip(x, 3);
+        T.Transform(ip, transip);
+        return ((*Function)(state_, transip));
+    }
+    
+    void SetState(Vector state) { 
+        state_.SetSize(state.Size());
+        state_ = state;
+    }
+
+private:
+   Vector state_;
+};
+
+
+// freq used in definition of psi_function2(omega,x)
+#define PI 3.14159265358979323846
+double freq = 1.52;
 double sigma_t_function(const Vector &x);
 double sigma_s_function(const Vector &x);
 double psi_function2(const Vector &omega, const Vector &x);
 double Q_function2(const Vector &omega, const Vector &x);
 double inflow_function2(const Vector &omega, const Vector &x);
 
+struct AIR_parameters {
+   double distance;
+   std::string prerelax;
+   std::string postrelax;
+   double strength_tolC;
+   double strength_tolR;
+   double filter_tolR;
+   int interp_type;
+   int relax_type;
+   double filterA_tol;
+   int coarsening;
+};
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
@@ -26,7 +66,6 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps):
     m_order = 1;
     m_refLevels = 1;
     m_lumped = false;
-    m_transformName = "none";   // Options include "none", "sine", and "zsine"
 }
 
 
@@ -38,7 +77,6 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_order = 1;
     m_refLevels = 1;
     m_lumped = false;
-    m_transformName = "none";   // Options include "none", "sine", and "zsine"
 }
 
 
@@ -49,7 +87,6 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
-    m_transformName = "none";   // Options include "none", "sine", and "zsine"
 }
 
 
@@ -60,7 +97,6 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
-    m_transformName = "none";   // Options include "none", "sine", and "zsine"
 }
 
 
@@ -85,9 +121,11 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     else {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
     }
-    MeshLoader mesh_generator(mesh_file, meshOrder, m_order, 3,
-                              m_transformName, alpha_mesh);
-    Mesh &mesh = mesh_generator.getMesh();
+    Mesh mesh(mesh_file, 1, 1);
+    dim = mesh.Dimension();
+    for (int lev = 0; lev<3; lev++) {
+        mesh.UniformRefinement();
+    }
 
     DG_FECollection fec(m_order, g_dim, basis_type);
     FiniteElementSpace fes(&mesh, &fec);
@@ -142,27 +180,18 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     Vector X0(pfes.GetVSize());
     X0 = 0.0;
 
-    // Scale by block-diagonal inverse
-    HypreParMatrix A_s;
-    HypreParVector B_s;
-    BlockInvScal(A, &A_s, B0, &B_s, blocksize, 1);
-    delete A;
-    delete B0;
-    delete bl_form;
-    delete l_form;
-
-    spatialDOFs = A_s.GetGlobalNumRows();
-    int *rowStarts = A_s.GetRowStarts();
+    spatialDOFs = A->GetGlobalNumRows();
+    int *rowStarts = A->GetRowStarts();
     localMinRow = rowStarts[0];
     localMaxRow = rowStarts[1]-1;
 
     // Steal vector data to pointers
-    B = B_s.StealData();
+    B = B0->StealData();
     X = X0.StealData();
 
     // Compress diagonal and off-diagonal blocks of hypre matrix to local CSR
     SparseMatrix A_loc;
-    A_s.GetProcRows(A_loc);
+    A->GetProcRows(A_loc);
     A_rowptr = A_loc.GetI();
     A_colinds = A_loc.GetJ();
     A_data = A_loc.GetData();
@@ -186,6 +215,10 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
         delete m;
     }
 
+    delete A;
+    delete B0;
+    delete bl_form;
+    delete l_form;
     // TODO: debug
     // A *= (1.0+t);       // Scale by t to distinguish system at different times for verification
 }
@@ -212,10 +245,11 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
     else {
         mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
     }
-    MeshLoader mesh_generator(mesh_file, meshOrder, m_order, m_refLevels,
-                              m_transformName, alpha_mesh);
-    
-    Mesh &mesh = mesh_generator.getMesh();
+    Mesh mesh(mesh_file, 1, 1);
+    dim = mesh.Dimension();
+    for (int lev = 0; lev<3; lev++) {
+        mesh.UniformRefinement();
+    }
 
     DG_FECollection fec(m_order, g_dim, basis_type);
     FiniteElementSpace fes(&mesh, &fec);

@@ -259,13 +259,14 @@ void SpaceTimeMatrix::SetAMG()
 {
    m_solverOptions.prerelax = "AA";
    m_solverOptions.postrelax = "AA";
-   m_solverOptions.relax_type = 5;
+   m_solverOptions.relax_type = 3;
    m_solverOptions.interp_type = 6;
    m_solverOptions.strength_tolC = 0.1;
    m_solverOptions.coarsen_type = 6;
    m_solverOptions.distance_R = -1;
    m_solverOptions.strength_tolR = -1;
    m_solverOptions.filterA_tol = 0.0;
+   m_solverOptions.filter_tolR = 0.0;
    m_rebuildSolver = true;
 }
 
@@ -273,15 +274,16 @@ void SpaceTimeMatrix::SetAMG()
 /* Set standard AIR parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIR()
 {
-   m_solverOptions.prerelax = "FFFC";
-   m_solverOptions.postrelax = "A";
+   m_solverOptions.prerelax = "A";
+   m_solverOptions.postrelax = "FFC";
    m_solverOptions.relax_type = 3;
    m_solverOptions.interp_type = 100;
    m_solverOptions.strength_tolC = 0.005;
    m_solverOptions.coarsen_type = 6;
-   m_solverOptions.distance_R = 2;
+   m_solverOptions.distance_R = 1.5;
    m_solverOptions.strength_tolR = 0.005;
-   m_solverOptions.filterA_tol = 0.0001;
+   m_solverOptions.filterA_tol = 0.0;
+   m_solverOptions.filter_tolR = 0.0;
    m_rebuildSolver = true;
 }
 
@@ -289,15 +291,16 @@ void SpaceTimeMatrix::SetAIR()
 /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIRHyperbolic()
 {
-   m_solverOptions.prerelax = "F";
-   m_solverOptions.postrelax = "A";
+   m_solverOptions.prerelax = "A";
+   m_solverOptions.postrelax = "F";
    m_solverOptions.relax_type = 10;
    m_solverOptions.interp_type = 100;
    m_solverOptions.strength_tolC = 0.005;
    m_solverOptions.coarsen_type = 6;
-   m_solverOptions.distance_R = 2;
+   m_solverOptions.distance_R = 1.5;
    m_solverOptions.strength_tolR = 0.005;
    m_solverOptions.filterA_tol = 0.0001;
+   m_solverOptions.filter_tolR = 0.0;
    m_rebuildSolver = true;
 }
 
@@ -373,12 +376,13 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         if (m_solverOptions.distance_R > 0) {
             HYPRE_BoomerAMGSetRestriction(m_solver, m_solverOptions.distance_R);
+            HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_solverOptions.strength_tolR);
+            HYPRE_BoomerAMGSetFilterThresholdR(amg_precond, m_solverOptions.filter_tolR);
         }
         HYPRE_BoomerAMGSetInterpType(m_solver, m_solverOptions.interp_type);
         HYPRE_BoomerAMGSetCoarsenType(m_solver, m_solverOptions.coarsen_type);
         HYPRE_BoomerAMGSetAggNumLevels(m_solver, 0);
         HYPRE_BoomerAMGSetStrongThreshold(m_solver, m_solverOptions.strength_tolC);
-        HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_solverOptions.strength_tolR);
         HYPRE_BoomerAMGSetGridRelaxPoints(m_solver, grid_relax_points);
         if (m_solverOptions.relax_type > -1) {
             HYPRE_BoomerAMGSetRelaxType(m_solver, m_solverOptions.relax_type);
