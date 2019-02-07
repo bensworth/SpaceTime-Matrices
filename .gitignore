@@ -13,3 +13,5 @@
 driver
 *.core
 makefile
+driver
+*._*
