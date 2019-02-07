@@ -39,13 +39,12 @@ private:
 
 public:
 
-	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps);
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double t0, double t1);
+				double dt);
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				int refLevels, int order);
+				double dt, int refLevels, int order);
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double t0, double t1, int refLevels, int order);
+				double dt, int refLevels, int order, bool lumped);
     ~DGadvection() { };
 
 };

@@ -6,6 +6,10 @@
 using namespace mfem;
 
 
+// Sample command line:
+//  srun -n 240 ./driver -s 2 -l 6 -nt 40 -t 31 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.0025 -lump 0
+
+
 int main(int argc, char *argv[])
 {
     // Initialize parallel
@@ -22,16 +26,17 @@ int main(int argc, char *argv[])
     int order        = 1;
    	int dim          = 2;
    	int use_gmres    = 0;
-    int cycle_type   = 1;
     int save_mat     = 0;
     double solve_tol = 1e-8;
     int print_level  = 3;
     int timeDisc     = 11;
     int spatialDisc  = 1;
     int max_iter     = 100;
+    double dt        = -1;
+    int lump_mass    = false;
 
     // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    AMG_parameters AMG = {1.5, "A", "FFC", 6, 10, 6, 0.1, 0.01, 0.0, 0.0, 1};
+    AMG_parameters AMG = {1, "A", "FFC", 100, 10, 10, 0.25, 0.1, 0.0, 0.0, 1};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "A";
 
@@ -42,8 +47,12 @@ int main(int argc, char *argv[])
                   "Time discretization (11=BDF1; 31=AB1).");
     args.AddOption(&order, "-o", "--order",
                   "Finite element order.");
+    args.AddOption(&dt, "-dt", "--dt",
+                  "Time step size.");
     args.AddOption(&refLevels, "-l", "--level",
                   "Number levels mesh refinement.");
+    args.AddOption(&lump_mass, "-lump", "--lump-mass",
+                  "Lump mass matrix to be diagonal.");
     args.AddOption(&print_level, "-p", "--print-level",
                   "Hypre print level.");
     args.AddOption(&solve_tol, "-tol", "--solve-tol",
@@ -56,7 +65,7 @@ int main(int argc, char *argv[])
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
     args.AddOption(&save_mat, "-save", "--save-mat",
                   "Boolean to save matrix to file.");
-    args.AddOption(&cycle_type, "-c", "--cycle-type",
+    args.AddOption(&(AMG.cycle_type), "-c", "--cycle-type",
                   "Cycle type; 0=F, 1=V, 2=W.");
     args.AddOption(&(AMG.distance_R), "-AIR", "--AIR-distance",
                   "Distance restriction neighborhood if using AIR (D<=0 implies P^TAP).");
@@ -94,10 +103,13 @@ int main(int argc, char *argv[])
         args.PrintOptions(std::cout);
     }
 
+    if (dt < 0) dt = 1.0/numTimeSteps;
+
     // For now have to keep SpaceTime object in scope so that MPI Communicators
     // get destroyed before MPI_Finalize() is called. 
     if (spatialDisc == 1) {
-        CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
+        CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps,
+                             dt, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
         if (save_mat) {
             STmatrix.SaveMatrix("test.mm");
@@ -112,7 +124,8 @@ int main(int argc, char *argv[])
         STmatrix.PrintMeshData();
     }
     else {
-        DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
+        DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps,
+                             dt, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
         if (save_mat) {
             STmatrix.SaveMatrix("test.mm");

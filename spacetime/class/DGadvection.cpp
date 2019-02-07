@@ -44,9 +44,9 @@ double inflow_function(const Vector &x) {
     }
 }
 
-
-DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1)
+DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+                         double dt): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt)
 {
     m_order = 1;
     m_refLevels = 1;
@@ -73,34 +73,8 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps):
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double t0, double t1): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1)
-{
-    m_order = 1;
-    m_refLevels = 1;
-    m_lumped = false;
-    m_dim = 2;
-
-    /* Define angle of flow, coefficients and integrators */
-    m_omega.SetSize(m_dim);
-    if (m_dim == 2) {
-        double theta = PI/4.0;
-        m_omega(0) = cos(theta);
-        m_omega(1) = sin(theta);
-    }
-    else {
-        double theta1 = PI/4.0;
-        double theta2 = PI/4.0;
-        m_omega(0) = sin(theta1)*cos(theta2);
-        m_omega(1) = sin(theta1)*sin(theta2);       
-        m_omega(1) = cos(theta1);       
-    }
-}
-
-
-DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
+                         double dt, int refLevels, int order): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
     m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
@@ -124,11 +98,10 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double t0, double t1, int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-    m_refLevels{refLevels}, m_order{order}
+                         double dt, int refLevels, int order, bool lumped): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
+    m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}
 {
-    m_lumped = false;
     m_dim = 2;
 
     /* Define angle of flow, coefficients and integrators */

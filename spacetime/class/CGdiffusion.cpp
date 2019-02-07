@@ -6,8 +6,9 @@ using namespace mfem;
 // TODO : make sure this is discretizing -\Delta u = f
 
 
-CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
+CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
+                         double dt): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
 {
     m_order = 1;
@@ -17,19 +18,8 @@ CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps):
 
 
 CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double t0, double t1): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
-    m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
-{
-    m_order = 1;
-    m_refLevels = 1;
-    m_lumped = false;
-}
-
-
-CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, 0, 1),
+                         double dt, int refLevels, int order): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}
 {
@@ -38,12 +28,12 @@ CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
 
 CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double t0, double t1, int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, t0, t1),
+                         double dt, int refLevels, int order, bool lumped): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
-    m_refLevels{refLevels}, m_order{order}
+    m_refLevels{refLevels}, m_order{order}, m_lumped(lumped)
 {
-    m_lumped = false;
+
 }
 
 

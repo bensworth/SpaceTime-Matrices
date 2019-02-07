@@ -32,13 +32,12 @@ private:
 
 public:
 
-	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps);
 	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double t0, double t1);
+				double dt);
 	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				int refLevels, int order);
+				double dt, int refLevels, int order);
 	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double t0, double t1, int refLevels, int order);
+				double dt, int refLevels, int order, bool lumped);
     ~CGdiffusion() { };
 
 };

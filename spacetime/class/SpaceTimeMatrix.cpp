@@ -14,9 +14,9 @@
 
 
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
-                                 int numTimeSteps, double t0, double t1)
+                                 int numTimeSteps, double dt)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_numTimeSteps{numTimeSteps},
-      m_t0{t0}, m_t1{t1}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), 
+      m_dt{dt}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), 
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_bsize(1), m_hmin(-1), m_hmax(-1)
 {
@@ -25,7 +25,6 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
     MPI_Comm_size(m_globComm, &m_numProc);
 
     // Set member variables
-    m_dt = (m_t1-m_t0) / m_numTimeSteps;
     if (m_globRank == 0) {
         std::cout << "dt = " << m_dt << "\n";
     }
@@ -49,8 +48,6 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
         MPI_Comm_split(m_globComm, m_timeInd, m_globRank, &m_spatialComm);
         MPI_Comm_rank(m_spatialComm, &m_spatialRank);
         MPI_Comm_size(m_spatialComm, &m_spCommSize);
-    
-        std::cout << m_globRank << "/" << m_numProc << ", " << m_spatialRank << "/" << m_spCommSize << "\n";
 
     }
     else {
@@ -395,7 +392,7 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel)
 {
     SetupBoomerAMG(printLevel, maxiter, tol);
 
-    bool m_blockInvScale = false;
+    bool m_blockInvScale = true;
     if (m_blockInvScale) {
         HYPRE_ParCSRMatrix A_s;
         hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);

@@ -111,7 +111,7 @@ protected:
 
 public:
 
-    SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double t0, double t1);
+    SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt);
     // SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, double dt, double t0, double t1);
     virtual ~SpaceTimeMatrix();
 
