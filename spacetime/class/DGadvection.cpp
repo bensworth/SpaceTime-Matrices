@@ -8,6 +8,30 @@ using namespace mfem;
 
 double sigma_function(const Vector &x) {
     int dim = x.Size();
+    double scale = 1e-4;
+    if (dim == 2) {
+        double x1 = x(0);
+        double x2 = x(1);
+        double val_abs = x1*x2 + x1*x1 + 1.;
+        return scale*val_abs;
+    }
+    else {
+        double x1 = x(0);
+        double x2 = x(1);
+        double x3 = x(2);
+        double val_abs = x1*x2 + x1*x1 + 1.;
+        return scale*val_abs;
+    }
+}
+
+double Q_function(const Vector &x) {
+    int dim = x.Size();
+    // if (dim == 2) {
+    //     return 0;
+    // }
+    // else {
+    //     return 0;
+    // }
     if (dim == 2) {
         double x1 = x(0);
         double x2 = x(1);
@@ -20,17 +44,7 @@ double sigma_function(const Vector &x) {
         double x3 = x(2);
         double val_abs = x1*x2 + x1*x1 + 1.;
         return val_abs;
-    }
-}
-
-double Q_function(const Vector &x) {
-    int dim = x.Size();
-    if (dim == 2) {
-        return 1;
-    }
-    else {
-        return 0;
-    }
+    }   
 }
 
 

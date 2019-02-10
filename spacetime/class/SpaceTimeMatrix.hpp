@@ -116,6 +116,7 @@ public:
     virtual ~SpaceTimeMatrix();
 
     void BuildMatrix();
+    // TODO : implement - where did this go? 
     void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
     void SetAMG();
     void SetAIR();

@@ -413,15 +413,18 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel)
 void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int precondition) 
 {
     HYPRE_ParCSRGMRESCreate(m_globComm, &m_gmres);
+    // HYPRE_GMRESSetKDim(m_gmres, 5);
     HYPRE_GMRESSetMaxIter(m_gmres, maxiter);
     HYPRE_GMRESSetTol(m_gmres, tol);
     HYPRE_GMRESSetPrintLevel(m_gmres, printLevel);
     
     // AMG preconditioning (setup boomerAMG with 1 max iter and print level 1)
     if (precondition == 1) {
-        SetupBoomerAMG(1, 1, tol);
-        HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
-                          (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
+        SetupBoomerAMG(1, 1, 0.0);
+        // HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
+        //                   (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
+        HYPRE_ParCSRGMRESSetPrecond(m_gmres, HYPRE_BoomerAMGSolve,
+                                    HYPRE_BoomerAMGSetup, m_solver);
     }
     // Diagonally scaled preconditioning?
     else if (precondition == 2) {
@@ -432,8 +435,10 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
         int temp = -1;
     }
 
-    HYPRE_GMRESSetup(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
-    HYPRE_GMRESSolve(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
+    // HYPRE_GMRESSetup(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
+    // HYPRE_GMRESSolve(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
+    HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x);
+    HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
 }
 
 
