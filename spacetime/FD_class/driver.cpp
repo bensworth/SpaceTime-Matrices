@@ -1,8 +1,8 @@
 #include <iostream>
-// #ifndef SPACETIMEFD
-// 	#include "SpaceTimeFD.hpp"
-#ifndef FD_TEMP
-	#include "FD_temp.hpp"
+#ifndef SPACETIMEFD
+	#include "SpaceTimeFD.hpp"
+// #ifndef FD_TEMP
+	// #include "FD_temp.hpp"
 #endif
 
 double IC_u(double x)
@@ -37,12 +37,12 @@ int main(int argc, char *argv[])
     const char* temp_postrelax = "A";
 
     double c = 1.0;
-    int nt = 6;
-    int nx = 6;
+    int nt = 10;
+    int nx = 10;
     int Pt = 1;
     int Px = 1;
-    //SpaceTimeFD matrix(MPI_COMM_WORLD, nt, nx, Pt, Px);
-		FD_temp matrix(MPI_COMM_WORLD, nt, nx, Pt, Px);
+    SpaceTimeFD matrix(MPI_COMM_WORLD, nt, nx, Pt, Px);
+	// FD_temp matrix(MPI_COMM_WORLD, nt, nx, Pt, Px);
     matrix.Wave1D(IC_u, IC_v, c);
 
 

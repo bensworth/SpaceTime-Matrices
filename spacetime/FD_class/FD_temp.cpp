@@ -85,7 +85,7 @@ void FD_temp::Wave1D(double (*IC_u)(double),
     // Define two variables on grid (on part 0)
     HYPRE_SStructVariable vartypes[2] = {HYPRE_SSTRUCT_VARIABLE_CELL,
                             HYPRE_SSTRUCT_VARIABLE_CELL };
-    HYPRE_SStructGridSetVariables(m_grid, 0, m_dim, vartypes);
+    HYPRE_SStructGridSetVariables(m_grid, 0, 2, vartypes);
 
     // Finalize grid assembly.
     HYPRE_SStructGridAssemble(m_grid);
@@ -144,8 +144,8 @@ void FD_temp::Wave1D(double (*IC_u)(double),
     int n_uv = n_uv_stenc * m_n;
     double* uv_values = new double[n_uv];
     for (int i=0; i<n_uv; i+=n_uv_stenc) {
-        for (int j=n_uu_stenc; j<stencil_size_u; j++) {
-            uv_values[i+j] = u_data[j];
+        for (int j=0; j<n_uv_stenc; j++) {
+            uv_values[i+j] = u_data[j+n_uu_stenc];
         }
     }
 
@@ -188,8 +188,8 @@ void FD_temp::Wave1D(double (*IC_u)(double),
     int n_vu = n_vu_stenc * m_n;
     double* vu_values = new double[n_vu];
     for (int i=0; i<n_vu; i+=n_vu_stenc) {
-        for (int j=n_vv_stenc; j<n_vu_stenc; j++) {
-            vu_values[i+j] = v_data[j];
+        for (int j=0; j<n_vu_stenc; j++) {
+            vu_values[i+j] = v_data[n_vv_stenc+j];
         }
     }
 

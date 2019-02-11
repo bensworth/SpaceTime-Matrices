@@ -12,8 +12,9 @@
 // 2d constructor
 SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px) :
     m_comm{comm}, m_nt_local{nt}, m_nx_local{nx}, m_Pt{Pt}, m_Px{Px},
-    m_dim(2), m_rebuildSolver{false},
-    m_solver(NULL), m_gmres(NULL), m_bS(NULL), m_xS(NULL), m_AS(NULL)
+    m_dim(2), m_rebuildSolver{false}, m_grid(NULL), m_graph(NULL),
+    m_stencil_u(NULL), m_stencil_v(NULL), m_solver(NULL), m_gmres(NULL),
+    m_bS(NULL), m_xS(NULL), m_AS(NULL)
 {
     // Get number of processes
     MPI_Comm_rank(m_comm, &m_rank);
@@ -58,10 +59,10 @@ SpaceTimeFD::~SpaceTimeFD()
 {
     if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
     if (m_gmres) HYPRE_ParCSRGMRESDestroy(m_gmres);
-    // if (m_grid) HYPRE_SStructGridDestroy(m_grid);
-    // if (m_stencil_v) HYPRE_SStructStencilDestroy(m_stencil_v);
-    // if (m_stencil_u) HYPRE_SStructStencilDestroy(m_stencil_u);
-    // if (m_graph) HYPRE_SStructGraphDestroy(m_graph);
+    if (m_grid) HYPRE_SStructGridDestroy(m_grid);
+    if (m_stencil_v) HYPRE_SStructStencilDestroy(m_stencil_v);
+    if (m_stencil_u) HYPRE_SStructStencilDestroy(m_stencil_u);
+    if (m_graph) HYPRE_SStructGraphDestroy(m_graph);
     if (m_AS) HYPRE_SStructMatrixDestroy(m_AS);     // This destroys parCSR matrix too
     if (m_bS) HYPRE_SStructVectorDestroy(m_bS);       // This destroys parVector too
     if (m_xS) HYPRE_SStructVectorDestroy(m_xS);
@@ -307,7 +308,7 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     // Define two variables on grid (on part 0)
     HYPRE_SStructVariable vartypes[2] = {HYPRE_SSTRUCT_VARIABLE_CELL,
                             HYPRE_SSTRUCT_VARIABLE_CELL };
-    HYPRE_SStructGridSetVariables(m_grid, 0, m_dim, vartypes);
+    HYPRE_SStructGridSetVariables(m_grid, 0, 2, vartypes);
 
     // Finalize grid assembly.
     HYPRE_SStructGridAssemble(m_grid);
@@ -318,15 +319,11 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     // Stencil object for variable u (labeled as variable 0). First entry
     // is diagonal, next three are u at previous time, final three are v
     // at previous time
-    HYPRE_SStructStencil  m_stencil_u;
-    HYPRE_SStructStencil  m_stencil_v;
-
-    std::vector<int> uu_indices{0, 1, 2, 3};
-    std::vector<int> uv_indices{4, 5, 6};
-
-    int n_uu_stenc = uu_indices.size();
-    int n_uv_stenc = uv_indices.size();
-    int stencil_size_u = n_uu_stenc + n_uv_stenc;
+    std::vector<int>      uu_indices{0, 1, 2, 3};
+    std::vector<int>      uv_indices{4, 5, 6};
+    int n_uu_stenc      = uu_indices.size();
+    int n_uv_stenc      = uv_indices.size();
+    int stencil_size_u  = n_uu_stenc + n_uv_stenc;
 
     std::vector<std::vector<int> > offsets_u = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
                                                 {-1,-1}, {-1,0}, {-1,1}};
@@ -366,17 +363,16 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     int n_uv = n_uv_stenc * m_n;
     double* uv_values = new double[n_uv];
     for (int i=0; i<n_uv; i+=n_uv_stenc) {
-        for (int j=n_uu_stenc; j<stencil_size_u; j++) {
-            uv_values[i+j] = u_data[j];
+        for (int j=0; j<n_uv_stenc; j++) {
+            uv_values[i+j] = u_data[j+n_uu_stenc];
         }
     }
 
     // Stencil object for variable v (labeled as variable 1).
-    std::vector<int> vv_indices{0, 1, 2, 3};
-    std::vector<int> vu_indices{4, 5, 6};
-
-    int n_vv_stenc = vv_indices.size();
-    int n_vu_stenc = vu_indices.size();
+    std::vector<int>     vv_indices{0, 1, 2, 3};
+    std::vector<int>     vu_indices{4, 5, 6};
+    int n_vv_stenc     = vv_indices.size();
+    int n_vu_stenc     = vu_indices.size();
     int stencil_size_v = n_vv_stenc + n_vu_stenc;
 
     std::vector<std::vector<int> > offsets_v = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
@@ -385,13 +381,11 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
 
     // Set stencil for v-v connections (variable 1)
     for (auto entry : vv_indices) {
-        std::cout << entry << ", ";
         HYPRE_SStructStencilSetEntry(m_stencil_v, entry, &offsets_v[entry][0], 1);
     }
 
     // Set stencil for v-u connections (variable 0)
     for (auto entry : vu_indices) {
-        std::cout << entry << ", ";
         HYPRE_SStructStencilSetEntry(m_stencil_v, entry, &offsets_v[entry][0], 0);
     }
 
@@ -410,47 +404,29 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     int n_vu = n_vu_stenc * m_n;
     double* vu_values = new double[n_vu];
     for (int i=0; i<n_vu; i+=n_vu_stenc) {
-        for (int j=n_vv_stenc; j<n_vu_stenc; j++) {
-            vu_values[i+j] = v_data[j];
+        for (int j=0; j<n_vu_stenc; j++) {
+            vu_values[i+j] = v_data[n_vv_stenc+j];
         }
     }
-
-		std::cout << "I made it to here???\n";
 
     /* ------------------------------------------------------------------
     *                      Fill in sparse matrix
     * ---------------------------------------------------------------- */
 
-
-    // ----------------------------------------------------------------
-    // TODO : memory problems here. These lines compile if I declare
-    // graph here. No idea why this is different than as a clas variable??
-
-    // Set up graph for problem (determines non-zero structure of matrix)
-    HYPRE_SStructGraph    graph;
-
-    HYPRE_SStructGraphCreate(m_comm, m_grid, &graph);
-    HYPRE_SStructGraphSetObjectType(graph, HYPRE_PARCSR);
-
-    // ----------------------------------------------------------------
-
-    HYPRE_SStructGraphSetObjectType(graph, HYPRE_PARCSR);
-
+    HYPRE_SStructGraphCreate(m_comm, m_grid, &m_graph);
+    HYPRE_SStructGraphSetObjectType(m_graph, HYPRE_PARCSR);
+    HYPRE_SStructGraphSetObjectType(m_graph, HYPRE_PARCSR);
 
     // Assign the u-stencil to variable u (variable 0), and the v-stencil
     // variable v (variable 1), both on part 0 of the m_grid
-    HYPRE_SStructGraphSetStencil(graph, 0, 0, m_stencil_u);
-    HYPRE_SStructGraphSetStencil(graph, 0, 1, m_stencil_v);
+    HYPRE_SStructGraphSetStencil(m_graph, 0, 0, m_stencil_u);
+    HYPRE_SStructGraphSetStencil(m_graph, 0, 1, m_stencil_v);
 
-    // Assemble the graph
-    HYPRE_SStructGraphAssemble(graph);
-
-//#if 0
-
-		std::cout << "I AM here???\n";
+    // Assemble the m_graph
+    HYPRE_SStructGraphAssemble(m_graph);
 
     // Create an empty matrix object
-    HYPRE_SStructMatrixCreate(m_comm, graph, &m_AS);
+    HYPRE_SStructMatrixCreate(m_comm, m_graph, &m_AS);
     HYPRE_SStructMatrixSetObjectType(m_AS, HYPRE_PARCSR);
     HYPRE_SStructMatrixInitialize(m_AS);
 
