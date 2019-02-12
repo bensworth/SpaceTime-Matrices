@@ -1,4 +1,3 @@
-// #include <math.h>
 #include <iostream>
 #include <fstream>
 #include <map>
@@ -10,11 +9,12 @@
 // Not sure if I have to initialize all of these to NULL. Do not do ParMatrix
 // and ParVector because I think these are objects within StructMatrix/Vector. 
 // 2d constructor
-SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px) :
+SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px,
+                         double x0, double x1, double t0, double t1) :
     m_comm{comm}, m_nt_local{nt}, m_nx_local{nx}, m_Pt{Pt}, m_Px{Px},
-    m_dim(2), m_rebuildSolver{false}, m_grid(NULL), m_graph(NULL),
-    m_stencil_u(NULL), m_stencil_v(NULL), m_solver(NULL), m_gmres(NULL),
-    m_bS(NULL), m_xS(NULL), m_AS(NULL)
+    m_t0{t0}, m_t1{t1}, m_x0{x0}, m_x1{x1}, m_dim(2), m_rebuildSolver{false},
+    m_grid(NULL), m_graph(NULL), m_stencil_u(NULL), m_stencil_v(NULL),
+    m_solver(NULL), m_gmres(NULL), m_bS(NULL), m_xS(NULL), m_AS(NULL)
 {
     // Get number of processes
     MPI_Comm_rank(m_comm, &m_rank);
@@ -34,24 +34,21 @@ SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px) :
     m_pt_ind = (m_rank - m_px_ind) / m_Px;
 
     // TODO : should be over (m_globx + 1)?? Example had this
-    m_t0 = 0.0;
-    m_t1 = 1.0;
-    m_x0 = 0.0;
-    m_x1 = 1.0;
     m_globt = m_nt_local * m_Pt;
     m_dt = (m_t1 - m_t0) / m_globt;
     m_globx = m_nx_local * m_Px;
     m_hx = (m_x1 - m_x0) / m_globx;
     m_hy = -1;
 
-    // Define each processor's piece of the grid in space-time. Ordered by
-    // time, then space
+    // Define each processor's piece of the grid in space-time. 
+    // *IMPORTANT* - must be ordered by space and then time, so that DOFs are
+    // enumerated like {(t0,x0),...,(t0,nx),(t1,x0),...}. 
     m_ilower.resize(2);
     m_iupper.resize(2);
-    m_ilower[0] = m_pt_ind * m_nt_local;
-    m_iupper[0] = m_ilower[0] + m_nt_local-1;
-    m_ilower[1] = m_px_ind * m_nx_local;
-    m_iupper[1] = m_ilower[1] + m_nx_local-1;
+    m_ilower[0] = m_px_ind * m_nx_local;
+    m_iupper[0] = m_ilower[0] + m_nx_local-1;
+    m_ilower[1] = m_pt_ind * m_nt_local;
+    m_iupper[1] = m_ilower[1] + m_nt_local-1;
 }
 
 
@@ -200,6 +197,7 @@ void SpaceTimeFD::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         HYPRE_BoomerAMGSetTol(m_solver, tol);    
         HYPRE_BoomerAMGSetMaxIter(m_solver, maxiter);
         HYPRE_BoomerAMGSetPrintLevel(m_solver, printLevel);
+        HYPRE_BoomerAMGSetSabs(m_solver, 1);
 
         if (m_solverOptions.distance_R > 0) {
             HYPRE_BoomerAMGSetRestriction(m_solver, m_solverOptions.distance_R);
@@ -299,6 +297,13 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
            "    (Px, Pt) = (" << m_Px << ", " << m_Pt << ")\n";
     }
 
+    if (m_dt > (m_hx / c)) {
+        if (m_rank == 0) {
+            std::cout << "Unstable parameters: c*dt/hx = " << c*m_dt/m_hx << " > 1.\n";
+       } 
+       return;
+    }
+
     // Create an empty 2D grid object with 1 part
     HYPRE_SStructGridCreate(m_comm, m_dim, 1, &m_grid);
 
@@ -325,8 +330,10 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     int n_uv_stenc      = uv_indices.size();
     int stencil_size_u  = n_uu_stenc + n_uv_stenc;
 
-    std::vector<std::vector<int> > offsets_u = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
-                                                {-1,-1}, {-1,0}, {-1,1}};
+    // std::vector<std::vector<int> > offsets_u = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
+    //                                             {-1,-1}, {-1,0}, {-1,1}};
+    std::vector<std::vector<int> > offsets_u = {{0,0}, {-1,-1}, {0,-1}, {1,-1},
+                                                {-1,-1}, {0,-1}, {1,-1}};
     HYPRE_SStructStencilCreate(m_dim, stencil_size_u, &m_stencil_u);
 
     // Data for stencil
@@ -375,8 +382,10 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     int n_vu_stenc     = vu_indices.size();
     int stencil_size_v = n_vv_stenc + n_vu_stenc;
 
-    std::vector<std::vector<int> > offsets_v = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
-                                                {-1,-1}, {-1,0}, {-1,1}};
+    // std::vector<std::vector<int> > offsets_v = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
+    //                                             {-1,-1}, {-1,0}, {-1,1}};
+    std::vector<std::vector<int> > offsets_v = {{0,0}, {-1,-1}, {0,-1}, {1,-1},
+                                                {-1,-1}, {0,-1}, {1,-1}};
     HYPRE_SStructStencilCreate(m_dim, stencil_size_v, &m_stencil_v);
 
     // Set stencil for v-v connections (variable 1)
@@ -480,7 +489,7 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     std::vector<double> rhs(m_n, 0);
     if (m_pt_ind == 0) {
         for (int i=0; i<m_nx_local; i++) {
-            double temp_x = (m_px_ind*m_nx_local + i) * m_hx;
+            double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
             rhs[i] = IC_u(temp_x);
         }
     }
@@ -489,7 +498,7 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
 
     if (m_pt_ind == 0) {
         for (int i=0; i<m_nx_local; i++) {
-            double temp_x = (m_px_ind*m_nx_local + i) * m_hx;
+            double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
             rhs[i] = IC_v(temp_x);
         }
     }

@@ -76,13 +76,16 @@ private:
 
 public:
 
-    SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px);
+    SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px, double x0=0.0,
+                double x1=1.0, double t0=0, double t1=1.0);
     // SpaceTimeFD(MPI_Comm comm, int nt, int nx, int ny, int Pt, int Px, int Py);  // 3D
     ~SpaceTimeFD();
 
     // TODO : implement SaveMatrix
     // void SaveMatrix(const char* filename) { HYPRE_SStructMatrixPrint (m_AS, filename); }
-    void SaveMatrix(std::string filename) { HYPRE_SStructMatrixPrint (filename.c_str(), m_AS, 1); }
+    void SaveMatrix(std::string filename) { HYPRE_SStructMatrixPrint(filename.c_str(), m_AS, 1); }
+    void SaveRHS(std::string filename) { HYPRE_SStructVectorPrint(filename.c_str(), m_bS, 1); }
+    void SaveX0(std::string filename) { HYPRE_SStructVectorPrint(filename.c_str(), m_xS, 1); }
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
