@@ -58,9 +58,9 @@ int main(int argc, char *argv[])
     double x1 = 1;
     double t0 = 0;
     double t1 = 1;
-    double c = 1;
+    double c = 0.8;
     int arg_index = 0;
-    int nt_loc = 6;
+    int nt_loc = 3;
     int nx_loc = 6;
     int Pt = numProcess;
     int Px = 1;

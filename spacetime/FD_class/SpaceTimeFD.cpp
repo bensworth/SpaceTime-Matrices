@@ -315,6 +315,15 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
                             HYPRE_SSTRUCT_VARIABLE_CELL };
     HYPRE_SStructGridSetVariables(m_grid, 0, 2, vartypes);
 
+		/* ------------------------------------------------------------------
+    *                      Add boundary conditions
+    * ---------------------------------------------------------------- */
+		std::vector<int> periodic(m_dim,0);
+    periodic[0] = m_globx; // periodic in x, not periodic in t
+		HYPRE_SStructGridSetPeriodic(m_grid, 0, &periodic[0]); 
+		//TODO : do I set periodic on *all* processors, or only boundary processors??
+		// I think you probably do it on all processors!
+
     // Finalize grid assembly.
     HYPRE_SStructGridAssemble(m_grid);
 
@@ -338,6 +347,10 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
 
     // Data for stencil
     double lambda = c * m_dt / m_hx;
+		// std::cout <<"c = " << c << "\n";
+		// std::cout <<"dt = " << m_dt << "\n";
+		// std::cout <<"dx = " << m_hx << "\n";
+		// std::cout <<"lambda = " << lambda << "\n";
     std::vector<double> u_data = {1.0, lambda*lambda/2.0, 1-lambda*lambda,
                                   lambda*lambda/2.0, lambda*m_dt/4.0, 
                                   m_dt*(2.0-lambda)/2.0, lambda*m_dt/4.0 };
@@ -453,15 +466,6 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
                                     1, n_vu_stenc, &vu_indices[0], vu_values);
     delete[] vu_values;
 
-    /* ------------------------------------------------------------------
-    *                      Add boundary conditions
-    * ---------------------------------------------------------------- */
-    std::vector<int> periodic(m_dim,0);
-    periodic[1] = m_globx;
-    if ( (m_px_ind == 0) || (m_px_ind == (m_Px-1)) ) {
-        HYPRE_SStructGridSetPeriodic(m_grid, 0, &periodic[0]);    
-    }
-    // TODO : do I set periodic on *all* processors, or only boundary processors??
 
     /* ------------------------------------------------------------------
     *                      Construct linear system

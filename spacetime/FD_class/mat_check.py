@@ -22,21 +22,55 @@ A_hypre.eliminate_zeros()
 print(A_hypre.shape, A_hypre.nnz)
 
 plt.figure(1)
-plt.spy(A_hypre)
+#plt.spy(A_hypre)
+A_hypre = np.abs(A_hypre)
+plt.imshow(A_hypre.todense())
+plt.title("HYPRE")
+plt.colorbar()
 #plt.show()
 
 
 A_py = load_npz(A_py_path)
+A_py.eliminate_zeros()
+A_py = np.abs(A_py)
 print(A_py.shape, A_py.nnz)
 plt.figure(2)
-plt.spy(A_py)
+#plt.spy(A_py)
+plt.imshow(A_py.todense())
+plt.title("Python")
+plt.colorbar()
+
+
+# print(np.sort(np.abs(A_hypre.data)))
+# print("\n\n\n")
+# print(np.sort(np.abs(A_py.data.data)))
+# 
+# print(A_hypre.indptr)
+# print(A_py.indptr)
+# 
+# print(A_hypre.indices)
+# print(A_py.indices)
+
+
+# Make permutation vector to map from variable followed by DOF 
+# ordering to DOF followed by variable ordering
+nu = int((dims[1]+1)/2)
+colinds = np.zeros((2*nu,), dtype='int32')
+for i in range(0, 2*nu-1, 2):
+	colinds[i] = i/2
+for i in range(1, 2*nu, 2):
+	colinds[i] = (i-1)/2+nu
+	
+# Permute rows and cols of HYPRE matrix accordingly.
+A_hypre = A_hypre[colinds, :][:, colinds]
+plt.figure(3)
+plt.imshow(A_hypre.todense())
+plt.title("Permuted HYPRE")
+plt.colorbar()
+
 plt.show()
 
  
-# print(A_py.shape, A_py.nnz)
-# print(A_hypre.shape, A_hypre.nnz)
-# 
-# 
 # print(A_hypre.data - A_py.data)
 # print(A_hypre.indices - A_py.indices)
 # print(A_hypre.indptr - A_py.indptr)
