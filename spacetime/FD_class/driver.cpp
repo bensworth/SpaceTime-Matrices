@@ -58,10 +58,10 @@ int main(int argc, char *argv[])
     double x1 = 1;
     double t0 = 0;
     double t1 = 1;
-    double c = 0.25;
+    double c = 1;
     int arg_index = 0;
-    int nt_loc = 5;
-    int nx_loc = 20;
+    int nt_loc = 6;
+    int nx_loc = 6;
     int Pt = numProcess;
     int Px = 1;
 
@@ -121,6 +121,8 @@ int main(int argc, char *argv[])
     matrix.SetAMGParameters(AMG);
     // matrix.SolveAMG();
     matrix.SaveRHS("test_b");
+
+		matrix.SaveMatrix("A_hypre");
 
     MPI_Finalize();
     return 0;
