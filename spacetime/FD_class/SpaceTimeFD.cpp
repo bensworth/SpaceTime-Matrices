@@ -294,11 +294,11 @@ void SpaceTimeFD::SolveAMG(double tol, int maxiter, int printLevel)
 void SpaceTimeFD::SolveGMRES(double tol, int maxiter, int printLevel, int precondition) 
 {
     HYPRE_ParCSRGMRESCreate(m_comm, &m_gmres);
-    HYPRE_GMRESSetKDim(m_gmres, 5);
-    HYPRE_GMRESSetMaxIter(m_gmres, maxiter);
-    HYPRE_GMRESSetTol(m_gmres, tol);
-    HYPRE_GMRESSetPrintLevel(m_gmres, printLevel);
-    HYPRE_GMRESSetLogging(m_gmres, 1);
+    HYPRE_ParCSRGMRESSetKDim(m_gmres, 5);
+    HYPRE_ParCSRGMRESSetMaxIter(m_gmres, maxiter);
+    HYPRE_ParCSRGMRESSetTol(m_gmres, tol);
+    HYPRE_ParCSRGMRESSetPrintLevel(m_gmres, printLevel);
+    HYPRE_ParCSRGMRESSetLogging(m_gmres, 1);
 
     // AMG preconditioning (setup boomerAMG with 1 max iter and print level 1)
     if (precondition == 1) {
@@ -420,6 +420,7 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double, double),
         }
         if (m_rank == 0) {
             std::cout << "    1d Space-time wave equation, order-" << order << ":\n" <<
+               "        (dx, dt) = (" << m_hx << ", " << m_dt << ")\n" << 
                "        (nx, nt) = (" << m_globx << ", " << m_globt << ")\n" << 
                "        (Px, Pt) = (" << m_Px << ", " << m_Pt << ")\n";
         }
@@ -436,6 +437,7 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double, double),
         }
         if (m_rank == 0) {
             std::cout << "    2d Space-time wave equation, order-" << order << ":\n" <<
+               "        (dx, dy, dt) = (" << m_hx << ", " << m_hy << ", " << m_dt << ")\n" << 
                "        (nx, ny, nt) = (" << m_globx << ", " << m_globy << ", " << m_globt << ")\n" << 
                "        (Px, Py, Pt) = (" << m_Px << ", " << m_Py << ", " << m_Pt << ")\n";
         }       
