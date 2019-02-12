@@ -55,8 +55,9 @@ private:
     int    m_px_ind;
     int    m_py_ind;
     int    m_n;
-    long   m_globt;
     long   m_globx;
+    long   m_globy;
+    long   m_globt;
     bool   m_rebuildSolver;
     double m_t0;
     double m_t1;
@@ -90,7 +91,8 @@ public:
 
     SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px, double x0=0.0,
                 double x1=1.0, double t0=0, double t1=1.0);
-    // SpaceTimeFD(MPI_Comm comm, int nt, int nx, int ny, int Pt, int Px, int Py);  // 3D
+    SpaceTimeFD(MPI_Comm comm, int nt, int nx, int ny, int Pt, int Px, int Py, 
+                double x0, double x1, double y0, double y1, double t0, double t1);
     ~SpaceTimeFD();
 
     void SaveMatrix(std::string filename) { HYPRE_SStructMatrixPrint(filename.c_str(), m_AS, 1); }
@@ -109,5 +111,8 @@ public:
     void GetStencil_UW1a_1D(Stencil &St, double c);
     void GetStencil_UW2_1D(Stencil &St, double c);
     void GetStencil_UW4_1D(Stencil &St, double c);
-    void Wave1D(double (*IC_u)(double), double (*IC_v)(double), double c);
+    void GetStencil_UW1_2D(Stencil &St, double c);
+    void GetStencil_UW2_2D(Stencil &St, double c);
+    void Wave1D(double (*IC_u)(double,double), double (*IC_v)(double,double),
+                double c, int order=1, bool alternate=false);
 };

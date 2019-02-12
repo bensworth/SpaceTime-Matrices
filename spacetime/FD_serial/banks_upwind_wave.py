@@ -47,10 +47,10 @@ def get_UW1_1D(nt, dt, nx, hx, c, u0):
 	K = c * dt / hx
 	
 	# Stencil coefficients
-	cuu = np.array([1/2*K*K, (1 - K*K), 1/2*K*K]) # u_i^(n+1) to u^n 
-	cuv = np.array([dt*K/4, dt/2*(2 - K), dt*K/4]) # u_i^(n+1) to v^n 
-	cvu = np.array([K*K/dt, -2*K*K/dt, K*K/dt]) # v_i^(n+1) to v^n 
-	cvv = np.array([K/2, 1 - K, K/2]) # v_i^(n+1) to v^n 
+	cuu = np.array([1.0/2.0*K*K, (1.0 - K*K), 1.0/2.0*K*K]) # u_i^(n+1) to u^n 
+	cuv = np.array([dt*K/4.0, dt/2.0*(2.0 - K), dt*K/4.0]) # u_i^(n+1) to v^n 
+	cvu = np.array([K*K/dt, -2.0*K*K/dt, K*K/dt]) # v_i^(n+1) to v^n 
+	cvv = np.array([K/2.0, 1.0 - K, K/2.0]) # v_i^(n+1) to v^n 
 	
 	return get_1d_system(nt, nx, [cuu, cuv, cvu, cvv], u0)
 	
@@ -60,20 +60,20 @@ def get_UW2_1D(nt, dt, nx, hx, c, u0):
 	K = c * dt / hx
 
 	# Stencil coefficients
-	gu = np.array([ K**3/(4*dt), 
-					K**2/dt*(1 - K), 
-				   -K**2/(2*dt)*(4 - 3*K), 
-					K**2/dt*(1 - K), 
-					K**3/(4*dt)])
-	gv = np.array([-K/8, 
-					K/2*(1 + K), 
-				   -K/4*(3 + 4*K), 
-					K/2*(1 + K), 
-				   -K/8])
+	gu = np.array([ K**3.0/(4.0*dt), 
+					K**2.0/dt*(1.0 - K), 
+				   -K**2.0/(2.0*dt)*(4.0 - 3.0*K), 
+					K**2.0/dt*(1.0 - K), 
+					K**3.0/(4.0*dt)])
+	gv = np.array([-K/8.0, 
+					K/2.0*(1.0 + K), 
+				   -K/4.0*(3.0 + 4.0*K), 
+					K/2.0*(1.0 + K), 
+				   -K/8.0])
 
-	cuu = dt/2*gu.copy()
+	cuu = dt/2.0*gu.copy()
 	cuu[2] += 1
-	cuv = dt/2*gv.copy()
+	cuv = dt/2.0*gv.copy()
 	cuv[2] += dt
 
 	cvu = gu.copy()

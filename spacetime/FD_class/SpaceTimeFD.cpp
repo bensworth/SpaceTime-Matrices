@@ -38,7 +38,6 @@ SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px,
     m_dt = (m_t1 - m_t0) / m_globt;
     m_globx = m_nx_local * m_Px;
     m_hx = (m_x1 - m_x0) / m_globx;
-    m_hy = -1;
 
     // Define each processor's piece of the grid in space-time. 
     // *IMPORTANT* - must be ordered by space and then time, so that DOFs are
@@ -49,6 +48,55 @@ SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px,
     m_iupper[0] = m_ilower[0] + m_nx_local-1;
     m_ilower[1] = m_pt_ind * m_nt_local;
     m_iupper[1] = m_ilower[1] + m_nt_local-1;
+}
+
+
+// 3d constructor
+SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int ny, int Pt, int Px,
+                         int Py, double x0, double x1, double y0, double y1,
+                         double t0, double t1) :
+    m_comm{comm}, m_nt_local{nt}, m_nx_local{nx}, m_ny_local{ny}, m_Pt{Pt},
+    m_Px{Px}, m_Py{Py}, m_t0{t0}, m_t1{t1}, m_x0{x0}, m_x1{x1}, m_y0{y0},
+    m_y1{y1}, m_dim(3), m_rebuildSolver{false}, m_grid(NULL), m_graph(NULL),
+    m_stencil_u(NULL), m_stencil_v(NULL), m_solver(NULL), m_gmres(NULL),
+    m_bS(NULL), m_xS(NULL), m_AS(NULL)
+{
+    // Get number of processes
+    MPI_Comm_rank(m_comm, &m_rank);
+    MPI_Comm_size(m_comm, &m_numProc);
+
+    if ((m_Px*m_Py*m_Pt) != m_numProc) {
+        if (m_rank == 0) {
+            std::cout << "Error: Invalid number of processors or processor topology \n";
+        }
+        throw std::domain_error("Px*Py*Pt != P");
+    }
+
+    // Compute local indices in 2d processor array, m_px_ind, m_py_ind, and
+    // m_pt_ind, from m_Px, m_PY, m_Pt, and m_rank
+    m_px_ind = m_rank % m_Px;
+    m_py_ind = (( m_rank - m_px_ind) / m_Px) % m_Py;
+    m_pt_ind = ( m_rank - m_px_ind - m_Px*m_py_ind) / ( m_Px*m_Py );
+
+    // TODO : should be over (m_globx + 1)?? Example had this
+    m_globt = m_nt_local * m_Pt;
+    m_dt = (m_t1 - m_t0) / m_globt;
+    m_globx = m_nx_local * m_Px;
+    m_hx = (m_x1 - m_x0) / m_globx;
+    m_globy = m_ny_local * m_Py;
+    m_hy = (m_y1 - m_y0) / m_globy;
+
+    // Define each processor's piece of the grid in space-time. 
+    // *IMPORTANT* - must be ordered by space and then time, so that DOFs are
+    // enumerated like {(t0,x0),...,(t0,nx),(t1,x0),...}. 
+    m_ilower.resize(3);
+    m_iupper.resize(3);
+    m_ilower[0] = m_px_ind * m_nx_local;
+    m_iupper[0] = m_ilower[0] + m_nx_local-1;
+    m_ilower[1] = m_py_ind * m_ny_local;
+    m_iupper[1] = m_ilower[1] + m_ny_local-1;
+    m_ilower[2] = m_pt_ind * m_nt_local;
+    m_iupper[2] = m_ilower[2] + m_nt_local-1;
 }
 
 
@@ -275,9 +323,16 @@ void SpaceTimeFD::SolveGMRES(double tol, int maxiter, int printLevel, int precon
 }
 
 
+// TODO : add stability as puper bound on c*m_dt/m_hx
 void SpaceTimeFD::GetStencil_UW1_1D(Stencil &St, double c)
 {
     double lambda = c * m_dt / m_hx;
+    if (lambda > 1) {
+        if (m_rank == 0) {
+            std::cout << "Unstable parameters: c*dt/hx = " << c*m_dt/m_hx << " > 1.\n";
+       } 
+       throw std::domain_error("Unstable integration scheme.\n");
+    }
     St.uu_indices = {0, 1, 2, 3};
     St.uv_indices = {4, 5, 6};
     St.vv_indices = {0, 1, 2, 3};
@@ -293,19 +348,38 @@ void SpaceTimeFD::GetStencil_UW1_1D(Stencil &St, double c)
 }
 
 
-void GetStencil_UW1a_1D(Stencil &St, double c)
+void SpaceTimeFD::GetStencil_UW1a_1D(Stencil &St, double c)
+{
+    double lambda = c * m_dt / m_hx;
+    if (lambda > 0.5) {
+        if (m_rank == 0) {
+            std::cout << "Unstable parameters: c*dt/hx = " << c*m_dt/m_hx << " > 1.\n";
+       } 
+       throw std::domain_error("Unstable integration scheme.\n");
+    }
+    // TODO
+}
+
+
+void SpaceTimeFD::GetStencil_UW2_1D(Stencil &St, double c)
 {
     // TODO
 }
 
 
-void GetStencil_UW2_1D(Stencil &St, double c)
+void SpaceTimeFD::GetStencil_UW4_1D(Stencil &St, double c)
 {
     // TODO
 }
 
 
-void GetStencil_UW4_1D(Stencil &St, double c)
+void SpaceTimeFD::GetStencil_UW1_2D(Stencil &St, double c)
+{
+    // TODO
+}
+
+
+void SpaceTimeFD::GetStencil_UW2_2D(Stencil &St, double c)
 {
     // TODO
 }
@@ -315,29 +389,56 @@ void GetStencil_UW4_1D(Stencil &St, double c)
 // wave equation. Initial conditions (t = 0) are passed in function pointers
 // IC_u(double x) and IC_v(double x), which give the ICs for u and v at point
 // (0,x). 
-void SpaceTimeFD::Wave1D(double (*IC_u)(double),
-                         double (*IC_v)(double), 
-                         double c)
+//
+// TODO : Can we make polymorphism for function tha takes IC_u and IC_v as
+// functions of one parameter (for 1D space) and passes them to this function
+// with dummy arguments or something as second variable?
+void SpaceTimeFD::Wave1D(double (*IC_u)(double, double),
+                         double (*IC_v)(double, double), 
+                         double c,
+                         int order,
+                         bool alternate)
 {
-    if (m_dim != 2) {
+    Stencil St;
+    if (m_dim == 2) {
+        if (order == 1) {
+            if (alternate) {
+                GetStencil_UW1a_1D(St, c);
+            }
+            else {
+                GetStencil_UW1_1D(St, c);
+            }         
+        }
+        else if (order == 2) {
+            GetStencil_UW2_1D(St, c);
+        }
+        else if (order == 4) {
+            GetStencil_UW4_1D(St, c);            
+        }
+        else {
+           throw std::domain_error("Only orders 1, 1a, 2, and 4 available in 1D.\n");
+        }
         if (m_rank == 0) {
-            std::cout << "Error: class dimension is " << m_dim <<
-                    ". This discretization requires dim=2.\n";
-       }
-       return;
+            std::cout << "    1d Space-time wave equation, order-" << order << ":\n" <<
+               "        (nx, nt) = (" << m_globx << ", " << m_globt << ")\n" << 
+               "        (Px, Pt) = (" << m_Px << ", " << m_Pt << ")\n";
+        }
     }
-
-    if (m_rank == 0) {
-        std::cout << "  1d Space-time wave equation:\n" <<
-           "    (nx, nt) = (" << m_globx << ", " << m_globt << ")\n" << 
-           "    (Px, Pt) = (" << m_Px << ", " << m_Pt << ")\n";
-    }
-
-    if (m_dt > (m_hx / c)) {
+    else if (m_dim == 3) {
+        if (order == 1) {
+            GetStencil_UW1_2D(St, c);
+        }
+        else if (order == 2) {
+            GetStencil_UW2_2D(St, c);
+        }
+        else {
+           throw std::domain_error("Only orders 1, and 2 available in 2D.\n");
+        }
         if (m_rank == 0) {
-            std::cout << "Unstable parameters: c*dt/hx = " << c*m_dt/m_hx << " > 1.\n";
-       } 
-       return;
+            std::cout << "    2d Space-time wave equation, order-" << order << ":\n" <<
+               "        (nx, ny, nt) = (" << m_globx << ", " << m_globy << ", " << m_globt << ")\n" << 
+               "        (Px, Py, Pt) = (" << m_Px << ", " << m_Py << ", " << m_Pt << ")\n";
+        }       
     }
 
     // Create an empty 2D grid object with 1 part
@@ -352,12 +453,15 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     HYPRE_SStructGridSetVariables(m_grid, 0, 2, vartypes);
 
 	/* ------------------------------------------------------------------
-    *                      Add boundary conditions
+    *                  Add periodic boundary conditions
     * ---------------------------------------------------------------- */
 	// Set periodic on *all* processors
     std::vector<int> periodic(m_dim,0);
     periodic[0] = m_globx; // periodic in x
-	HYPRE_SStructGridSetPeriodic(m_grid, 0, &periodic[0]); 
+    if (m_dim == 3) {
+        periodic[1] = m_globy; // periodic in y for 2d-space
+    }
+    HYPRE_SStructGridSetPeriodic(m_grid, 0, &periodic[0]); 
 
     // Finalize grid assembly.
     HYPRE_SStructGridAssemble(m_grid);
@@ -365,11 +469,6 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     /* ------------------------------------------------------------------
     *                   Define discretization stencils
     * ---------------------------------------------------------------- */
-    // Stencil object for variable u (labeled as variable 0). First entry
-    // is diagonal, next three are u at previous time, final three are v
-    // at previous time
-    Stencil St;
-    GetStencil_UW1_1D(St, c);
     int n_uu_stenc      = (St.uu_indices).size();
     int n_uv_stenc      = (St.uv_indices).size();
     int stencil_size_u  = n_uu_stenc + n_uv_stenc;
@@ -462,14 +561,14 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     HYPRE_SStructMatrixInitialize(m_AS);
 
     // Set values in matrix for part 0 and variables 0 (u) and 1 (v)
-    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    0, n_uu_stenc, &(St.uu_indices)[0], &uu_values[0]);
-    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    0, n_uv_stenc, &(St.uv_indices)[0], &uv_values[0]);
-    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    1, n_vv_stenc, &(St.vv_indices)[0], &vv_values[0]);
-    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    1, n_vu_stenc, &(St.vu_indices)[0], &vu_values[0]);
+    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0], 0,
+                                    n_uu_stenc, &(St.uu_indices)[0], &uu_values[0]);
+    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0], 0,
+                                    n_uv_stenc, &(St.uv_indices)[0], &uv_values[0]);
+    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0], 1,
+                                    n_vv_stenc, &(St.vv_indices)[0], &vv_values[0]);
+    HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0], 1,
+                                    n_vu_stenc, &(St.vu_indices)[0], &vu_values[0]);
 
     /* ------------------------------------------------------------------
     *                      Construct linear system
@@ -493,25 +592,52 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     // because we are solving homogeneous wave equation. Because scheme is
     // explicit, set solution equal to rhs there because first t rows are
     // diagonal. Otherwise, rhs = 0 and we use 0 initial guess.
-    //      TODO : should we be using zero initial guess for x0?
-    std::vector<double> rhs(m_n, 0);
-    if (m_pt_ind == 0) {
-        for (int i=0; i<m_nx_local; i++) {
-            double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
-            rhs[i] = IC_u(temp_x);
+    std::vector<double> rhs(m_n, 0);    
+    if (m_dim == 2) {
+        if (m_pt_ind == 0) {
+            for (int i=0; i<m_nx_local; i++) {
+                double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
+                rhs[i] = IC_u(temp_x,0);
+            }
         }
-    }
-    HYPRE_SStructVectorSetBoxValues(m_bS, 0, &m_ilower[0], &m_iupper[0], 0, &rhs[0]);
-    HYPRE_SStructVectorSetBoxValues(m_xS, 0, &m_ilower[0], &m_iupper[0], 0, &rhs[0]);
+        HYPRE_SStructVectorSetBoxValues(m_bS, 0, &m_ilower[0], &m_iupper[0], 0, &rhs[0]);
+        HYPRE_SStructVectorSetBoxValues(m_xS, 0, &m_ilower[0], &m_iupper[0], 0, &rhs[0]);
 
-    if (m_pt_ind == 0) {
-        for (int i=0; i<m_nx_local; i++) {
-            double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
-            rhs[i] = IC_v(temp_x);
+        if (m_pt_ind == 0) {
+            for (int i=0; i<m_nx_local; i++) {
+                double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
+                rhs[i] = IC_v(temp_x,0);
+            }
         }
+        HYPRE_SStructVectorSetBoxValues(m_bS, 0, &m_ilower[0], &m_iupper[0], 1, &rhs[0]);
+        HYPRE_SStructVectorSetBoxValues(m_xS, 0, &m_ilower[0], &m_iupper[0], 1, &rhs[0]);
     }
-    HYPRE_SStructVectorSetBoxValues(m_bS, 0, &m_ilower[0], &m_iupper[0], 1, &rhs[0]);
-    HYPRE_SStructVectorSetBoxValues(m_xS, 0, &m_ilower[0], &m_iupper[0], 1, &rhs[0]);
+    // TODO : verify that this is correct
+    else if (m_dim == 3) {
+        if (m_pt_ind == 0) {
+            for (int j=0; j<m_ny_local; j++) {
+                double temp_y = m_y0 + (m_py_ind*m_ny_local + j) * m_hy;
+                for (int i=0; i<m_nx_local; i++) {
+                    double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
+                    rhs[j*m_ny_local + i] = IC_u(temp_x, temp_y);
+                }
+            }
+        }
+        HYPRE_SStructVectorSetBoxValues(m_bS, 0, &m_ilower[0], &m_iupper[0], 0, &rhs[0]);
+        HYPRE_SStructVectorSetBoxValues(m_xS, 0, &m_ilower[0], &m_iupper[0], 0, &rhs[0]);
+
+        if (m_pt_ind == 0) {
+            for (int j=0; j<m_ny_local; j++) {
+                double temp_y = m_y0 + (m_py_ind*m_ny_local + j) * m_hy;
+                for (int i=0; i<m_nx_local; i++) {
+                    double temp_x = m_x0 + (m_px_ind*m_nx_local + i) * m_hx;
+                    rhs[j*m_ny_local + i] = IC_v(temp_x, temp_y);
+                }
+            }
+        }
+        HYPRE_SStructVectorSetBoxValues(m_bS, 0, &m_ilower[0], &m_iupper[0], 1, &rhs[0]);
+        HYPRE_SStructVectorSetBoxValues(m_xS, 0, &m_ilower[0], &m_iupper[0], 1, &rhs[0]);
+    }
 
     // Finalize vector assembly
     HYPRE_SStructVectorAssemble(m_bS);
@@ -522,6 +648,8 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     HYPRE_SStructVectorGetObject(m_bS, (void **) &m_b);
     HYPRE_SStructVectorGetObject(m_xS, (void **) &m_x);
 }
+
+
 
 
 #if 0

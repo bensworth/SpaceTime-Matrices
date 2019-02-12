@@ -3,7 +3,7 @@
 	#include "SpaceTimeFD.hpp"
 #endif
 
-double IC_u(double x)
+double IC_u(double x, double y)
 {
     double temp = 0;
     if ((x + 0.25) >= 0) {
@@ -16,7 +16,7 @@ double IC_u(double x)
     return temp;
 }
 
-double IC_v(double x)
+double IC_v(double x, double y)
 {
     return 0.0;
 }

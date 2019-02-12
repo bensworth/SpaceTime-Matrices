@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
-
+import pdb
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse import save_npz
@@ -29,9 +29,9 @@ def u_dalambert(t, x, c):
 	return 0.5*(u0(x - c*t) + u0(x + c*t))
 	
 Tmax = 0.5
-nx = 6
-cx = 0.8
-CFL_saftety = 0.8
+nx =20
+cx = 0.5
+CFL_safety = 0.5
 
 
 # Spatial mesh
@@ -46,44 +46,48 @@ def u0_wrapper(xi):
 
 ### --------------- 1st-order scheme (1a) --------------- ###
 scheme = "UW1a"
-dt = CFL_saftety * buw.get_CFL_limit_1d(scheme, hx, cx)
+dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
 t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
 nt = t.shape[0]
+nt = 10
+dt = 1.0/nt
 print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
 print("{}: assembling...\n".format(scheme))
 A, b = buw.get_UW1a_1D(nt, dt, nx, hx, cx, u0_wrapper)
 A = A.tocsr()
 print("{}: solving...\n".format(scheme))
-z = spsolve_triangular(A, b, lower = True)
-u = z[0::2].copy()
+# z = spsolve_triangular(A, b, lower = True)
+# u = z[0::2].copy()
 #v = z[1::2].copy()
 
-plt.plot(x, u[nx*(nt-1)::], label = scheme)
+# plt.plot(x, u[nx*(nt-1)::], label = scheme)
 
 
 ### --------------- 1st-order scheme --------------- ###
 scheme = "UW1"
-dt = CFL_saftety * buw.get_CFL_limit_1d(scheme, hx, cx)
+dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
 t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
 nt = t.shape[0]
+nt = 10
+dt = 1.0/nt
 print("lambda = {:.5f}".format(cx*dt/hx))
 print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
 print("{}: assembling...\n".format(scheme))
 A, b = buw.get_UW1_1D(nt, dt, nx, hx, cx, u0_wrapper)
 A = A.tocsr()
 print("{}: solving...\n".format(scheme))
-z = spsolve_triangular(A, b, lower = True)
-u = z[0::2].copy()
+# z = spsolve_triangular(A, b, lower = True)
+# u = z[0::2].copy()
 #v = z[1::2].copy()
 
-plt.plot(x, u[nx*(nt-1)::], label = scheme)
+# plt.plot(x, u[nx*(nt-1)::], label = scheme)
 
-matpath = "/Users/oliverkrzysik/Software/mgrit_air/spacetime/FD_class/Apy.npz"
+matpath = "..//FD_class/Apy.npz"
 save_npz(matpath, A)
 # 
 # ### --------------- 2nd-order scheme --------------- ###
 # scheme = "UW2"
-# dt = CFL_saftety * buw.get_CFL_limit_1d(scheme, hx, cx)
+# dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
 # t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
 # nt = t.shape[0]
 # print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
@@ -100,7 +104,7 @@ save_npz(matpath, A)
 # 
 # ### --------------- 4th-order scheme --------------- ###
 # scheme = "UW4"
-# dt = CFL_saftety * buw.get_CFL_limit_1d(scheme, hx, cx)
+# dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
 # t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
 # nt = t.shape[0]
 # print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
