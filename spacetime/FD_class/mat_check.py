@@ -6,8 +6,8 @@ import pdb
 
 from scipy.sparse import load_npz
 
-A_hypre_path = "/Users/oliverkrzysik/Software/mgrit_air/spacetime/FD_class/A_hypre.mm"
-A_py_path    = "/Users/oliverkrzysik/Software/mgrit_air/spacetime/FD_class/Apy.npz"
+A_hypre_path = "./A_hypre.mm"
+A_py_path    = "./Apy.npz"
 
 # Get row/col numbers from first line of HYPRE out file.
 with open(A_hypre_path) as f:
@@ -18,6 +18,7 @@ dims = [int(x) for x in dims.split()]
 dat = np.loadtxt(A_hypre_path, skiprows = 1)
 
 A_hypre = csr_matrix((dat[:,2],(dat[:,0],dat[:,1])),shape=(dims[1]+1, dims[3]+1))
+A_hypre.data[np.abs(A_hypre.data)<1e-15] = 0.0
 A_hypre.eliminate_zeros()
 print(A_hypre.shape, A_hypre.nnz)
 
@@ -31,6 +32,7 @@ plt.colorbar()
 
 
 A_py = load_npz(A_py_path)
+A_py.data[np.abs(A_py.data)<1e-15] = 0.0
 A_py.eliminate_zeros()
 A_py = np.abs(A_py)
 print(A_py.shape, A_py.nnz)
@@ -69,6 +71,13 @@ plt.title("Permuted HYPRE")
 plt.colorbar()
 
 plt.show()
+
+
+test = A_hypre - A_py
+test.data[np.abs(test.data)<1e-14] = 0
+test.eliminate_zeros()
+
+pdb.set_trace()
 
  
 # print(A_hypre.data - A_py.data)

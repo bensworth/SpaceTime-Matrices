@@ -275,6 +275,42 @@ void SpaceTimeFD::SolveGMRES(double tol, int maxiter, int printLevel, int precon
 }
 
 
+void SpaceTimeFD::GetStencil_UW1_1D(Stencil &St, double c)
+{
+    double lambda = c * m_dt / m_hx;
+    St.uu_indices = {0, 1, 2, 3};
+    St.uv_indices = {4, 5, 6};
+    St.vv_indices = {0, 1, 2, 3};
+    St.vu_indices = {4, 5, 6};
+    St.u_data = {1.0, -lambda*lambda/2.0, -1.0+lambda*lambda,
+                 -lambda*lambda/2.0, -lambda*m_dt/4.0, 
+                 -m_dt*(2.0-lambda)/2.0, -lambda*m_dt/4.0 };
+    St.v_data = {1.0, -lambda/2.0, -1.0+lambda, -lambda/2.0,
+                 -lambda*lambda/m_dt, 2.0*lambda*lambda/m_dt,
+                 -lambda*lambda/m_dt};
+    St.offsets_u = {{0,0}, {-1,-1}, {0,-1}, {1,-1}, {-1,-1}, {0,-1}, {1,-1}};
+    St.offsets_v = {{0,0}, {-1,-1}, {0,-1}, {1,-1}, {-1,-1}, {0,-1}, {1,-1}};
+}
+
+
+void GetStencil_UW1a_1D(Stencil &St, double c)
+{
+    // TODO
+}
+
+
+void GetStencil_UW2_1D(Stencil &St, double c)
+{
+    // TODO
+}
+
+
+void GetStencil_UW4_1D(Stencil &St, double c)
+{
+    // TODO
+}
+
+
 // First-order upwind discretization of the 1d-space, 1d-time homogeneous
 // wave equation. Initial conditions (t = 0) are passed in function pointers
 // IC_u(double x) and IC_v(double x), which give the ICs for u and v at point
@@ -315,14 +351,13 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
                             HYPRE_SSTRUCT_VARIABLE_CELL };
     HYPRE_SStructGridSetVariables(m_grid, 0, 2, vartypes);
 
-		/* ------------------------------------------------------------------
+	/* ------------------------------------------------------------------
     *                      Add boundary conditions
     * ---------------------------------------------------------------- */
-		std::vector<int> periodic(m_dim,0);
-    periodic[0] = m_globx; // periodic in x, not periodic in t
-		HYPRE_SStructGridSetPeriodic(m_grid, 0, &periodic[0]); 
-		//TODO : do I set periodic on *all* processors, or only boundary processors??
-		// I think you probably do it on all processors!
+	// Set periodic on *all* processors
+    std::vector<int> periodic(m_dim,0);
+    periodic[0] = m_globx; // periodic in x
+	HYPRE_SStructGridSetPeriodic(m_grid, 0, &periodic[0]); 
 
     // Finalize grid assembly.
     HYPRE_SStructGridAssemble(m_grid);
@@ -333,108 +368,82 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     // Stencil object for variable u (labeled as variable 0). First entry
     // is diagonal, next three are u at previous time, final three are v
     // at previous time
-    std::vector<int>      uu_indices{0, 1, 2, 3};
-    std::vector<int>      uv_indices{4, 5, 6};
-    int n_uu_stenc      = uu_indices.size();
-    int n_uv_stenc      = uv_indices.size();
+    Stencil St;
+    GetStencil_UW1_1D(St, c);
+    int n_uu_stenc      = (St.uu_indices).size();
+    int n_uv_stenc      = (St.uv_indices).size();
     int stencil_size_u  = n_uu_stenc + n_uv_stenc;
-
-    // std::vector<std::vector<int> > offsets_u = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
-    //                                             {-1,-1}, {-1,0}, {-1,1}};
-    std::vector<std::vector<int> > offsets_u = {{0,0}, {-1,-1}, {0,-1}, {1,-1},
-                                                {-1,-1}, {0,-1}, {1,-1}};
     HYPRE_SStructStencilCreate(m_dim, stencil_size_u, &m_stencil_u);
 
-    // Data for stencil
-    double lambda = c * m_dt / m_hx;
-		// std::cout <<"c = " << c << "\n";
-		// std::cout <<"dt = " << m_dt << "\n";
-		// std::cout <<"dx = " << m_hx << "\n";
-		// std::cout <<"lambda = " << lambda << "\n";
-    std::vector<double> u_data = {1.0, lambda*lambda/2.0, 1-lambda*lambda,
-                                  lambda*lambda/2.0, lambda*m_dt/4.0, 
-                                  m_dt*(2.0-lambda)/2.0, lambda*m_dt/4.0 };
-    std::vector<double> v_data = {1.0, lambda/2.0, 1.0-lambda, lambda/2.0,
-                                  lambda*lambda/m_dt, -2.0*lambda*lambda/m_dt,
-                                  lambda*lambda/m_dt};
-
     // Set stencil for u-u connections (variable 0)
-    for (auto entry : uu_indices) {
-        HYPRE_SStructStencilSetEntry(m_stencil_u, entry, &offsets_u[entry][0], 0);
+    for (auto entry : (St.uu_indices)) {
+        HYPRE_SStructStencilSetEntry(m_stencil_u, entry, &(St.offsets_u)[entry][0], 0);
     }
 
     // Set stencil for u-v connections (variable 1)
-    for (auto entry : uv_indices) {
-        HYPRE_SStructStencilSetEntry(m_stencil_u, entry, &offsets_u[entry][0], 1);
+    for (auto entry : (St.uv_indices)) {
+        HYPRE_SStructStencilSetEntry(m_stencil_u, entry, &(St.offsets_u)[entry][0], 1);
     }
 
     // Set u-stencil entries (to be added to matrix later). Note that
     // HYPRE_SStructMatrixSetBoxValues can only set values corresponding
     // to stencil entries for one variable at a time
     int n_uu = n_uu_stenc * m_n;
-    double* uu_values = new double[n_uu];
+    std::vector<double> uu_values(n_uu);
     for (int i=0; i<n_uu; i+=n_uu_stenc) {
         for (int j=0; j<n_uu_stenc; j++) {
-            uu_values[i+j] = u_data[j];
+            uu_values[i+j] = (St.u_data)[j];
         }
     }
 
     // Fill in stencil for u-v entries here (to be added to matrix later)
     int n_uv = n_uv_stenc * m_n;
-    double* uv_values = new double[n_uv];
+    std::vector<double> uv_values(n_uv);
     for (int i=0; i<n_uv; i+=n_uv_stenc) {
         for (int j=0; j<n_uv_stenc; j++) {
-            uv_values[i+j] = u_data[j+n_uu_stenc];
+            uv_values[i+j] = (St.u_data)[j+n_uu_stenc];
         }
     }
 
     // Stencil object for variable v (labeled as variable 1).
-    std::vector<int>     vv_indices{0, 1, 2, 3};
-    std::vector<int>     vu_indices{4, 5, 6};
-    int n_vv_stenc     = vv_indices.size();
-    int n_vu_stenc     = vu_indices.size();
+    int n_vv_stenc     = (St.vv_indices).size();
+    int n_vu_stenc     = (St.vu_indices).size();
     int stencil_size_v = n_vv_stenc + n_vu_stenc;
-
-    // std::vector<std::vector<int> > offsets_v = {{0,0}, {-1,-1}, {-1,0}, {-1,1},
-    //                                             {-1,-1}, {-1,0}, {-1,1}};
-    std::vector<std::vector<int> > offsets_v = {{0,0}, {-1,-1}, {0,-1}, {1,-1},
-                                                {-1,-1}, {0,-1}, {1,-1}};
     HYPRE_SStructStencilCreate(m_dim, stencil_size_v, &m_stencil_v);
 
     // Set stencil for v-v connections (variable 1)
-    for (auto entry : vv_indices) {
-        HYPRE_SStructStencilSetEntry(m_stencil_v, entry, &offsets_v[entry][0], 1);
+    for (auto entry : (St.vv_indices)) {
+        HYPRE_SStructStencilSetEntry(m_stencil_v, entry, &(St.offsets_v)[entry][0], 1);
     }
 
     // Set stencil for v-u connections (variable 0)
-    for (auto entry : vu_indices) {
-        HYPRE_SStructStencilSetEntry(m_stencil_v, entry, &offsets_v[entry][0], 0);
+    for (auto entry : (St.vu_indices)) {
+        HYPRE_SStructStencilSetEntry(m_stencil_v, entry, &(St.offsets_v)[entry][0], 0);
     }
 
     // Set u-stencil entries (to be added to matrix later). Note that
     // HYPRE_SStructMatrixSetBoxValues can only set values corresponding
     // to stencil entries for one variable at a time
     int n_vv = n_vv_stenc * m_n;
-    double* vv_values = new double[n_vv];
+    std::vector<double> vv_values(n_vv);
     for (int i=0; i<n_vv; i+=n_vv_stenc) {
         for (int j=0; j<n_vv_stenc; j++) {
-            vv_values[i+j] = v_data[j];
+            vv_values[i+j] = (St.v_data)[j];
         }
     }
 
     // Fill in stencil for u-v entries here (to be added to matrix later)
     int n_vu = n_vu_stenc * m_n;
-    double* vu_values = new double[n_vu];
+    std::vector<double> vu_values(n_vu);
     for (int i=0; i<n_vu; i+=n_vu_stenc) {
         for (int j=0; j<n_vu_stenc; j++) {
-            vu_values[i+j] = v_data[n_vv_stenc+j];
+            vu_values[i+j] = (St.v_data)[n_vv_stenc+j];
         }
     }
 
     /* ------------------------------------------------------------------
     *                      Fill in sparse matrix
     * ---------------------------------------------------------------- */
-
     HYPRE_SStructGraphCreate(m_comm, m_grid, &m_graph);
     HYPRE_SStructGraphSetObjectType(m_graph, HYPRE_PARCSR);
     HYPRE_SStructGraphSetObjectType(m_graph, HYPRE_PARCSR);
@@ -454,18 +463,13 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
 
     // Set values in matrix for part 0 and variables 0 (u) and 1 (v)
     HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    0, n_uu_stenc, &uu_indices[0], uu_values);
-    delete[] uu_values;
+                                    0, n_uu_stenc, &(St.uu_indices)[0], &uu_values[0]);
     HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    0, n_uv_stenc, &uv_indices[0], uv_values);
-    delete[] uv_values;
+                                    0, n_uv_stenc, &(St.uv_indices)[0], &uv_values[0]);
     HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    1, n_vv_stenc, &vv_indices[0], vv_values);
-    delete[] vv_values;
+                                    1, n_vv_stenc, &(St.vv_indices)[0], &vv_values[0]);
     HYPRE_SStructMatrixSetBoxValues(m_AS, 0, &m_ilower[0], &m_iupper[0],
-                                    1, n_vu_stenc, &vu_indices[0], vu_values);
-    delete[] vu_values;
-
+                                    1, n_vu_stenc, &(St.vu_indices)[0], &vu_values[0]);
 
     /* ------------------------------------------------------------------
     *                      Construct linear system
@@ -517,7 +521,6 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double),
     HYPRE_SStructMatrixGetObject(m_AS, (void **) &m_A);
     HYPRE_SStructVectorGetObject(m_bS, (void **) &m_b);
     HYPRE_SStructVectorGetObject(m_xS, (void **) &m_x);
-//#endif
 }
 
 

@@ -46,7 +46,6 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numProcess);
 
-    // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 6, 0.25, 0.01, 0.0, 0.0, 1};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "A";
@@ -58,10 +57,10 @@ int main(int argc, char *argv[])
     double x1 = 1;
     double t0 = 0;
     double t1 = 1;
-    double c = 0.8;
+    double c = 0.5;
     int arg_index = 0;
-    int nt_loc = 3;
-    int nx_loc = 6;
+    int nt_loc = 10;
+    int nx_loc = 20;
     int Pt = numProcess;
     int Px = 1;
 

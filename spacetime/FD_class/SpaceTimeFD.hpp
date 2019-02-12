@@ -23,6 +23,18 @@ struct AMG_parameters {
     int cycle_type;
 };
 
+/* Struct containing stencil vectors in hypre format*/
+struct Stencil {
+    std::vector<int> uu_indices;    // Indices for u-u connections in offsets_u
+    std::vector<int> uv_indices;    // Indices for u-v connections in offsets_u
+    std::vector<int> vv_indices;    // Indices for v-v connections in offsets_v
+    std::vector<int> vu_indices;    // Indices for v-u connections in offsets_v
+    std::vector<double> u_data;     // Data for u-u and u-v connections in offsets_u
+    std::vector<double> v_data;     // Data for v-v and v-u connections in offsets_v
+    std::vector<std::vector<int> > offsets_u;   // FD stencil for u, centered at DOF
+    std::vector<std::vector<int> > offsets_v;   // FD stencil for v, centered at DOF
+};
+
 
 class SpaceTimeFD
 {
@@ -81,11 +93,10 @@ public:
     // SpaceTimeFD(MPI_Comm comm, int nt, int nx, int ny, int Pt, int Px, int Py);  // 3D
     ~SpaceTimeFD();
 
-    // TODO : implement SaveMatrix
-    // void SaveMatrix(const char* filename) { HYPRE_SStructMatrixPrint (m_AS, filename); }
     void SaveMatrix(std::string filename) { HYPRE_SStructMatrixPrint(filename.c_str(), m_AS, 1); }
     void SaveRHS(std::string filename) { HYPRE_SStructVectorPrint(filename.c_str(), m_bS, 1); }
-    void SaveX0(std::string filename) { HYPRE_SStructVectorPrint(filename.c_str(), m_xS, 1); }
+    void SaveX(std::string filename) { HYPRE_SStructVectorPrint(filename.c_str(), m_xS, 1); }
+    
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
@@ -93,5 +104,10 @@ public:
     void SetAMGParameters(AMG_parameters &params);
     void SolveAMG(double tol=1e-8, int maxiter=250, int printLevel=3);
     void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3, int precondition=1);
+    
+    void GetStencil_UW1_1D(Stencil &St, double c);
+    void GetStencil_UW1a_1D(Stencil &St, double c);
+    void GetStencil_UW2_1D(Stencil &St, double c);
+    void GetStencil_UW4_1D(Stencil &St, double c);
     void Wave1D(double (*IC_u)(double), double (*IC_v)(double), double c);
 };
