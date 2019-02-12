@@ -8,6 +8,7 @@
 *.log
 *.synctex
 *.blg
+*.bbl
 *dSYM
 *.out*
 driver
@@ -15,3 +16,4 @@ driver
 makefile
 driver
 *._*
+*.npz
