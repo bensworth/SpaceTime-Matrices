@@ -16,4 +16,5 @@ driver
 makefile
 driver
 *._*
+*.pyc
 *.npz
