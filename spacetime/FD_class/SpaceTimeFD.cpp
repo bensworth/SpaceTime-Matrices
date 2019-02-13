@@ -338,23 +338,23 @@ void SpaceTimeFD::GetStencil_UW1_1D(Stencil &St, double c)
     St.vv_indices = {0, 1, 2, 3};
     St.vu_indices = {4, 5, 6};
     St.u_data = {1.0, 
-									-k*k/2.0, // u_i-1 connection
-									-1.0+k*k,
-                 	-k*k/2.0, // u_i+1 connection
-									-k*m_dt/4.0, // v_i-1 connection
-                  -m_dt*(2.0-k)/2.0, 
-									-k*m_dt/4.0 }; // v_i+1 connection
+                    -k*k/2.0, // u_i-1 connection
+                    -1.0+k*k,
+                    -k*k/2.0, // u_i+1 connection
+                    -k*m_dt/4.0, // v_i-1 connection
+                    -m_dt*(2.0-k)/2.0, 
+                    -k*m_dt/4.0 }; // v_i+1 connection
     St.v_data = {1.0, 
-									-k/2.0, // v_i-1 connection
-									-1.0+k, 
-									-k/2.0, // v_i+1 connection
-                  -k*k/m_dt, // u_i-1 connection
-									 2.0*k*k/m_dt,
-                  -k*k/m_dt}; // u_i+1 connection
+                    -k/2.0, // v_i-1 connection
+                    -1.0+k, 
+                    -k/2.0, // v_i+1 connection
+                    -k*k/m_dt, // u_i-1 connection
+                     2.0*k*k/m_dt,
+                    -k*k/m_dt}; // u_i+1 connection
     St.offsets_u = {{0,0}, {-1,-1}, {0,-1}, {1,-1}, 
-														{-1,-1}, {0,-1}, {1,-1}};
+                            {-1,-1}, {0,-1}, {1,-1}};
     St.offsets_v = {{0,0}, {-1,-1}, {0,-1}, 
-														{1,-1}, {-1,-1}, {0,-1}, {1,-1}};
+                            {1,-1}, {-1,-1}, {0,-1}, {1,-1}};
 }
 
 
@@ -372,23 +372,23 @@ void SpaceTimeFD::GetStencil_UW1a_1D(Stencil &St, double c)
     St.vv_indices = {0, 1, 2, 3};
     St.vu_indices = {4, 5, 6};
     St.u_data = {1.0, 
-									-(4*k*k+1.0)/8.0, // u_i-1 connection
-									-(3.0-4.0*k*k)/4.0, 
-									-(4*k*k+1.0)/8.0, // u_i+1 connection 
-									-k*m_dt/4.0, // v_i-1 connection
-									-m_dt*(2.0-k)/2.0, 
-									-k*m_dt/4.0 }; // v_i+1 connection
+                    -(4*k*k+1.0)/8.0, // u_i-1 connection
+                    -(3.0-4.0*k*k)/4.0, 
+                    -(4*k*k+1.0)/8.0, // u_i+1 connection 
+                    -k*m_dt/4.0, // v_i-1 connection
+                    -m_dt*(2.0-k)/2.0, 
+                    -k*m_dt/4.0 }; // v_i+1 connection
     St.v_data = {1.0, 
-									-k/2.0, // v_i-1 connection
-									-1.0+k,
-									-k/2.0, // v_i+1 connection
-									-k*k/m_dt, // u_i-1 connection
-									2.0*k*k/m_dt, 
-									-k*k/m_dt}; // u_i-1 connection
+                    -k/2.0, // v_i-1 connection
+                    -1.0+k,
+                    -k/2.0, // v_i+1 connection
+                    -k*k/m_dt, // u_i-1 connection
+                     2.0*k*k/m_dt, 
+                    -k*k/m_dt}; // u_i-1 connection
     St.offsets_u = {{0,0}, {-1,-1}, {0,-1}, {1,-1}, 
-														{-1,-1}, {0,-1}, {1,-1}};
+                        {-1,-1}, {0,-1}, {1,-1}};
     St.offsets_v = {{0,0}, {-1,-1}, {0,-1}, {1,-1}, 
-														{-1,-1}, {0,-1}, {1,-1}};
+                        {-1,-1}, {0,-1}, {1,-1}};
 }
 
 
@@ -401,49 +401,47 @@ void SpaceTimeFD::GetStencil_UW2_1D(Stencil &St, double c)
        } 
        throw std::domain_error("Unstable integration scheme.\n");
     }
-		St.uu_indices = {0, 1, 2, 3, 4, 5};
+    St.uu_indices = {0, 1, 2, 3, 4, 5};
     St.uv_indices = {6, 7, 8, 9, 10};
     St.vv_indices = {0, 1, 2, 3, 4, 5};
     St.vu_indices = {6, 7, 8, 9, 10};
-		
-		std::vector<double> gu = { k*k*k/4.0/m_dt,
-															 k*k/m_dt*(1.0 - k),
-															-k*k/2.0/m_dt*(4.0 - 3.0*k),
-															 k*k/m_dt*(1.0 - k),
-															 k*k*k/4.0/m_dt};
-		std::vector<double> gv = {-k/8.0,
-															 k/2.0*(1.0 + k),
-															-k/4.0*(3.0 + 4.0*k),
-															 k/2.0*(1.0 + k),
-															-k/8.0};
-		
-		St.u_data = {1.0,
-									-m_dt/2.0*gu[0], // u_i-2 connection
-									-m_dt/2.0*gu[1],
-									-m_dt/2.0*gu[2]-1.0,
-									-m_dt/2.0*gu[3],
-									-m_dt/2.0*gu[4], // u_i+2 connection
-									-m_dt/2.0*gv[0], // v_i-2 connection
-									-m_dt/2.0*gv[1],
-									-m_dt/2.0*gv[2]-m_dt,
-									-m_dt/2.0*gv[3],
-									-m_dt/2.0*gv[4]}; // v_i+2 connection	
-		St.v_data = {1.0,
-									-gv[0], // v_i-2 connection
-									-gv[1],
-									-gv[2]-1.0,
-									-gv[3],
-									-gv[4], // v_i+2 connection
-									-gu[0], // u_i-2 connection
-									-gu[1],
-									-gu[2],
-									-gu[3],
-									-gu[4]}; // u_i+2 connection
-									
-		St.offsets_u = {{0,0}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1},
-														{-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}};
+        
+    std::vector<double> gu = { k*k*k/4.0/m_dt,
+                                 k*k/m_dt*(1.0 - k),
+                                -k*k/2.0/m_dt*(4.0 - 3.0*k),
+                                 k*k/m_dt*(1.0 - k),
+                                 k*k*k/4.0/m_dt};
+    std::vector<double> gv = {-k/8.0,
+                                 k/2.0*(1.0 + k),
+                                -k/4.0*(3.0 + 4.0*k),
+                                 k/2.0*(1.0 + k),
+                                -k/8.0};
+    St.u_data = {1.0,
+                    -m_dt/2.0*gu[0], // u_i-2 connection
+                    -m_dt/2.0*gu[1],
+                    -m_dt/2.0*gu[2]-1.0,
+                    -m_dt/2.0*gu[3],
+                    -m_dt/2.0*gu[4], // u_i+2 connection
+                    -m_dt/2.0*gv[0], // v_i-2 connection
+                    -m_dt/2.0*gv[1],
+                    -m_dt/2.0*gv[2]-m_dt,
+                    -m_dt/2.0*gv[3],
+                    -m_dt/2.0*gv[4]}; // v_i+2 connection    
+    St.v_data = {1.0,
+                    -gv[0], // v_i-2 connection
+                    -gv[1],
+                    -gv[2]-1.0,
+                    -gv[3],
+                    -gv[4], // v_i+2 connection
+                    -gu[0], // u_i-2 connection
+                    -gu[1],
+                    -gu[2],
+                    -gu[3],
+                    -gu[4]}; // u_i+2 connection                                
+    St.offsets_u = {{0,0}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1},
+                            {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}};
     St.offsets_v = {{0,0}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1},
-														{-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}};		
+                            {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}};        
 }
 
 
@@ -459,41 +457,41 @@ void SpaceTimeFD::GetStencil_UW4_1D(Stencil &St, double c)
     St.uu_indices = {0, 1, 2, 3, 4, 5, 6, 7};
     St.uv_indices = {8, 9, 10, 11, 12, 13, 14};
     St.vv_indices = {0, 1, 2, 3, 4, 5, 6, 7};
-    St.vu_indices = {8, 9, 10, 11, 12, 13, 14};	
-		St.u_data = {1.0,				
-									k*k*k/432.0*( 9.0           - 2.0*k*k), // u_i-3 connection 
-					 				k*k/72.0*(    3.0  - 9.0*k  - 3.0*k*k  + 2.0*k*k*k), 
-									-k*k/144.0*( 96.0 - 45.0*k - 24.0*k*k + 10.0*k*k*k), 
-									-1.0/108.0*(108.0         - 135.0*k*k + 45.0*k*k*k + 27.0*k*k*k*k - 10.0*k*k*k*k*k), 
-									-k*k/144.0*( 96.0 - 45.0*k - 24.0*k*k + 10.0*k*k*k),
-									k*k/72.0*(    3.0  - 9.0*k  - 3.0*k*k  + 2.0*k*k*k),
-									k*k*k/432.0*( 9.0           - 2.0*k*k), // u_i+3 connection
-									-m_dt*k/576.0*(   5.0            -  4.0*k*k), // v_i-3 connection
-									 m_dt*k/864.0*(  45.0  + 12.0*k  - 36.0*k*k  - 8.0*k*k*k), 
-									-m_dt*k/1728.0*(225.0 + 384.0*k - 180.0*k*k - 64.0*k*k*k), 
-									-m_dt/144.0*(   144.0  - 25.0*k  - 60.0*k*k + 20.0*k*k*k + 8.0*k*k*k*k), 
-									-m_dt*k/1728.0*(225.0 + 384.0*k - 180.0*k*k - 64.0*k*k*k),
-									 m_dt*k/864.0*(  45.0  + 12.0*k  - 36.0*k*k  - 8.0*k*k*k), 
-									-m_dt*k/576.0*(   5.0             - 4.0*k*k)}; // v_i+3 connection
-		St.v_data = {1.0,		
-									-k/288.0*(  5.0           - 8.0*k*k), // v_i-3 connection
-									 k/48.0*(   5.0  + 2.0*k  - 8.0*k*k  - 2.0*k*k*k), 
-									-k/96.0*(  25.0 + 64.0*k - 40.0*k*k - 16.0*k*k*k), 
-									-1.0/72.0*(72.0 - 25.0*k - 90.0*k*k + 40.0*k*k*k + 18.0*k*k*k*k), 
-									-k/96.0*(  25.0 + 64.0*k - 40.0*k*k - 16.0*k*k*k), 
-									 k/48.0*(   5.0  + 2.0*k  - 8.0*k*k  - 2.0*k*k*k), 
-									-k/288.0*(  5.0           - 8.0*k*k), // v_i+3 connection
-						 			 k*k*k/48.0/m_dt*(3.0               - k*k), // u_i-3 connection
-					 				 k*k/24.0/m_dt*(  2.0  - 9.0*k  - 4.0*k*k +  3.0*k*k*k), 
-									-k*k/48.0/m_dt*( 64.0 - 45.0*k - 32.0*k*k + 15.0*k*k*k), 
-									 k*k/12.0/m_dt*( 30.0 - 15.0*k - 12.0*k*k +  5.0*k*k*k), 
-									-k*k/48.0/m_dt*( 64.0 - 45.0*k - 32.0*k*k + 15.0*k*k*k), 
-									 k*k/24.0/m_dt*(  2.0  - 9.0*k  - 4.0*k*k +  3.0*k*k*k), 
-									 k*k*k/48.0/m_dt*(3.0               - k*k)}; // u_i+3 connection
-		St.offsets_u = {{0,0}, {-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1},
-													{-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1}};
+    St.vu_indices = {8, 9, 10, 11, 12, 13, 14};    
+    St.u_data = {1.0,                
+                     k*k*k/432.0*( 9.0           - 2.0*k*k), // u_i-3 connection 
+                     k*k/72.0*(    3.0  - 9.0*k  - 3.0*k*k  + 2.0*k*k*k), 
+                    -k*k/144.0*( 96.0 - 45.0*k - 24.0*k*k + 10.0*k*k*k), 
+                    -1.0/108.0*(108.0         - 135.0*k*k + 45.0*k*k*k + 27.0*k*k*k*k - 10.0*k*k*k*k*k), 
+                    -k*k/144.0*( 96.0 - 45.0*k - 24.0*k*k + 10.0*k*k*k),
+                     k*k/72.0*(    3.0  - 9.0*k  - 3.0*k*k  + 2.0*k*k*k),
+                     k*k*k/432.0*( 9.0           - 2.0*k*k), // u_i+3 connection
+                    -m_dt*k/576.0*(   5.0            -  4.0*k*k), // v_i-3 connection
+                     m_dt*k/864.0*(  45.0  + 12.0*k  - 36.0*k*k  - 8.0*k*k*k), 
+                    -m_dt*k/1728.0*(225.0 + 384.0*k - 180.0*k*k - 64.0*k*k*k), 
+                    -m_dt/144.0*(   144.0  - 25.0*k  - 60.0*k*k + 20.0*k*k*k + 8.0*k*k*k*k), 
+                    -m_dt*k/1728.0*(225.0 + 384.0*k - 180.0*k*k - 64.0*k*k*k),
+                     m_dt*k/864.0*(  45.0  + 12.0*k  - 36.0*k*k  - 8.0*k*k*k), 
+                    -m_dt*k/576.0*(   5.0             - 4.0*k*k)}; // v_i+3 connection
+    St.v_data = {1.0,        
+                    -k/288.0*(  5.0           - 8.0*k*k), // v_i-3 connection
+                     k/48.0*(   5.0  + 2.0*k  - 8.0*k*k  - 2.0*k*k*k), 
+                    -k/96.0*(  25.0 + 64.0*k - 40.0*k*k - 16.0*k*k*k), 
+                    -1.0/72.0*(72.0 - 25.0*k - 90.0*k*k + 40.0*k*k*k + 18.0*k*k*k*k), 
+                    -k/96.0*(  25.0 + 64.0*k - 40.0*k*k - 16.0*k*k*k), 
+                     k/48.0*(   5.0  + 2.0*k  - 8.0*k*k  - 2.0*k*k*k), 
+                    -k/288.0*(  5.0           - 8.0*k*k), // v_i+3 connection
+                     k*k*k/48.0/m_dt*(3.0               - k*k), // u_i-3 connection
+                     k*k/24.0/m_dt*(  2.0  - 9.0*k  - 4.0*k*k +  3.0*k*k*k), 
+                    -k*k/48.0/m_dt*( 64.0 - 45.0*k - 32.0*k*k + 15.0*k*k*k), 
+                     k*k/12.0/m_dt*( 30.0 - 15.0*k - 12.0*k*k +  5.0*k*k*k), 
+                    -k*k/48.0/m_dt*( 64.0 - 45.0*k - 32.0*k*k + 15.0*k*k*k), 
+                     k*k/24.0/m_dt*(  2.0  - 9.0*k  - 4.0*k*k +  3.0*k*k*k), 
+                     k*k*k/48.0/m_dt*(3.0               - k*k)}; // u_i+3 connection
+    St.offsets_u = {{0,0}, {-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1},
+                            {-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1}};
     St.offsets_v = {{0,0}, {-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1},
-													{-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1}};
+                            {-3,-1}, {-2,-1}, {-1,-1}, {0,-1}, {1,-1}, {2,-1}, {3,-1}};
 }
 
 
@@ -578,10 +576,10 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double, double),
                             HYPRE_SSTRUCT_VARIABLE_CELL };
     HYPRE_SStructGridSetVariables(m_grid, 0, 2, vartypes);
 
-	/* ------------------------------------------------------------------
+    /* ------------------------------------------------------------------
     *                  Add periodic boundary conditions
     * ---------------------------------------------------------------- */
-	// Set periodic on *all* processors
+    // Set periodic on *all* processors
     std::vector<int> periodic(m_dim,0);
     periodic[0] = m_globx; // periodic in x
     if (m_dim == 3) {
