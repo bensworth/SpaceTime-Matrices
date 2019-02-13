@@ -28,8 +28,8 @@ def u0(x):
 def u_dalambert(t, x, c):
 	return 0.5*(u0(x - c*t) + u0(x + c*t))
 	
-Tmax = 0.5
-nx =20
+Tmax = 0.6
+nx = 16
 cx = 0.5
 CFL_safety = 0.5
 
@@ -47,10 +47,9 @@ def u0_wrapper(xi):
 ### --------------- 1st-order scheme (1a) --------------- ###
 scheme = "UW1a"
 dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
+dt = 0.25
 t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
 nt = t.shape[0]
-nt = 10
-dt = 1.0/nt
 print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
 print("{}: assembling...\n".format(scheme))
 A, b = buw.get_UW1a_1D(nt, dt, nx, hx, cx, u0_wrapper)
@@ -62,14 +61,15 @@ print("{}: solving...\n".format(scheme))
 
 # plt.plot(x, u[nx*(nt-1)::], label = scheme)
 
+matpath = "..//FD_class/Apy_UW1a.npz"
+save_npz(matpath, A)
 
 ### --------------- 1st-order scheme --------------- ###
 scheme = "UW1"
 dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
+dt = 0.25
 t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
 nt = t.shape[0]
-nt = 10
-dt = 1.0/nt
 print("lambda = {:.5f}".format(cx*dt/hx))
 print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
 print("{}: assembling...\n".format(scheme))
@@ -82,41 +82,46 @@ print("{}: solving...\n".format(scheme))
 
 # plt.plot(x, u[nx*(nt-1)::], label = scheme)
 
-matpath = "..//FD_class/Apy.npz"
+matpath = "..//FD_class/Apy_UW1.npz"
 save_npz(matpath, A)
 # 
 # ### --------------- 2nd-order scheme --------------- ###
-# scheme = "UW2"
-# dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
-# t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
-# nt = t.shape[0]
-# print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
-# print("{}: assembling...\n".format(scheme))
-# A, b = buw.get_UW2_1D(nt, dt, nx, hx, cx, u0_wrapper)
-# A = A.tocsr()
-# print("{}: solving...\n".format(scheme))
-# z = spsolve_triangular(A, b, lower = True)
-# u = z[0::2].copy()
-# #v = z[1::2].copy()
-# 
-# plt.plot(x, u[nx*(nt-1)::], label = scheme)
-# 
-# 
-# ### --------------- 4th-order scheme --------------- ###
-# scheme = "UW4"
-# dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
-# t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
-# nt = t.shape[0]
-# print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
-# print("{}: assembling...\n".format(scheme))
-# A, b = buw.get_UW4_1D(nt, dt, nx, hx, cx, u0_wrapper)
-# A = A.tocsr()
-# print("{}: solving...\n".format(scheme))
-# z = spsolve_triangular(A, b, lower = True)
-# u = z[0::2].copy()
-# #v = z[1::2].copy()
-# 
-# plt.plot(x, u[nx*(nt-1)::], label = scheme)
+scheme = "UW2"
+dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
+dt = 0.25
+t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
+nt = t.shape[0]
+print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
+print("{}: assembling...\n".format(scheme))
+A, b = buw.get_UW2_1D(nt, dt, nx, hx, cx, u0_wrapper)
+A = A.tocsr()
+print("{}: solving...\n".format(scheme))
+z = spsolve_triangular(A, b, lower = True)
+u = z[0::2].copy()
+#v = z[1::2].copy()
+
+plt.plot(x, u[nx*(nt-1)::], label = scheme)
+matpath = "..//FD_class/Apy_UW2.npz"
+save_npz(matpath, A)
+
+### --------------- 4th-order scheme --------------- ###
+scheme = "UW4"
+dt = CFL_safety * buw.get_CFL_limit_1d(scheme, hx, cx)
+dt = 0.25
+t = dt*np.arange(0, np.ceil(Tmax/dt)+1)
+nt = t.shape[0]
+print("{}: nt = {}, dt = {:.2e}, nx = {}, hx = {:.2e}, cx = {}\n".format(scheme, nt, dt, nx, hx, cx))
+print("{}: assembling...\n".format(scheme))
+A, b = buw.get_UW4_1D(nt, dt, nx, hx, cx, u0_wrapper)
+A = A.tocsr()
+print("{}: solving...\n".format(scheme))
+z = spsolve_triangular(A, b, lower = True)
+u = z[0::2].copy()
+#v = z[1::2].copy()
+
+plt.plot(x, u[nx*(nt-1)::], label = scheme)
+matpath = "..//FD_class/Apy_UW4.npz"
+save_npz(matpath, A)
 # 
 # 
 # # Get exact solution

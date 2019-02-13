@@ -95,9 +95,9 @@ v_{i+1}
 \end{align}
 Stability condition is
 \begin{align}
-\Delta t \leq \frac{h_x}{2 c}.
+\Delta t \leq \frac{1 + \sqrt{5}}{4} \frac{h_x}{c} \approx 0.809 \frac{h_x}{c}
 \end{align}
-But I don't understand this... They give this stability condition in the sentence where they introduce the scheme, but then in the paragraph following it they say the scheme is stable if $\Delta t \leq (1 + \sqrt{5})/4 h_x /c \approx 0.809 h_x /c$... Maybe in this first instance they're not saying that's the stability of the scheme, but that's the part of the domain where the scheme applies or something.
+But I don't understand this... They give this stability condition in the sentence where they introduce the scheme as $\Delta t \leq h_x/(2c )$, but then in the paragraph following it they say the scheme is stable if $\Delta t \leq (1 + \sqrt{5})/4 h_x /c \approx 0.809 h_x /c$... Maybe in this first instance they're not saying that's the stability of the scheme, but that's the part of the domain where the scheme applies or something.
 %%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
@@ -236,8 +236,8 @@ u_{i}^{n+1} &=
 -\tfrac{\lambda^2}{72} (3 - 9 \lambda - 3 \lambda^2 + 2 \lambda^3) \\
 \tfrac{\lambda^2}{144} (96 - 45 \lambda - 24 \lambda^2 + 10 \lambda^3) \\
 \tfrac{1}{108} (108 - 135 \lambda^2 +45 \lambda^3 + 27 \lambda^4 -10 \lambda^5) \\  
+\tfrac{\lambda^2}{144} (96 - 45 \lambda - 24 \lambda^2 + 10 \lambda^3) \\
 -\tfrac{\lambda^2}{72} (3 - 9 \lambda - 3 \lambda^2 + 2 \lambda^3) \\
--\tfrac{c \lambda}{24 h_x} (2 - 9 \lambda - 4 \lambda^2 + 3 \lambda^3) \\
 -\tfrac{\lambda^3}{432}(9 -2 \lambda^2)
 \end{bmatrix}^\top
 \begin{bmatrix}

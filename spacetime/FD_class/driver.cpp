@@ -142,7 +142,8 @@ int main(int argc, char *argv[])
     std::cout << t1 << "\n";
 
     SpaceTimeFD matrix(MPI_COMM_WORLD, nt_loc, nx_loc, Pt, Px, x0, x1, t0, t1);
-    matrix.Wave1D(IC_u, IC_v, c);
+    int order = 1;
+		matrix.Wave1D(IC_u, IC_v, c, order);
     matrix.SetAMGParameters(AMG);
     if (use_gmres) {
         matrix.SolveGMRES();

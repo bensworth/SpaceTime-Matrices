@@ -3,11 +3,17 @@ from scipy.sparse import csr_matrix, coo_matrix
 import numpy as np
 import matplotlib.pyplot as plt
 import pdb
-
+from numpy.linalg import norm
 from scipy.sparse import load_npz
 
-A_hypre_path = "./A_hypre.mm"
-A_py_path    = "./Apy.npz"
+A_hypre_path = "./A_hypre_UW1a.mm"
+A_py_path    = "./Apy_UW1a.npz"
+# A_hypre_path = "./A_hypre_UW1.mm"
+# A_py_path    = "./Apy_UW1.npz"
+# A_hypre_path = "./A_hypre_UW2.mm"
+# A_py_path    = "./Apy_UW2.npz"
+# A_hypre_path = "./A_hypre_UW4.mm"
+# A_py_path    = "./Apy_UW4.npz"
 
 # Get row/col numbers from first line of HYPRE out file.
 with open(A_hypre_path) as f:
@@ -24,7 +30,7 @@ print(A_hypre.shape, A_hypre.nnz)
 
 plt.figure(1)
 #plt.spy(A_hypre)
-A_hypre = np.abs(A_hypre)
+#A_hypre = np.abs(A_hypre)
 plt.imshow(A_hypre.todense())
 plt.title("HYPRE")
 plt.colorbar()
@@ -34,7 +40,7 @@ plt.colorbar()
 A_py = load_npz(A_py_path)
 A_py.data[np.abs(A_py.data)<1e-15] = 0.0
 A_py.eliminate_zeros()
-A_py = np.abs(A_py)
+#A_py = np.abs(A_py)
 print(A_py.shape, A_py.nnz)
 plt.figure(2)
 #plt.spy(A_py)
@@ -70,14 +76,23 @@ plt.imshow(A_hypre.todense())
 plt.title("Permuted HYPRE")
 plt.colorbar()
 
-plt.show()
-
-
 test = A_hypre - A_py
 test.data[np.abs(test.data)<1e-14] = 0
 test.eliminate_zeros()
+plt.figure(4)
+test = np.abs(test)
+test.data = np.log10(test.data)
+plt.imshow(test.todense())
+plt.title("Permuted HYPRE - Python")
+plt.colorbar()
+print("||test|| = {:.3e}".format(norm(test.data)))
 
-pdb.set_trace()
+plt.show()
+
+
+
+
+#pdb.set_trace()
 
  
 # print(A_hypre.data - A_py.data)
