@@ -22,19 +22,18 @@ double IC_v(double x, double y)
 }
 
 
-// AMG_parameters {
-//     double distance_R;
-//     std::string prerelax;
-//     std::string postrelax;
-//     int interp_type;
-//     int relax_type;
-//     int coarsen_type;
-//     double strength_tolC;
-//     double strength_tolR;
-//     double filter_tolR;
-//     double filter_tolA;
-//     int cycle_type;
-// };
+// AMG_parameters:
+//  + double distance_R;
+//  + std::string prerelax;
+//  + std::string postrelax;
+//  + int interp_type;
+//  + int relax_type;
+//  + int coarsen_type;
+//  + double strength_tolC;
+//  + double strength_tolR;
+//  + double filter_tolR;
+//  + double filter_tolA;
+//  + int cycle_type;
 
 
 int main(int argc, char *argv[])
@@ -68,6 +67,7 @@ int main(int argc, char *argv[])
     int Pt = numProcess;
     int Px = 1;
     int Py = 1;
+    int order = 1;
 
     int arg_index = 0;
     while (arg_index < argc) {
@@ -75,11 +75,11 @@ int main(int argc, char *argv[])
             arg_index++;
             nx_loc = atoi(argv[arg_index++]);
         }
-        if ( strcmp(argv[arg_index], "-ny") == 0 ) {
+        else if ( strcmp(argv[arg_index], "-ny") == 0 ) {
             arg_index++;
             ny_loc = atoi(argv[arg_index++]);
         }
-        if ( strcmp(argv[arg_index], "-nt") == 0 ) {
+        else if ( strcmp(argv[arg_index], "-nt") == 0 ) {
             arg_index++;
             nt_loc = atoi(argv[arg_index++]);
         }
@@ -94,6 +94,10 @@ int main(int argc, char *argv[])
         else if ( strcmp(argv[arg_index], "-Pt") == 0 ) {
             arg_index++;
             Pt = atoi(argv[arg_index++]);
+        }
+        else if ( strcmp(argv[arg_index], "-o") == 0 ) {
+            arg_index++;
+            order = atoi(argv[arg_index++]);
         }
         else if ( strcmp(argv[arg_index], "-dt") == 0 ) {
             arg_index++;
@@ -142,8 +146,7 @@ int main(int argc, char *argv[])
     std::cout << t1 << "\n";
 
     SpaceTimeFD matrix(MPI_COMM_WORLD, nt_loc, nx_loc, Pt, Px, x0, x1, t0, t1);
-    int order = 1;
-		matrix.Wave1D(IC_u, IC_v, c, order);
+	matrix.Wave1D(IC_u, IC_v, c, order);
     matrix.SetAMGParameters(AMG);
     if (use_gmres) {
         matrix.SolveGMRES();
