@@ -6,24 +6,55 @@
 using namespace mfem;
 
 
+Vector mesh_min;
+Vector mesh_max;
+
 double sigma_function(const Vector &x) {
-    int dim = x.Size();
-    double scale = 1e-4;
-    if (dim == 2) {
-        double x1 = x(0);
-        double x2 = x(1);
-        double val_abs = x1*x2 + x1*x1 + 1.;
-        return scale*val_abs;
-    }
-    else {
-        double x1 = x(0);
-        double x2 = x(1);
-        double x3 = x(2);
-        double val_abs = x1*x2 + x1*x1 + 1.;
-        return scale*val_abs;
-    }
+    return 0.0;
+    // int dim = x.Size();
+    // double scale = 1e-4;
+    // if (dim == 2) {
+    //     double x1 = x(0);
+    //     double x2 = x(1);
+    //     double val_abs = x1*x2 + x1*x1 + 1.;
+    //     return scale*val_abs;
+    // }
+    // else {
+    //     double x1 = x(0);
+    //     double x2 = x(1);
+    //     double x3 = x(2);
+    //     double val_abs = x1*x2 + x1*x1 + 1.;
+    //     return scale*val_abs;
+    // }
 }
 
+// Return top-hat like area close to x-border and slightly off of y border
+double initCond(const Vector &x) {
+
+    int dim = x.Size();
+    if (dim == 2) {
+        double x0 = x(0);
+        double x1 = x(1);
+        double s0 = (mesh_max(0) - mesh_min(0));
+        double s1 = (mesh_max(1) - mesh_min(1));
+        if (x0 > mesh_min(0) && x0 < mesh_max(0)/10.0 &&
+            x1 > (mesh_min(1) + s1/10.0) && x1 < (mesh_min(1) + s1/5.0) ) {
+            return 200.0;
+        }
+        else {
+            return 0.0;
+        }
+    }
+    else {
+        double x0 = x(0);
+        double x1 = x(1);
+        double x2 = x(2);
+        return 0;
+    }   
+}
+
+// TODO : allow for this to support time-dependent rhs??
+// double Q_function(const Vector &x, double t) {
 double Q_function(const Vector &x) {
     int dim = x.Size();
     // if (dim == 2) {
@@ -48,13 +79,14 @@ double Q_function(const Vector &x) {
 }
 
 
+// Zero inflow boundaries
 double inflow_function(const Vector &x) {
     int dim = x.Size();
     if (dim == 2) {
-        return 1;
+        return 0.0;
     }
     else {
-        return 1;
+        return 0.0;
     }
 }
 
@@ -66,6 +98,8 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_refLevels = 1;
     m_lumped = false;
     m_dim = 2;
+    m_basis_type = 1;
+    m_is_refined = false;
 
     /* Define angle of flow, coefficients and integrators */
     // TODO: change this to support moving flow, i.e., FunctionCoefficient instead
@@ -83,6 +117,17 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_omega(1) = sin(theta1)*sin(theta2);       
         m_omega(1) = cos(theta1);       
     }
+
+    if (m_dim == 2) {
+        // m_mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+        m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
+    }
+    else {
+        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
+        m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
+    }
+    m_mesh->GetBoundingBox(mesh_min,mesh_max);
 }
 
 
@@ -93,6 +138,8 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 {
     m_lumped = false;
     m_dim = 2;
+    m_basis_type = 1;
+    m_is_refined = false;
 
     /* Define angle of flow, coefficients and integrators */
     m_omega.SetSize(m_dim);
@@ -108,6 +155,17 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_omega(1) = sin(theta1)*sin(theta2);       
         m_omega(1) = cos(theta1);       
     }
+
+    if (m_dim == 2) {
+        // m_mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+        m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
+    }
+    else {
+        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
+        m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
+    }
+    m_mesh->GetBoundingBox(mesh_min,mesh_max);
 }
 
 
@@ -117,6 +175,8 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}
 {
     m_dim = 2;
+    m_basis_type = 1;
+    m_is_refined = false;
 
     /* Define angle of flow, coefficients and integrators */
     m_omega.SetSize(m_dim);
@@ -132,8 +192,24 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_omega(1) = sin(theta1)*sin(theta2);       
         m_omega(1) = cos(theta1);       
     }
+
+    if (m_dim == 2) {
+        // m_mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
+        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+        m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
+    }
+    else {
+        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
+        m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
+    }
+    m_mesh->GetBoundingBox(mesh_min,mesh_max);
 }
 
+
+DGadvection::~DGadvection()
+{
+    delete m_mesh;
+}
 
 void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
                                            int* &A_colinds, double* &A_data, double* &B,
@@ -141,7 +217,6 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
                                            int &spatialDOFs, double t, int &bsize)
 {
     int meshOrder  = m_order;
-    int basis_type = 1;
     if (m_dim == 2) {
         bsize = (m_order+1)*(m_order+1);
     }
@@ -149,24 +224,18 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
         bsize = (m_order+1)*(m_order+1)*(m_order+1);
     }
 
-    /* Set up a curved mesh and a finite element space */
-    std::string mesh_file;
-    if (m_dim == 2) {
-        // mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
-        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
-    }
-    else {
-        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
-    }
-    Mesh mesh(mesh_file.c_str(), 1, 1);
-    for (int lev = 0; lev<std::min(3,m_refLevels); lev++) {
-        mesh.UniformRefinement();
+    /* Set up mesh and a finite element space */
+    if (!m_is_refined) {
+        for (int lev = 0; lev<std::min(3,m_refLevels); lev++) {
+            m_mesh->UniformRefinement();
+        }
+        m_is_refined = true;
     }
 
-    DG_FECollection fec(m_order, m_dim, basis_type);
+    DG_FECollection fec(m_order, m_dim, m_basis_type);
 
     /* Define a parallel mesh by partitioning the serial mesh. */
-    ParMesh pmesh(spatialComm, mesh);
+    ParMesh pmesh(spatialComm, *m_mesh);
     for (int lev = 0; lev<m_refLevels-3; lev++) {
       pmesh.UniformRefinement();
     }
@@ -268,7 +337,6 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
                                            double* &A_data, double* &B, double* &X,
                                            int &spatialDOFs, double t, int &bsize)
 {
-    int basis_type = 1;
     if (m_dim == 2) {
         bsize = (m_order+1)*(m_order+1);
     }
@@ -276,22 +344,16 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
         bsize = (m_order+1)*(m_order+1)*(m_order+1);    
     }
 
-    /* Set up a curved mesh and a finite element space */
-    std::string mesh_file;
-    if (m_dim == 2) {
-        // mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
-        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
-    }
-    else {
-        mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
-    }
-    Mesh mesh(mesh_file.c_str(), 1, 1);
-    for (int lev = 0; lev<m_refLevels; lev++) {
-        mesh.UniformRefinement();
+    /* Set up mesh and a finite element space */
+    if (!m_is_refined) {
+        for (int lev = 0; lev<m_refLevels; lev++) {
+            m_mesh->UniformRefinement();
+        }
+        m_is_refined = true;
     }
 
-    DG_FECollection fec(m_order, m_dim, basis_type);
-    FiniteElementSpace fes(&mesh, &fec);
+    DG_FECollection fec(m_order, m_dim, m_basis_type);
+    FiniteElementSpace fes(m_mesh, &fec);
 
     // Define functions and coefficients 
     FunctionCoefficient inflow_coeff(inflow_function);
@@ -347,7 +409,7 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
     }
 
     double temp0, temp1;
-    mesh.GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
+    m_mesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
 
     delete bl_form;
     delete l_form; 
@@ -372,5 +434,69 @@ void DGadvection::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data
 }
 
 
+void DGadvection::addInitialCondition(double *B)
+{
+    /* Set up mesh and a finite element space */
+    if (!m_is_refined) {
+        for (int lev = 0; lev<m_refLevels; lev++) {
+            m_mesh->UniformRefinement();
+        }
+        m_is_refined = true;
+    }
+    DG_FECollection fec(m_order, m_dim, m_basis_type);
+    FiniteElementSpace fes(m_mesh, &fec);
+
+    // Define functions and coefficients 
+    FunctionCoefficient IC(initCond);  
+
+    /* Form the right-hand side */
+    FunctionCoefficient inflow_coeff(inflow_function);
+    VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
+    LinearForm *l_form = new LinearForm(&fes);
+    l_form -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
+    l_form -> AddDomainIntegrator(new DomainLFIntegrator(IC));
+    l_form -> Assemble();
+
+    for (int i=0; i<l_form->Size(); i++) {
+        B[i] = l_form->Elem(i);
+    }
+    delete l_form;
+}
+
+
+void DGadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B)
+{
+    /* Set up mesh and a finite element space */
+    if (!m_is_refined) {
+        for (int lev = 0; lev<m_refLevels; lev++) {
+            m_mesh->UniformRefinement();
+        }
+        m_is_refined = true;
+    }
+    DG_FECollection fec(m_order, m_dim, m_basis_type);
+
+    /* Define a parallel mesh by partitioning the serial mesh. */
+    ParMesh pmesh(spatialComm, *m_mesh);
+    for (int lev = 0; lev<m_refLevels-3; lev++) {
+      pmesh.UniformRefinement();
+    }
+    ParFiniteElementSpace pfes(&pmesh, &fec);
+
+    // Define functions and coefficients 
+    FunctionCoefficient IC(initCond);  
+
+    /* Form the right-hand side */
+    FunctionCoefficient inflow_coeff(inflow_function);
+    VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega);
+    ParLinearForm *l_form = new ParLinearForm(&pfes);
+    l_form -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
+    l_form -> AddDomainIntegrator(new DomainLFIntegrator(IC));
+    l_form -> Assemble();
+
+    for (int i=0; i<l_form->Size(); i++) {
+        B[i] = l_form->Elem(i);
+    }
+    delete l_form;
+}
 
 

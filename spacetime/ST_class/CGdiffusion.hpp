@@ -28,7 +28,8 @@ private:
                                   double *&B, double *&X, int &spatialDOFs, double t,
                                   int &bsize);
 	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
-    // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t);
+    void addInitialCondition(const MPI_Comm &spatialComm, double *B) { };
+    void addInitialCondition(double *B) { };
 
 public:
 

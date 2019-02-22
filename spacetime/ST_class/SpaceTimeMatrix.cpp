@@ -493,7 +493,8 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;
     int procNnz = m_ntPerProc * (M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
-    if (tInd0 == 0) procNnz -= M_rowptr[spatialDOFs];
+    // Account for only identity at time t=0
+    if (tInd0 == 0) procNnz -= (M_rowptr[spatialDOFs] + nnzPerTime - spatialDOFs);
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -523,41 +524,24 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
         int colPlusDiag  = ti*spatialDOFs;
         std::map<int, double>::iterator it;
 
-        // At time t=0, only have spatial discretization block
+        // At time t=0, have fixed initial condition. Set matrix to identity
+        // and fix RHS and initial guess to ICs.
         if (ti == 0) {
             
+            // Add initial condition to rhs
+            addInitialCondition(B);
+
             // Loop over each row in spatial discretization at time ti
             for (int i=0; i<spatialDOFs; i++) {
 
-                std::map<int, double> entries;
-
-                // Get row of mass matrix
-                for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                    entries[M_colinds[j]] += M_data[j];
-                }
-
-                // Get row of spatial discretization
-                for (int j=T_rowptr[i]; j<T_rowptr[i+1]; j++) {
-                    entries[T_colinds[j]] += T_data[j];
-                }
-
-                // Add spatial discretization and mass matrix to global matrix
-                for (it=entries.begin(); it!=entries.end(); it++) {
-                    if (std::abs(it->second) > 1e-16) {
-                        colinds[dataInd] = colPlusDiag + it->first;
-                        data[dataInd] = it->second;
-                        dataInd += 1;
-                    }
-                }
-
-                // Add right hand side and initial guess for this row to global problem
-                B[thisRow] = B0[i];
-                X[thisRow] = X0[i];
-
-                // Total nonzero for this row on processor is one for off-diagonal block
-                // and the total nnz in this row of T (T_rowptr[i+1] - T_rowptr[i]).
+                colinds[dataInd] = i;
+                data[dataInd] = 1.0;
+                dataInd += 1;
                 rowptr[thisRow+1] = dataInd;
                 thisRow += 1;
+
+                // Set solution equal to initial condition
+                X[thisRow] = B[i];
             }
         }
         else {
@@ -655,7 +639,8 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;
     int procNnz = m_ntPerProc * (M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
-    if (tInd0 == 0) procNnz -= nnzPerTime;
+    // Account for only identity at time t=0
+    if (tInd0 == 0) procNnz -= (M_rowptr[spatialDOFs] + nnzPerTime - spatialDOFs);
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -685,28 +670,24 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
         int colPlusDiag  = ti*spatialDOFs;
         std::map<int, double>::iterator it;
 
-        // At time t=0, only have identity block on diagonal
+        // At time t=0, have fixed initial condition. Set matrix to identity
+        // and fix RHS and initial guess to ICs.
         if (ti == 0) {
             
+            // Add initial condition to rhs
+            addInitialCondition(B);
+
             // Loop over each row in spatial discretization at time ti
             for (int i=0; i<spatialDOFs; i++) {
-                
-                // Add mass matrix as diagonal block, M/dt
-                for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                    if (std::abs(M_data[j]) > 1e-16) {
-                        colinds[dataInd] = colPlusDiag + M_colinds[j];
-                        data[dataInd] = M_data[j];
-                        dataInd += 1;
-                    }
-                }
 
-                // Assume user implements boundary conditions to rhs
-                B[thisRow] = 0.0;
-                X[thisRow] = X0[i];
-
-                // One nonzero for this row
+                colinds[dataInd] = i;
+                data[dataInd] = 1.0;
+                dataInd += 1;
                 rowptr[thisRow+1] = dataInd;
                 thisRow += 1;
+
+                // Set solution equal to initial condition
+                X[thisRow] = B[i];
             }
         }
         else {
@@ -800,7 +781,7 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
     // Get number nnz on this processor.
     int procNnz;
-    if (m_timeInd == 0) procNnz = nnzPerTime;
+    if (m_timeInd == 0) procNnz = procRows;
     else procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
 
     // Allocate CSR structure.
@@ -820,35 +801,25 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     // OLD - I think this was incorrect -- Mass matrix and spatial matrix have
     //      column indices global w.r.t. the spatial discretization
 
-    // At time t=0, only have spatial discretization block
+    // At time t=0, have fixed initial condition. Set matrix to identity
+    // and fix RHS and initial guess to ICs.
     if (m_timeInd == 0) {
         
+        // Add initial condition to rhs
+        // addInitialCondition(m_spatialComm, B);
+
         // Loop over each on-processor row in spatial discretization at time m_timeInd
         for (int i=0; i<procRows; i++) {
-            std::map<int, double> entries;
 
-            // Get row of mass matrix
-            for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                entries[M_colinds[j]] += M_data[j];
-            }
-
-            // Get row of spatial discretization
-            for (int j=T_rowptr[i]; j<T_rowptr[i+1]; j++) {
-                entries[T_colinds[j]] += T_data[j];
-            }
-
-            // Add spatial discretization and mass matrix to global matrix
-            for (it=entries.begin(); it!=entries.end(); it++) {
-                if (std::abs(it->second) > 1e-16) {
-                    colinds[dataInd] = colPlusDiag + it->first;
-                    data[dataInd] = it->second;
-                    dataInd += 1;
-                }
-            }
-
-            // Total nonzero for this row on processor is one for off-diagonal block
-            // and the total nnz in this row of T (T_rowptr[i+1] - T_rowptr[i]).
+            colinds[dataInd] = localMinRow + i;
+            data[dataInd] = 1.0;
+            dataInd += 1;
             rowptr[i+1] = dataInd;
+            i += 1;
+
+            // Set solution equal to initial condition
+            // X[i] = B[i];
+            // X[i] = 0.0;
         }
     }
     else {
@@ -941,7 +912,7 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     int procNnz;
-    if (m_timeInd == 0) procNnz = (M_rowptr[procRows] - M_rowptr[0]);
+    if (m_timeInd == 0) procNnz = spatialDOFs;
     else procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
 
     // Allocate CSR structure.
@@ -961,23 +932,24 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     int colPlusDiag = m_timeInd*spatialDOFs;
     std::map<int, double>::iterator it;
 
-    // At time t=0, only have identity block on diagonal
+    // At time t=0, have fixed initial condition. Set matrix to identity
+    // and fix RHS and initial guess to ICs.
     if (m_timeInd == 0) {
         
-        // Loop over each row in spatial discretization at time ti
+        // Add initial condition to rhs
+        addInitialCondition(m_spatialComm, B);
+
+        // Loop over each on-processor row in spatial discretization at time m_timeInd
         for (int i=0; i<procRows; i++) {
 
-            // Add mass matrix as diagonal block, M/dt
-            for (int j=M_rowptr[i]; j<M_rowptr[i+1]; j++) {                
-                if (std::abs(M_data[j]) > 1e-16) {
-                    colinds[dataInd] = colPlusDiag + M_colinds[j];
-                    data[dataInd] = M_data[j];
-                    dataInd += 1;
-                }
-            }
-
-            // One nonzero for this row
+            colinds[dataInd] = localMinRow + i;
+            data[dataInd] = 1.0;
+            dataInd += 1;
             rowptr[i+1] = dataInd;
+            i += 1;
+
+            // Set solution equal to initial condition
+            X[i] = B[i];
         }
     }
     else {

@@ -16,10 +16,14 @@ class DGadvection : public SpaceTimeMatrix
 private:
 
 	bool m_lumped;
+    bool m_is_refined;
+    bool m_is_prefined;
 	int m_refLevels;
 	int m_order;
+    int m_basis_type;
 	int m_dim;
 	Vector m_omega;
+    Mesh* m_mesh;
 
 	void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,
@@ -28,14 +32,9 @@ private:
 	void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
                                   double *&B, double *&X, int &spatialDOFs, double t,
                                   int &bsize);
-	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
-    // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t);
-
-	// double sigma_function(const Vector &x);
-
-	// double Q_function(const Vector &x);
-	
-	// double inflow_function(const Vector &x);
+	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);    
+    void addInitialCondition(const MPI_Comm &spatialComm, double *B);
+    void addInitialCondition(double *B);
 
 public:
 
@@ -45,6 +44,6 @@ public:
 				double dt, int refLevels, int order);
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				double dt, int refLevels, int order, bool lumped);
-    ~DGadvection() { };
+    ~DGadvection();
 
 };

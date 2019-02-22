@@ -8,7 +8,7 @@ using namespace mfem;
 
 // Sample command line:
 //  srun -n 240 ./driver -s 2 -l 6 -nt 40 -t 31 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.0025 -lump 0
-
+//      - Should lump when using explicit
 
 int main(int argc, char *argv[])
 {
@@ -31,7 +31,7 @@ int main(int argc, char *argv[])
     int print_level  = 3;
     int timeDisc     = 11;
     int spatialDisc  = 1;
-    int max_iter     = 100;
+    int max_iter     = 250;
     double dt        = -1;
     int lump_mass    = false;
     int AMGiters = 1;
