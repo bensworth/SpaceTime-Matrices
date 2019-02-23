@@ -2,6 +2,9 @@
 #include <fstream>
 #include <map>
 #include <algorithm>
+#include <cstdio>
+#include <ctime>
+#include <chrono>
 #include "SpaceTimeMatrix.hpp"
 
 // TODO:
@@ -400,12 +403,18 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel)
         HYPRE_ParVector b_s;
         hypre_ParvecBdiagInvScal(m_b, m_bsize, &b_s, m_A);
 
+        auto wcts = std::chrono::system_clock::now();
         HYPRE_BoomerAMGSetup(m_solver, A_s, b_s, m_x);
         HYPRE_BoomerAMGSolve(m_solver, A_s, b_s, m_x);
+        std::chrono::duration<double> wctduration = (std::chrono::system_clock::now() - wcts);
+        std::cout << "Finished in " << wctduration.count() << " seconds [Wall Clock]" << std::endl;
     }
     else {
+        auto wcts = std::chrono::system_clock::now();
         HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x);
         HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
+        std::chrono::duration<double> wctduration = (std::chrono::system_clock::now() - wcts);
+        std::cout << "Finished in " << wctduration.count() << " seconds [Wall Clock]" << std::endl;
     }
 }
 
@@ -437,8 +446,11 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel, int pr
 
     // HYPRE_GMRESSetup(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
     // HYPRE_GMRESSolve(m_gmres, (HYPRE_Matrix)m_A, (HYPRE_Vector)m_b, (HYPRE_Vector)m_x);
+    auto wcts = std::chrono::system_clock::now();
     HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x);
     HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
+    std::chrono::duration<double> wctduration = (std::chrono::system_clock::now() - wcts);
+    std::cout << "Finished in " << wctduration.count() << " seconds [Wall Clock]" << std::endl;
 }
 
 
