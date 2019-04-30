@@ -1,0 +1,298 @@
+Options used:
+   --spatial-disc 2
+   --time-disc 11
+   --order 1
+   --dt 0.0156
+   --level 6
+   --lump-mass 1
+   --print-level 3
+   --solve-tol 1e-08
+   --dim 2
+   --num-time-steps 32
+   --use-gmres 0
+   --amg-iters 1
+   --save-mat 0
+   --cycle-type 1
+   --AIR-distance 1.5
+   --AMG-interpolation 100
+   --AMG-coarsening 10
+   --AMG-strengthC 0.1
+   --AMG-strengthR 0.05
+   --AIR-filterR 0
+   --AMG-filter 1e-05
+   --AMG-relaxation 10
+   --AMG-prerelax A
+   --AMG-postrelax FA
+dt = 0.0156
+Building matrix, 0
+Space-time matrix assembled.
+
+
+ Num MPI tasks = 16
+
+ Num OpenMP threads = 1
+
+
+BoomerAMG SETUP PARAMETERS:
+
+ Max levels = 25
+ Num levels = 7
+
+ Strength Threshold = 0.100000
+ Interpolation Truncation Factor = 0.000000
+ Maximum Row Sum Threshold for Dependency Weakening = 0.900000
+
+ Coarsening Type = HMIS 
+ measures are determined locally
+
+
+ No global partition option chosen.
+
+ Interpolation = one-point interpolation 
+ Restriction = local approximate ideal restriction (AIR-1)
+
+Operator Matrix Information:
+
+            nonzero         entries per row        row sums
+lev   rows  entries  sparse  min  max   avg       min         max
+===================================================================
+ 0 4194304 36557312  0.000     1    9   8.7  -1.643e-02   1.000e+00
+ 1 1804730 36643176  0.000     1   39  20.3  -8.125e-02   1.210e+00
+ 2  509197 27195390  0.000     1  100  53.4  -1.408e-01   1.533e+00
+ 3   81297  4819224  0.001     1  144  59.3  -7.506e-02   1.401e+00
+ 4   11006   230927  0.002     1  106  21.0   2.678e-02   1.262e+00
+ 5    1717     5312  0.002     1   20   3.1   4.675e-01   1.082e+00
+ 6       4        4  0.250     1    1   1.0   1.000e+00   1.000e+00
+
+
+Interpolation Matrix Information:
+                 entries/row    min     max         row sums
+lev  rows cols    min max     weight   weight     min       max 
+=================================================================
+ 0 4194304 x 1804730   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 1 1804730 x 509197   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 2 509197 x 81297   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 3 81297 x 11006   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 4 11006 x 1717    0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 5  1717 x 4       0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+
+
+     Complexity:    grid = 1.574100
+                operator = 2.884549
+                memory = 3.059201
+
+
+
+
+BoomerAMG SOLVER PARAMETERS:
+
+  Maximum number of cycles:         250 
+  Stopping Tolerance:               1.000000e-08 
+  Cycle type (0 = F, 1 = V, 2 = W.):  1
+
+  Relaxation Parameters:
+   Visiting Grid:                     down   up  coarse
+            Number of sweeps:            1    2     1 
+   Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10     9 
+   Point types, partial sweeps (1=C, -1=F):
+                  Pre-CG relaxation (down):   0
+                   Post-CG relaxation (up):  -1   0
+                             Coarsest grid:   0
+
+
+
+BoomerAMG SOLVER PARAMETERS:
+
+  Maximum number of cycles:         250 
+  Stopping Tolerance:               1.000000e-08 
+  Cycle type (0 = F, 1 = V, 2 = W.):  1
+
+  Relaxation Parameters:
+   Visiting Grid:                     down   up  coarse
+            Number of sweeps:            1    2     1 
+   Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10     9 
+   Point types, partial sweeps (1=C, -1=F):
+                  Pre-CG relaxation (down):   0
+                   Post-CG relaxation (up):  -1   0
+                             Coarsest grid:   0
+
+ Output flag (print_level): 3 
+
+
+AMG SOLUTION INFO:
+                                            relative
+               residual        factor       residual
+               --------        ------       --------
+    Initial    3.841272e+02                 9.999996e-01
+    Cycle  1   1.418140e+02    0.369185     3.691848e-01 
+    Cycle  2   2.814278e+01    0.198449     7.326418e-02 
+    Cycle  3   3.526739e+00    0.125316     9.181171e-03 
+    Cycle  4   2.828564e-01    0.080203     7.363610e-04 
+    Cycle  5   1.163952e-02    0.041150     3.030119e-05 
+    Cycle  6   4.530102e-04    0.038920     1.179323e-06 
+    Cycle  7   7.245681e-06    0.015995     1.886271e-08 
+    Cycle  8   1.602399e-12    0.000000     4.171531e-15 
+
+
+ Average Convergence Factor = 0.015942
+
+     Complexity:    grid = 1.574100
+                operator = 2.884549
+                   cycle = 1.000000
+
+
+
+Space-time mesh:
+	hmin = 0.015625
+	hmax = 0.015625
+	dt   = 0.0156
+
+Options used:
+   --spatial-disc 2
+   --time-disc 11
+   --order 1
+   --dt 0.0156
+   --level 6
+   --lump-mass 1
+   --print-level 3
+   --solve-tol 1e-08
+   --dim 2
+   --num-time-steps 32
+   --use-gmres 0
+   --amg-iters 1
+   --save-mat 0
+   --cycle-type 1
+   --AIR-distance 1.5
+   --AMG-interpolation 100
+   --AMG-coarsening 10
+   --AMG-strengthC 0.1
+   --AMG-strengthR 0.05
+   --AIR-filterR 0
+   --AMG-filter 1e-05
+   --AMG-relaxation 10
+   --AMG-prerelax A
+   --AMG-postrelax FA
+dt = 0.0156
+Building matrix, 0
+Space-time matrix assembled.
+
+
+ Num MPI tasks = 16
+
+ Num OpenMP threads = 1
+
+
+BoomerAMG SETUP PARAMETERS:
+
+ Max levels = 25
+ Num levels = 7
+
+ Strength Threshold = 0.100000
+ Interpolation Truncation Factor = 0.000000
+ Maximum Row Sum Threshold for Dependency Weakening = 0.900000
+
+ Coarsening Type = HMIS 
+ measures are determined locally
+
+
+ No global partition option chosen.
+
+ Interpolation = one-point interpolation 
+ Restriction = local approximate ideal restriction (AIR-1)
+
+Operator Matrix Information:
+
+            nonzero         entries per row        row sums
+lev   rows  entries  sparse  min  max   avg       min         max
+===================================================================
+ 0 4194304 36557312  0.000     1    9   8.7  -1.643e-02   1.000e+00
+ 1 1804730 36643176  0.000     1   39  20.3  -8.125e-02   1.210e+00
+ 2  509197 27195390  0.000     1  100  53.4  -1.408e-01   1.533e+00
+ 3   81297  4819224  0.001     1  144  59.3  -7.506e-02   1.401e+00
+ 4   11006   230927  0.002     1  106  21.0   2.678e-02   1.262e+00
+ 5    1717     5312  0.002     1   20   3.1   4.675e-01   1.082e+00
+ 6       4        4  0.250     1    1   1.0   1.000e+00   1.000e+00
+
+
+Interpolation Matrix Information:
+                 entries/row    min     max         row sums
+lev  rows cols    min max     weight   weight     min       max 
+=================================================================
+ 0 4194304 x 1804730   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 1 1804730 x 509197   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 2 509197 x 81297   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 3 81297 x 11006   0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 4 11006 x 1717    0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+ 5  1717 x 4       0   1   1.000e+00 0.000e+00 0.000e+00 1.000e+00
+
+
+     Complexity:    grid = 1.574100
+                operator = 2.884549
+                memory = 3.059201
+
+
+
+
+BoomerAMG SOLVER PARAMETERS:
+
+  Maximum number of cycles:         250 
+  Stopping Tolerance:               1.000000e-08 
+  Cycle type (0 = F, 1 = V, 2 = W.):  1
+
+  Relaxation Parameters:
+   Visiting Grid:                     down   up  coarse
+            Number of sweeps:            1    2     1 
+   Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10     9 
+   Point types, partial sweeps (1=C, -1=F):
+                  Pre-CG relaxation (down):   0
+                   Post-CG relaxation (up):  -1   0
+                             Coarsest grid:   0
+
+
+
+BoomerAMG SOLVER PARAMETERS:
+
+  Maximum number of cycles:         250 
+  Stopping Tolerance:               1.000000e-08 
+  Cycle type (0 = F, 1 = V, 2 = W.):  1
+
+  Relaxation Parameters:
+   Visiting Grid:                     down   up  coarse
+            Number of sweeps:            1    2     1 
+   Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10     9 
+   Point types, partial sweeps (1=C, -1=F):
+                  Pre-CG relaxation (down):   0
+                   Post-CG relaxation (up):  -1   0
+                             Coarsest grid:   0
+
+ Output flag (print_level): 3 
+
+
+AMG SOLUTION INFO:
+                                            relative
+               residual        factor       residual
+               --------        ------       --------
+    Initial    3.841272e+02                 9.999996e-01
+    Cycle  1   1.418140e+02    0.369185     3.691848e-01 
+    Cycle  2   2.814278e+01    0.198449     7.326418e-02 
+    Cycle  3   3.526739e+00    0.125316     9.181171e-03 
+    Cycle  4   2.828564e-01    0.080203     7.363610e-04 
+    Cycle  5   1.163952e-02    0.041150     3.030119e-05 
+    Cycle  6   4.530102e-04    0.038920     1.179323e-06 
+    Cycle  7   7.245681e-06    0.015995     1.886271e-08 
+    Cycle  8   1.602399e-12    0.000000     4.171531e-15 
+
+
+ Average Convergence Factor = 0.015942
+
+     Complexity:    grid = 1.574100
+                operator = 2.884549
+                   cycle = 1.000000
+
+
+
+Space-time mesh:
+	hmin = 0.015625
+	hmax = 0.015625
+	dt   = 0.0156
+

@@ -33,12 +33,18 @@ double initCond(const Vector &x) {
 
     int dim = x.Size();
     if (dim == 2) {
+        // double x0 = x(0);
+        // double x1 = x(1);
+        // double s0 = (mesh_max(0) - mesh_min(0));
+        // double s1 = (mesh_max(1) - mesh_min(1));
+        // if (x0 > mesh_min(0) && x0 < mesh_max(0)/10.0 &&
+        //     x1 > (mesh_min(1) + s1/10.0) && x1 < (mesh_min(1) + s1/5.0) ) {
+        //     return 200.0;
+        // }
         double x0 = x(0);
         double x1 = x(1);
-        double s0 = (mesh_max(0) - mesh_min(0));
-        double s1 = (mesh_max(1) - mesh_min(1));
-        if (x0 > mesh_min(0) && x0 < mesh_max(0)/10.0 &&
-            x1 > (mesh_min(1) + s1/10.0) && x1 < (mesh_min(1) + s1/5.0) ) {
+        if (x0 > 0.1 && x0 < 0.5 &&
+            x1 > 0.1 && x1 < 0.5) {
             return 200.0;
         }
         else {
@@ -225,17 +231,22 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     }
 
     /* Set up mesh and a finite element space */
-    if (!m_is_refined) {
-        for (int lev = 0; lev<std::min(3,m_refLevels); lev++) {
-            m_mesh->UniformRefinement();
-        }
-        m_is_refined = true;
+    // if (!m_is_refined) {
+    //     for (int lev = 0; lev<std::min(3,m_refLevels); lev++) {
+    //         m_mesh->UniformRefinement();
+    //     }
+    //     m_is_refined = true;
+    // }
+    std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+    Mesh mesh(mesh_file.c_str(), 1, 1);
+    for (int lev = 0; lev<m_refLevels; lev++) {
+        mesh.UniformRefinement();
     }
 
     DG_FECollection fec(m_order, m_dim, m_basis_type);
 
     /* Define a parallel mesh by partitioning the serial mesh. */
-    ParMesh pmesh(spatialComm, *m_mesh);
+    ParMesh pmesh(spatialComm, mesh);
     for (int lev = 0; lev<m_refLevels-3; lev++) {
       pmesh.UniformRefinement();
     }
@@ -467,16 +478,22 @@ void DGadvection::addInitialCondition(double *B)
 void DGadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B)
 {
     /* Set up mesh and a finite element space */
-    if (!m_is_refined) {
-        for (int lev = 0; lev<m_refLevels; lev++) {
-            m_mesh->UniformRefinement();
-        }
-        m_is_refined = true;
+    // if (!m_is_refined) {
+    //     for (int lev = 0; lev<m_refLevels; lev++) {
+    //         m_mesh->UniformRefinement();
+    //     }
+    //     m_is_refined = true;
+    // }
+    std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+    Mesh mesh(mesh_file.c_str(), 1, 1);
+    for (int lev = 0; lev<m_refLevels; lev++) {
+        mesh.UniformRefinement();
     }
+
     DG_FECollection fec(m_order, m_dim, m_basis_type);
 
     /* Define a parallel mesh by partitioning the serial mesh. */
-    ParMesh pmesh(spatialComm, *m_mesh);
+    ParMesh pmesh(spatialComm, mesh);
     for (int lev = 0; lev<m_refLevels-3; lev++) {
       pmesh.UniformRefinement();
     }

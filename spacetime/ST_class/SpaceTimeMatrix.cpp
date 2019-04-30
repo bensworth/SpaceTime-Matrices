@@ -819,7 +819,7 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
 
             // Set solution equal to initial condition
             // X[i] = B[i];
-            // X[i] = 0.0;
+            X[i] = 0.0;
         }
     }
     else {

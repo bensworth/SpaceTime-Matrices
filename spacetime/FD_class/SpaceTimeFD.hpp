@@ -105,7 +105,8 @@ public:
     void PrintMeshData();
     void SetAMGParameters(AMG_parameters &params);
     void SolveAMG(double tol=1e-8, int maxiter=250, int printLevel=3);
-    void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3, int precondition=1);
+    void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3,
+                    int precondition=1, int AMGiters=10);
     
     void GetStencil_UW1_1D(Stencil &St, double c);
     void GetStencil_UW1a_1D(Stencil &St, double c);

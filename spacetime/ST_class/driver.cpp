@@ -33,13 +33,13 @@ int main(int argc, char *argv[])
     int spatialDisc  = 1;
     int max_iter     = 250;
     double dt        = -1;
-    int lump_mass    = false;
+    int lump_mass    = true;
     int AMGiters = 1;
 
     // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    AMG_parameters AMG = {1, "A", "FFC", 100, 10, 10, 0.25, 0.1, 0.0, 0.0, 1};
+    AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
     const char* temp_prerelax = "A";
-    const char* temp_postrelax = "A";
+    const char* temp_postrelax = "FA";
 
     OptionsParser args(argc, argv);
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",

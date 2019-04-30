@@ -46,12 +46,12 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &numProcess);
 
     // Do *not* use relax type 3. 
-    AMG_parameters AMG = {1.5, "A", "FFC", 100, 0, 6, 0.1, 0.01, 0.0, 0.0, 1};
+    AMG_parameters AMG = {1.5, "", "FA", 100, 10, 6, 0.1, 0.01, 0.0, 0.0, 0};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "A";
 
    /* Parse command line */
-    bool save = false;
+    int save = false;
     int use_gmres = 0;
     double hx = -1;
     double dt = -1;
@@ -61,9 +61,13 @@ int main(int argc, char *argv[])
     double t1 = 1;
     double c = 0.5;
     double cfl = -1;
+    double dtdx = -1;
     int nt_loc = 200;
     int nx_loc = 20;
     int ny_loc = 0;
+    int nt_glob = -1;
+    int nx_glob = -1;
+    int ny_glob = -1;
     int Pt = numProcess;
     int Px = 1;
     int Py = 1;
@@ -82,6 +86,18 @@ int main(int argc, char *argv[])
         else if ( strcmp(argv[arg_index], "-nt") == 0 ) {
             arg_index++;
             nt_loc = atoi(argv[arg_index++]);
+        }
+        else if ( strcmp(argv[arg_index], "-gx") == 0 ) {
+            arg_index++;
+            nx_glob = atoi(argv[arg_index++]);
+        }
+        else if ( strcmp(argv[arg_index], "-gy") == 0 ) {
+            arg_index++;
+            ny_glob = atoi(argv[arg_index++]);
+        }
+        else if ( strcmp(argv[arg_index], "-gt") == 0 ) {
+            arg_index++;
+            nt_glob = atoi(argv[arg_index++]);
         }
         else if ( strcmp(argv[arg_index], "-Px") == 0 ) {
             arg_index++;
@@ -115,9 +131,17 @@ int main(int argc, char *argv[])
             arg_index++;
             cfl = atof(argv[arg_index++]);
         }
+        else if ( strcmp(argv[arg_index], "-dtdx") == 0 ) {
+            arg_index++;
+            dtdx = atof(argv[arg_index++]);
+        }
         else if ( strcmp(argv[arg_index], "-gmres") == 0 ) {
             arg_index++;
             use_gmres = atoi(argv[arg_index++]);
+        }
+        else if ( strcmp(argv[arg_index], "-save") == 0 ) {
+            arg_index++;
+            save = atoi(argv[arg_index++]);
         }
         else {
             arg_index++;
@@ -126,30 +150,44 @@ int main(int argc, char *argv[])
 
     // If user specifies dt or hx, override default time interval
     // [0,1] or spatial problem size, respectively.
-    int nt, nx;
-    if (dt <= 0) {
-        nt = nt_loc * Pt;
-        dt = (t1 - t0) / float(nt);
+    if (dt <= 0 && nt_glob < 0) {
+        nt_glob = nt_loc * Pt;
+        dt = (t1 - t0) / float(nt_glob);
     }
-    else {
-        nt = nt_loc * Pt;
-        t1 = t0 + int(nt*dt);
+    else if (nt_glob < 0) {
+        nt_glob = nt_loc * Pt;
+        t1 = t0 + int(nt_glob*dt);
     }
-    if (hx <= 0) {
-        nx = nx_loc * Px;
-        hx = (x1 - x0) / float(nx);
+    if (hx <= 0 && nx_glob < 0) {
+        nx_glob = nx_loc * Px;
+        hx = (x1 - x0) / float(nx_glob);
     }
-    else {
+    else if (nx_glob < 0) {
         nx_loc = int( (x1-x0) / (Px*hx) );
-        nx = nx_loc * Px;
+        nx_glob = nx_loc * Px;
     }
-    std::cout << t1 << "\n";
+
+    // If user specifies global t, x, or y, override local.
+    if (nx_glob > 0) {
+        nx_loc = int(nx_glob / Px);
+        hx = (x1 - x0) / float(nx_glob);
+    }
+    if (nt_glob > 0) {
+        nt_loc = int(nt_glob / Pt);
+        if (dtdx > 0){
+            dt = hx*dtdx;
+            t1 = nt_glob*dt + t0;
+        }
+        else{
+            dt = (t1 - t0) / float(nt_glob);
+        }
+    }
 
     SpaceTimeFD matrix(MPI_COMM_WORLD, nt_loc, nx_loc, Pt, Px, x0, x1, t0, t1);
 	matrix.Wave1D(IC_u, IC_v, c, order);
     matrix.SetAMGParameters(AMG);
     if (use_gmres) {
-        matrix.SolveGMRES();
+        matrix.SolveGMRES(1e-8,250,3,use_gmres);
     }
     else {
         matrix.SolveAMG();

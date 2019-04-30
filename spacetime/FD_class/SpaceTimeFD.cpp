@@ -23,8 +23,8 @@ SpaceTimeFD::SpaceTimeFD(MPI_Comm comm, int nt, int nx, int Pt, int Px,
     if ((m_Px*m_Pt) != m_numProc) {
         if (m_rank == 0) {
             std::cout << "Error: Invalid number of processors or processor topology \n";
+            throw std::domain_error("Px*Pt != P");
         }
-        throw std::domain_error("Px*Pt != P");
     }
 
     // Compute local indices in 2d processor array, m_px_ind and
@@ -276,6 +276,10 @@ void SpaceTimeFD::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // Set cycle type for solve 
         HYPRE_BoomerAMGSetCycleType(m_solver, m_solverOptions.cycle_type);
+
+        // Set block coarsening/interpolation
+        HYPRE_BoomerAMGSetNumFunctions(m_solver, 2);
+        HYPRE_BoomerAMGSetNodal(m_solver, 1);
     }
 }
 
@@ -291,29 +295,28 @@ void SpaceTimeFD::SolveAMG(double tol, int maxiter, int printLevel)
 }
 
 
-void SpaceTimeFD::SolveGMRES(double tol, int maxiter, int printLevel, int precondition) 
+void SpaceTimeFD::SolveGMRES(double tol, int maxiter, int printLevel,
+                             int precondition, int AMGiters) 
 {
     HYPRE_ParCSRGMRESCreate(m_comm, &m_gmres);
-    HYPRE_ParCSRGMRESSetKDim(m_gmres, 5);
-    HYPRE_ParCSRGMRESSetMaxIter(m_gmres, maxiter);
-    HYPRE_ParCSRGMRESSetTol(m_gmres, tol);
-    HYPRE_ParCSRGMRESSetPrintLevel(m_gmres, printLevel);
-    HYPRE_ParCSRGMRESSetLogging(m_gmres, 1);
 
     // AMG preconditioning (setup boomerAMG with 1 max iter and print level 1)
     if (precondition == 1) {
-        SetupBoomerAMG(1, 1, 0.0);
-        HYPRE_ParCSRGMRESSetPrecond(m_gmres, HYPRE_BoomerAMGSolve,
-                                    HYPRE_BoomerAMGSetup, m_solver);
+        SetupBoomerAMG(1, AMGiters, 0.0);
+        HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
+                                    (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
     }
-    // Diagonally scaled preconditioning?
+    // Block-diagonal in processor preconditioning (forward solve on each proc)
     else if (precondition == 2) {
-        int temp = -1;
+        HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSolve,
+                                    (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSetup, m_solver);    
     }
-    // TODO: Implement block-diagonal AMG preconditioning, with BoomerAMG on each time block?
-    else if (precondition == 3) {
-        int temp = -1;
-    }
+
+    HYPRE_GMRESSetKDim(m_gmres, 5);
+    HYPRE_GMRESSetMaxIter(m_gmres, maxiter);
+    HYPRE_GMRESSetTol(m_gmres, tol);
+    HYPRE_GMRESSetPrintLevel(m_gmres, printLevel);
+    HYPRE_GMRESSetLogging(m_gmres, 1);
 
     HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x);
     HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
@@ -330,8 +333,8 @@ void SpaceTimeFD::GetStencil_UW1_1D(Stencil &St, double c)
     if (k > 1) {
         if (m_rank == 0) {
             std::cout << "Unstable parameters: c*dt/hx = " << k << " > 1.\n";
+           throw std::domain_error("Unstable integration scheme.\n");
        } 
-       throw std::domain_error("Unstable integration scheme.\n");
     }
     St.uu_indices = {0, 1, 2, 3};
     St.uv_indices = {4, 5, 6};
@@ -364,8 +367,8 @@ void SpaceTimeFD::GetStencil_UW1a_1D(Stencil &St, double c)
     if (k > 0.809) {
         if (m_rank == 0) {
             std::cout << "Unstable parameters: c*dt/hx = " << k << " > 0.809.\n";
+           throw std::domain_error("Unstable integration scheme.\n");
        } 
-       throw std::domain_error("Unstable integration scheme.\n");
     }
     St.uu_indices = {0, 1, 2, 3};
     St.uv_indices = {4, 5, 6};
@@ -398,8 +401,8 @@ void SpaceTimeFD::GetStencil_UW2_1D(Stencil &St, double c)
     if (k > 0.618) {
         if (m_rank == 0) {
             std::cout << "Unstable parameters: c*dt/hx = " << k << " > 0.618.\n";
+           throw std::domain_error("Unstable integration scheme.\n");
        } 
-       throw std::domain_error("Unstable integration scheme.\n");
     }
     St.uu_indices = {0, 1, 2, 3, 4, 5};
     St.uv_indices = {6, 7, 8, 9, 10};
@@ -451,8 +454,8 @@ void SpaceTimeFD::GetStencil_UW4_1D(Stencil &St, double c)
     if (k > 1.09) {
         if (m_rank == 0) {
             std::cout << "Unstable parameters: c*dt/hx = " << k << " > 1.09.\n";
+           throw std::domain_error("Unstable integration scheme.\n");
        } 
-       throw std::domain_error("Unstable integration scheme.\n");
     }
     St.uu_indices = {0, 1, 2, 3, 4, 5, 6, 7};
     St.uv_indices = {8, 9, 10, 11, 12, 13, 14};
@@ -538,10 +541,13 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double, double),
             GetStencil_UW4_1D(St, c);            
         }
         else {
-           throw std::domain_error("Only orders 1, 1a, 2, and 4 available in 1D.\n");
+            if (m_rank == 0) {
+                throw std::domain_error("Only orders 1, 1a, 2, and 4 available in 1D.\n");
+            }
         }
         if (m_rank == 0) {
             std::cout << "    1d Space-time wave equation, order-" << order << ":\n" <<
+               "        c*dt/dx  = (" << c * m_dt / m_hx << "\n" << 
                "        (dx, dt) = (" << m_hx << ", " << m_dt << ")\n" << 
                "        (nx, nt) = (" << m_globx << ", " << m_globt << ")\n" << 
                "        (Px, Pt) = (" << m_Px << ", " << m_Pt << ")\n";
@@ -555,11 +561,13 @@ void SpaceTimeFD::Wave1D(double (*IC_u)(double, double),
             GetStencil_UW2_2D(St, c);
         }
         else {
-           throw std::domain_error("Only orders 1, and 2 available in 2D.\n");
+            if (m_rank == 0) {
+                throw std::domain_error("Only orders 1, and 2 available in 2D.\n");
+            }
         }
         if (m_rank == 0) {
             std::cout << "    2d Space-time wave equation, order-" << order << ":\n" <<
-               "        (dx, dy, dt) = (" << m_hx << ", " << m_hy << ", " << m_dt << ")\n" << 
+               "        (dx, dy, dt) = " << m_hx << ", " << m_hy << ", " << m_dt << ")\n" << 
                "        (nx, ny, nt) = (" << m_globx << ", " << m_globy << ", " << m_globt << ")\n" << 
                "        (Px, Py, Pt) = (" << m_Px << ", " << m_Py << ", " << m_Pt << ")\n";
         }       
