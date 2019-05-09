@@ -10,7 +10,12 @@
 *.blg
 *dSYM
 *.out*
+<<<<<<< HEAD
 *.gitignore
 
 # Specific files of the above types to be included
 !spacetime/initializing_multi_notes.pdf
+
+driver
+*.core
+makefile
