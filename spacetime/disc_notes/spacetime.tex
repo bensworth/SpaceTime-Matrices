@@ -292,11 +292,21 @@ the operator $L$, right-hand side, and mass matrix, and use the coefficients to 
 matrix. If $\mathcal{L}$ is not time dependent, you should be able to compute it once and just update the right-hand
 side.
 
-
-
 \end{itemize}
 
+\noindent\textbf{Other TODOs:}
+\begin{itemize}
+\item Construct functions that do sequential RK time stepping. There are obviously other codes that do
+this, but I don't think it would be very much work, and it would be nice to be able to directly compare methods
+for any DIRK scheme we want. I think we can add to the same class and use the RK tableaux we pass in. 
+Just write a semi-general time-stepping function that uses the mass and spatial matrix to do the
+explicit or implicit steps sequentially. For implicit, we will convert the spatial matrix to a parallel hypre
+matrix and use hypre for the linear solves. 
 
+\item Add timings for setup and solve phase. Add timing for AMG setup phase in sequential time stepping.
+If is time dependent, have to rebuild every time which is expensive. Space-time only builds once. 
+
+\end{itemize}
 
 
 
