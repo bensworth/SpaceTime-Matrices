@@ -26,7 +26,7 @@ BoomerAMG SETUP PARAMETERS:
  No global partition option chosen.
 
  Interpolation = one-point interpolation 
- Restriction = local approximate ideal restriction (AIR-2)
+ Restriction = local approximate ideal restriction (AIR-1.5)
 
 Operator Matrix Information:
 
@@ -37,13 +37,13 @@ lev   rows  entries  sparse  min  max   avg       min         max
  1  999000 10981500  0.000     1   11  11.0  -5.000e-04   1.000e+00
  2  500012  5492632  0.000     1   14  11.0  -9.931e-04   1.000e+00
  3  250362  3953397  0.000     1   25  15.8  -1.986e-03   1.000e+00
- 4  125658  2786212  0.000     1   36  22.2  -3.974e-03   1.000e+00
- 5   63198  1830666  0.000     1   52  29.0  -7.955e-03   1.000e+00
- 6   31950  1191855  0.001     1   68  37.3  -1.593e-02   1.000e+00
- 7   16448   839084  0.003     1   94  51.0  -3.232e-02   1.000e+00
- 8    9026   628930  0.008     1  146  69.7  -9.425e-02   1.000e+00
- 9    5186   464784  0.017     1  227  89.6  -1.804e-01   1.000e+00
-10    2834   246687  0.031     1  219  87.0  -3.190e-01   1.000e+00
+ 4  125658  2785839  0.000     1   36  22.2  -3.974e-03   1.000e+00
+ 5   63198  1830298  0.000     1   52  29.0  -7.955e-03   1.000e+00
+ 6   31950  1191648  0.001     1   67  37.3  -1.593e-02   1.000e+00
+ 7   16448   838886  0.003     1   94  51.0  -3.232e-02   1.000e+00
+ 8    9026   628492  0.008     1  146  69.6  -9.425e-02   1.000e+00
+ 9    5186   464485  0.017     1  227  89.6  -1.804e-01   1.000e+00
+10    2834   246600  0.031     1  219  87.0  -3.190e-01   1.000e+00
 11    1386    66819  0.035     1  146  48.2  -3.383e-01   1.000e+00
 12     590    11136  0.032     1   71  18.9  -2.277e-01   1.000e+00
 13     140      697  0.036     1   16   5.0   5.109e-01   1.000e+00
@@ -71,8 +71,8 @@ lev  rows cols    min max     weight   weight     min       max
 
 
      Complexity:    grid = 2.002896
-                operator = 2.295789
-                memory = 2.477594
+                operator = 2.295699
+                memory = 2.477504
 
 
 
@@ -81,14 +81,14 @@ BoomerAMG SOLVER PARAMETERS:
 
   Maximum number of cycles:         250 
   Stopping Tolerance:               1.000000e-08 
-  Cycle type (0 = F, 1 = V, 2 = W.):  1
+  Cycle type (0 = F, 1 = V, 2 = W.):  0
 
   Relaxation Parameters:
    Visiting Grid:                     down   up  coarse
-            Number of sweeps:            1    2     1 
+            Number of sweeps:            0    2     1 
    Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10     9 
    Point types, partial sweeps (1=C, -1=F):
-                  Pre-CG relaxation (down):   0
+                  Pre-CG relaxation (down):
                    Post-CG relaxation (up):  -1   0
                              Coarsest grid:   0
 
@@ -98,14 +98,14 @@ BoomerAMG SOLVER PARAMETERS:
 
   Maximum number of cycles:         250 
   Stopping Tolerance:               1.000000e-08 
-  Cycle type (0 = F, 1 = V, 2 = W.):  1
+  Cycle type (0 = F, 1 = V, 2 = W.):  0
 
   Relaxation Parameters:
    Visiting Grid:                     down   up  coarse
-            Number of sweeps:            1    2     1 
+            Number of sweeps:            0    2     1 
    Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10     9 
    Point types, partial sweeps (1=C, -1=F):
-                  Pre-CG relaxation (down):   0
+                  Pre-CG relaxation (down):
                    Post-CG relaxation (up):  -1   0
                              Coarsest grid:   0
 
@@ -117,15 +117,15 @@ AMG SOLUTION INFO:
                residual        factor       residual
                --------        ------       --------
     Initial    5.661134e+01                 5.063472e+00
-    Cycle  1   1.388363e+03    24.524461     1.241789e+02 
-    Cycle  2   7.186463e-11    0.000000     6.427768e-12 
+    Cycle  1   1.638063e+04    289.352482     1.465128e+03 
+    Cycle  2   1.885955e-11    0.000000     1.686849e-12 
 
 
  Average Convergence Factor = 0.000001
 
      Complexity:    grid = 2.002896
-                operator = 2.295789
-                   cycle = 1.000000
+                operator = 2.295699
+                   cycle = 3.295699
 
 
 

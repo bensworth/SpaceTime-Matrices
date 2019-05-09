@@ -26,7 +26,7 @@ BoomerAMG SETUP PARAMETERS:
  No global partition option chosen.
 
  Interpolation = one-point interpolation 
- Restriction = local approximate ideal restriction (AIR-2)
+ Restriction = local approximate ideal restriction (AIR-1.5)
 
 Operator Matrix Information:
 
@@ -69,14 +69,14 @@ BoomerAMG SOLVER PARAMETERS:
 
   Maximum number of cycles:         250 
   Stopping Tolerance:               1.000000e-08 
-  Cycle type (0 = F, 1 = V, 2 = W.):  1
+  Cycle type (0 = F, 1 = V, 2 = W.):  0
 
   Relaxation Parameters:
    Visiting Grid:                     down   up  coarse
-            Number of sweeps:            1    2     1 
+            Number of sweeps:            0    2     1 
    Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10    10 
    Point types, partial sweeps (1=C, -1=F):
-                  Pre-CG relaxation (down):   0
+                  Pre-CG relaxation (down):
                    Post-CG relaxation (up):  -1   0
                              Coarsest grid:   0
 
@@ -86,14 +86,14 @@ BoomerAMG SOLVER PARAMETERS:
 
   Maximum number of cycles:         250 
   Stopping Tolerance:               1.000000e-08 
-  Cycle type (0 = F, 1 = V, 2 = W.):  1
+  Cycle type (0 = F, 1 = V, 2 = W.):  0
 
   Relaxation Parameters:
    Visiting Grid:                     down   up  coarse
-            Number of sweeps:            1    2     1 
+            Number of sweeps:            0    2     1 
    Type 0=Jac, 3=hGS, 6=hSGS, 9=GE:     10   10    10 
    Point types, partial sweeps (1=C, -1=F):
-                  Pre-CG relaxation (down):   0
+                  Pre-CG relaxation (down):
                    Post-CG relaxation (up):  -1   0
                              Coarsest grid:   0
 
@@ -105,14 +105,14 @@ AMG SOLUTION INFO:
                residual        factor       residual
                --------        ------       --------
     Initial    4.153218e+01                 3.714751e+00
-    Cycle  1   7.654812e-13    0.000000     6.846672e-14 
+    Cycle  1   1.789521e-13    0.000000     1.600597e-14 
 
 
  Average Convergence Factor = 0.000000
 
      Complexity:    grid = 1.982000
                 operator = 2.517172
-                   cycle = 1.000000
+                   cycle = 3.512450
 
 
 
