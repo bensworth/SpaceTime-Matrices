@@ -1,0 +1,310 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,stmaryrd}
+\usepackage{soul}
+\usepackage{array}
+\usepackage{empheq}
+\usepackage{xfrac}
+\usepackage{minibox}
+\usepackage{enumitem}
+	\setlist{nosep} % or \setlist{noitemsep} to leave space around whole list
+\usepackage{color}
+\usepackage{blkarray}
+\setcounter{MaxMatrixCols}{20}
+
+\newcommand{\tcb}{\textcolor{blue}}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO\@: #1]}}
+
+
+
+\begin{document}
+\allowdisplaybreaks
+
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\section{Space-time discretizations}\label{sec:disc}
+
+Consider a linear PDE of the form 
+\begin{align*}
+u_t + \mathcal{L}(u,\mathbf{x}) = g(\mathbf{x},t).
+\end{align*}
+We discretize $\mathcal{L}$ in space and, denoting $\mathbf{u}(t)$ the discrete solution in space at time $t$
+and $\mathbf{g}(t)$ the corresponding right-hand side, we arrive at the system of ODEs 
+%
+\begin{align}\label{eq:ode}
+\mathbf{u}_t + \mathcal{L}(t)\mathbf{u} = \mathbf{g}(t).
+\end{align}
+%
+Note, in finite element discretizations, there will also be a mass matrix term:
+%
+\begin{align*}
+M\mathbf{u}_t + \mathcal{L}(t)\mathbf{u} = \mathbf{g}(t).
+\end{align*}
+%
+To consider Runge-Kutta schemes in space-time, let us express this as
+%
+\begin{align}\label{eq:odeM}
+\mathbf{u}_t= -M^{-1}\mathcal{L}(t)\mathbf{u} + M^{-1}\mathbf{g}(t).
+\end{align}
+%
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{One-stage}
+
+Consider a one-stage DIRK Runge-Kutta schemes. Applied to \eqref{eq:odeM}, this takes the form
+%
+\begin{align*}
+\mathbf{u}_{n+1} & = \mathbf{u}_{n} + \delta tb_1\mathbf{k}_1 , \\
+\mathbf{k}_1 & = -M^{-1}\mathcal{L}(t_n+c_1\delta t)\left[ \mathbf{u}_n + \delta t a_{11}\mathbf{k}_1\right] + M^{-1}\mathbf{g}(t_n+c_1\delta t).
+\end{align*}
+%
+Rearranging yields an implicit equation for $\mathbf{k}_1$,
+%
+\begin{align*}
+(M + \delta t a_{11}\mathcal{L}(t_n+c_1\delta t))\mathbf{k}_1 & = -\mathcal{L}(t_n+c_1\delta t) \mathbf{u}_n + \mathbf{g}(t_n+c_1\delta t).
+\end{align*}
+%
+The integration from time step $t_n$ to $t_{n+1}$ can be written as a block matrix equation in the form
+%
+\begin{align*}
+\begin{bmatrix} I & \mathbf{0} \\ \mathcal{L}(t_n+c_1\delta t) & (M +\delta t a_{11}\mathcal{L}(t_n+c_1\delta t)) & \\ -I & -\delta tb_1I & I \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{u}_{n+1} \end{bmatrix} = 
+	\begin{bmatrix} \mathbf{0} \\ \mathbf{g}(t_n+c_1\delta t) \\ \mathbf{0} \end{bmatrix}.
+\end{align*}
+%
+Considering a full time integration corresponds to a block lower triangular system, with overlapping $3\times 3$ blocks
+of this form. For ease of notation, assume in this context that $\mathcal{L}$ is evaluated at time $t_n+c_1\delta t$ unless otherwise
+noted. In this case, we can simplify the system by eliminating the row corresponding to $\mathbf{k}_1$ without causing additional
+difficulties (with respect to implementation or solving). This is equivalent to solving for $\mathbf{u}_{n+1}$ in terms of
+$\mathbf{u}_n$,
+%
+\begin{align*}
+\mathbf{u}_{n+1} & = \mathbf{u}_{n} + \delta tb_1(M + \delta t a_{11}\mathcal{L})^{-1}\left[ -\mathcal{L}\mathbf{u}_n + \mathbf{g}(t_n+c_1\delta t) \right], \\
+(\tfrac{1}{\delta t} M + a_{11}\mathcal{L})\mathbf{u}_{n+1} & = (\tfrac{1}{\delta t} M + a_{11}\mathcal{L})\mathbf{u}_n - b_1\mathcal{L} + b_1\mathbf{g}(t_n+c_1\delta t)
+\end{align*}
+%
+and the reduced $2\times 2$ system then looks like
+%
+\begin{align*}
+\begin{bmatrix} \frac{1}{\delta t} M + a_{11}\mathcal{L}(t_{n-1}+c_1\delta t) & \mathbf{0} \\ -(\frac{1}{\delta t} M + (a_{11}-b_1)\mathcal{L}) &
+	 \frac{1}{\delta t} M + a_{11}\mathcal{L} \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{u}_{n+1} \end{bmatrix} = 
+	\begin{bmatrix} b_1 \mathbf{g}(t_{n-1}+c_1\delta t) \\ b_1 \mathbf{g}(t_{n}+c_1\delta t) \end{bmatrix}.
+\end{align*}
+%
+There are three examples of one-stage methods, forward Euler, backward Euler, and the implicit midpoint. 
+Plugging in values of $a_{11}, b_1, c_1$ for each of these schemes yields, respectively,
+%
+\begin{align*}
+\begin{bmatrix} \frac{1}{\delta t}M & \mathbf{0} \\ -(\frac{1}{\delta t}M - \mathcal{L}_n) & \frac{1}{\delta t}M \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{u}_{n+1} \end{bmatrix} & = 
+	\begin{bmatrix} \mathbf{g}(t_{n-1}) \\ \mathbf{g}(t_{n}) \end{bmatrix}, \\
+\begin{bmatrix} \frac{1}{\delta t}M -\mathcal{L}_n & \mathbf{0} \\ -\frac{1}{\delta t}M & \frac{1}{\delta t}M - \mathcal{L}_{n+1} \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{u}_{n+1} \end{bmatrix} & = 
+	\begin{bmatrix} \mathbf{g}(t_{n}) \\ \mathbf{g}(t_{n+1}) \end{bmatrix}, \\
+\begin{bmatrix} \frac{1}{\delta t}M - \frac{1}{2}\mathcal{L}_{n-\frac{1}{2}} & \mathbf{0} \\ -(\frac{1}{\delta t}M - \frac{1}{2}\mathcal{L}_{n+\frac{1}{2}}) & \frac{1}{\delta t}M - \frac{1}{2}\mathcal{L}_{n+\frac{1}{2}} \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{u}_{n+1} \end{bmatrix}  & = 
+	\begin{bmatrix} \mathbf{g}(t_{n-\frac{1}{2}}) \\ \mathbf{g}(t_{n+\frac{1}{2}}) \end{bmatrix},
+\end{align*}
+%
+where, for example, $\mathcal{L}_{n+1/2}$ corresponds to $\mathcal{L}(t_n + \delta t/2)$.
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Two-stage}
+
+Now consider a two-stage DIRK Runge-Kutta method. Following similar steps as above to derive implicit
+formulae for $\mathbf{k}_1$ and $\mathbf{k}_2$ yields
+%
+\begin{align*}
+\tfrac{1}{\delta t}\mathbf{u}_{n+1} & = \tfrac{1}{\delta t}\mathbf{u}_{n} + b_1\mathbf{k}_1 + b_2\mathbf{k}_2 , \\
+(M + \delta t a_{11}\mathcal{L}(t_n+c_1\delta t))\mathbf{k}_1 & = -\mathcal{L}(t_n+c_1\delta t) \mathbf{u}_n + \mathbf{g}(t_n+c_1\delta t), \\
+(M + \delta t a_{22}\mathcal{L}(t_n+c_2\delta t))\mathbf{k}_2 & = -\mathcal{L}(t_n+c_2\delta t) \mathbf{u}_n -
+	a_{21}\delta t\mathcal{L}(t_n+c_2\delta t) \mathbf{k}_1 + \mathbf{g}(t_n+c_2\delta t). 
+\end{align*}
+%
+Proceeding similar to before, we now eliminate $k_2$ from the set of equations,
+%
+\begin{align*}
+(\tfrac{1}{\delta t}M + a_{22}\mathcal{L}(t_n+c_2\delta t))\mathbf{u}_{n+1} & =
+	(\tfrac{1}{\delta t}M + a_{22}\mathcal{L}(t_n+c_2\delta t))\mathbf{u}_{n} + b_1(M + \delta t a_{22}\mathcal{L}(t_n+c_2\delta t))\mathbf{k}_{1}
+	\\ & \hspace{8ex}- b_2\mathcal{L}(t_n+c_2\delta t) \mathbf{u}_n - b_2a_{21}\delta t\mathcal{L}(t_n+c_2\delta t) \mathbf{k}_1 + b_2\mathbf{g}(t_n+c_2\delta t) \\
+& = \left(\tfrac{1}{\delta t}M - (b_{2} - a_{22}) \mathcal{L}(t_n+c_2\delta t)\right)\mathbf{u}_{n} + ...
+	 \\ & \hspace{8ex} \left(b_1M  - \delta t(b_2 a_{21} - b_1a_{22}) \mathcal{L}(t_n+c_2\delta t)\right) \mathbf{k}_1 + b_2\mathbf{g}(t_n+c_2\delta t).
+\end{align*}
+%
+This yields a $3\times 3$ set of equations, where, in each row of the equation, $\mathcal{L}$ is evaluated at the same time
+as $g(t)$ on the right-hand side of that row,
+%
+\begin{align*}
+\begin{bmatrix} \tfrac{1}{\delta t}M + a_{22}\mathcal{L} & \mathbf{0}  & \mathbf{0}  \\
+	\mathcal{L} & M + \delta ta_{11}\mathcal{L} & \mathbf{0} \\
+	-\left(\tfrac{1}{\delta t}M - (b_2 - a_{22}) \mathcal{L}\right) & -\left(b_1M  - \delta t(b_2 a_{21} - b_1a_{22}) \mathcal{L}\right) &
+	\tfrac{1}{\delta t}M + a_{22}\mathcal{L} \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{u}_{n+1} \end{bmatrix} = 
+	\begin{bmatrix} b_2\mathbf{g}(t_{n-1}+c_2\delta t) \\ \mathbf{g}(t_{n}+c_1\delta t) \\ b_2\mathbf{g}(t_{n}+c_2\delta t) \end{bmatrix}.
+\end{align*}
+%
+
+Plugging in values from the Butcher tableaux, Heun's 2nd-order explicit method (i.e., explicit trapezoid) is given by 
+%
+% b = [1/2,1/2], c = [0,1], A = [0, 0; 1, 0]
+\begin{align*}
+\begin{bmatrix} \tfrac{1}{\delta t}M & \mathbf{0}  & \mathbf{0}  \\
+	\mathcal{L} & M & \mathbf{0} \\
+	-\left(\tfrac{1}{\delta t}M - \frac{1}{2}\mathcal{L}\right) & -\left(\frac{1}{2}M - \frac{1}{2}\delta t\mathcal{L}\right) & \tfrac{1}{\delta t}M \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{u}_{n+1} \end{bmatrix} = 
+	\begin{bmatrix} \frac{1}{2}\mathbf{g}(t_{n}) \\ \mathbf{g}(t_{n}) \\ \frac{1}{2}\mathbf{g}(t_{n+1}) \end{bmatrix}.
+\end{align*}
+%
+Crank-Nicolson, also known as implicit trapezoid, takes the form
+%
+% b = [1/2,1/2], c = [0,1], A = [0, 0; 1/2, 1/2]
+\begin{align*}
+\begin{bmatrix} \tfrac{1}{\delta t}M + \frac{1}{2}\mathcal{L} & \mathbf{0}  & \mathbf{0}  \\
+	\mathcal{L} & ~~M  & \mathbf{0} \\
+	-\tfrac{1}{\delta t}M& -\frac{1}{2}M & \tfrac{1}{\delta t}M + \frac{1}{2}\mathcal{L} \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{u}_{n+1} \end{bmatrix} = 
+	\begin{bmatrix} b_2\mathbf{g}(t_{n}) \\ \mathbf{g}(t_{n}) \\ b_2\mathbf{g}(t_{n+1}) \end{bmatrix}.
+\end{align*}
+%
+There are a number of two-stage implicit methods. One example is the 2nd-order L-stable SDIRK method, 
+%
+\begin{align*}
+\begin{bmatrix} \tfrac{1}{\delta t}M + \gamma\mathcal{L} & \mathbf{0}  & \mathbf{0}  \\
+	\mathcal{L} & M + \delta t\gamma\mathcal{L} & \mathbf{0} \\
+	-\tfrac{1}{\delta t}M & -(1-\gamma)M & \tfrac{1}{\delta t}M + \gamma\mathcal{L} \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{u}_{n+1} \end{bmatrix} = 
+	\begin{bmatrix} \gamma\mathbf{g}(t_{n}) \\ \mathbf{g}(t_{n}+\gamma\delta t) \\ \gamma\mathbf{g}(t_{n+1}) \end{bmatrix},
+\end{align*}
+%
+for $\gamma = 1 + \frac{\sqrt{2}}{2}$.
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Three-stage}
+
+Repeating the process for three stages, a DIRK scheme takes the form
+%
+\begin{align*}
+\tfrac{1}{\delta t}\mathbf{u}_{n+1} & = \tfrac{1}{\delta t}\mathbf{u}_{n} + b_1\mathbf{k}_1 + b_2\mathbf{k}_2 + b_3\mathbf{k}_3, \\
+(M + \delta t a_{11}\mathcal{L}(t_n+c_1\delta t))\mathbf{k}_1 & = -\mathcal{L}(t_n+c_1\delta t) \mathbf{u}_n + \mathbf{g}(t_n+c_1\delta t), \\
+(M + \delta t a_{22}\mathcal{L}(t_n+c_2\delta t))\mathbf{k}_2 & = -\mathcal{L}(t_n+c_2\delta t) \mathbf{u}_n -
+	a_{21}\delta t\mathcal{L}(t_n+c_2\delta t) \mathbf{k}_1 + \mathbf{g}(t_n+c_2\delta t), \\
+(M + \delta t a_{33}\mathcal{L}(t_n+c_3\delta t))\mathbf{k}_3 & = -\mathcal{L}(t_n+c_3\delta t) \mathbf{u}_n -
+	a_{31}\delta t\mathcal{L}(t_n+c_3\delta t) \mathbf{k}_1 - \\&\hspace{10ex}a_{32}\delta t\mathcal{L}(t_n+c_3\delta t) \mathbf{k}_2 + \mathbf{g}(t_n+c_3\delta t). 
+\end{align*}
+%
+Eliminating $\mathbf{k}_3$ yields
+%
+\begin{align*}
+(\tfrac{1}{\delta t}M + a_{33}\mathcal{L}(t_n+c_3\delta t))\mathbf{u}_{n+1} & =
+	\left(\tfrac{1}{\delta t}M + a_{33}\mathcal{L}(t_n+c_3\delta t)\right)\mathbf{u}_{n} + 
+	b_1\left(M + \delta t a_{33}\mathcal{L}(t_n+c_3\delta t)\right)\mathbf{k}_{1}
+	\\ & \hspace{8ex} + b_2\left(M + \delta t a_{33}\mathcal{L}(t_n+c_3\delta t)\right)\mathbf{k}_{2} - b_3\mathcal{L}(t_n+c_3\delta t) \mathbf{u}_n -
+	\\ & \hspace{8ex} b_3a_{31}\delta t\mathcal{L}(t_n+c_3\delta t) \mathbf{k}_1 - 
+	b_3a_{32}\delta t\mathcal{L}(t_n+c_3\delta t) \mathbf{k}_2 + b_3\mathbf{g}(t_n+c_3\delta t) \\
+& = \left(\tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L}(t_n+c_3\delta t)\right)\mathbf{u}_{n} + 
+	\\ & \hspace{8ex}\left(b_1M - \delta t( b_3a_{31}- b_1a_{33})\mathcal{L}(t_n+c_3\delta t)\right)\mathbf{k}_{1} +
+	\\ & \hspace{8ex}\left(b_2M - \delta t (b_3a_{32} - b_2a_{33})\mathcal{L}(t_n+c_3\delta t)\right)\mathbf{k}_{2} + b_3\mathbf{g}(t_n+c_3\delta t).
+\end{align*}
+%
+In matrix form, we have
+%
+{\small
+\begin{align*}
+\begin{bmatrix} \tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L} & \mathbf{0}  & \mathbf{0} & \mathbf{0}  \\
+	\mathcal{L} & M + \delta ta_{11}\mathcal{L} & \mathbf{0} & \mathbf{0} \\
+	\mathcal{L} & \delta t a_{21}\mathcal{L} & M + \delta ta_{22}\mathcal{L} & \mathbf{0} \\
+	-\left(\tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L}\right) & -\left(b_1M  - \delta t(b_3 a_{31} - b_1a_{33}) \mathcal{L}\right) &
+	-\left(b_2M  - \delta t(b_3 a_{32} - b_2a_{33}) \mathcal{L}\right) & \tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L}  \end{bmatrix}
+	\\
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{k}_2 \\ \mathbf{u}_{n+1} \end{bmatrix} =
+	\begin{bmatrix} b_3\mathbf{g}(t_{n-1}+c_3\delta t) \\ \mathbf{g}(t_{n}+c_1\delta t) \\ \mathbf{g}(t_{n}+c_2\delta t) \\ b_3\mathbf{g}(t_{n}+c_3\delta t) \end{bmatrix}.
+\end{align*}}
+%
+
+For example, plugging in values for explicit 3rd-order SSP RK yields
+%\begin{array}{c|ccc}
+%0   & 0   & 0   & 0    \\
+%1   & 1   & 0   & 0    \\
+%1/2 & 1/4 & 1/4 & 0    \\
+%\hline
+%    & 1/6 & 1/6 & 2/3  \\
+%\end{array}
+\begin{align*}
+\begin{bmatrix} \tfrac{1}{\delta t}M - \tfrac{2}{3}\mathcal{L} & \mathbf{0}  & \mathbf{0} & \mathbf{0}  \\
+	\mathcal{L} & M & \mathbf{0} & \mathbf{0} \\
+	\mathcal{L} & \delta t \mathcal{L} & M & \mathbf{0} \\
+	-\left(\tfrac{1}{\delta t}M - \tfrac{2}{3}\mathcal{L}\right) & -\left(\tfrac{1}{6}M  - \tfrac{2}{3}\delta t\mathcal{L}\right) &
+	-\left(\tfrac{1}{6}M  - \tfrac{1}{6}\delta t \mathcal{L}\right) & \tfrac{1}{\delta t}M - \tfrac{2}{3}\mathcal{L}  \end{bmatrix}
+	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{k}_2 \\ \mathbf{u}_{n+1} \end{bmatrix} =
+	\begin{bmatrix} \tfrac{2}{3}\mathbf{g}(t_{n-\frac{1}{2}}) \\ \mathbf{g}(t_{n}) \\ \mathbf{g}(t_{n+1}) \\ \tfrac{2}{3}\mathbf{g}(t_{n+\frac{1}{2}}) \end{bmatrix}.
+\end{align*}
+%
+Constants in ESDIRK and SDIRK schemes are more complicated, so explicit operators are not expressed here.
+However, the structure remains the same, where all entries take the form of $C_1M + C_2\mathcal{L}$, for
+some constants $C_1$ and $C_2$. Furthermore, from the general form of three-stage DIRK methods
+expressed above, it is easy to extrapolate the structure to an arbitrary number of stages.
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{Code structure}
+
+The code should be general enough that it can do spatial and temporal parallelism, but we don't have to go crazy with
+arbitrary numbers of processors. Let $P$ denote the number of processors, $s$ the number of stages, and 
+$N_t$ the number of time steps. We have two cases:
+%
+\begin{itemize}
+\item $P > N_ts$: Here, we have more processors than all time steps and RK stages. In this case, we must introduce
+spatial parallelism as well. The simplest solution is to require that $N_ts$ divides $P$. Then, each stage will be split
+across some number of processors in a logically sequential fashion. A more general option is to require that $N_t$
+divides $P$. This would make it easier to support spatial parallelism without having to pick very specific numbers of
+processors and time steps. However, it would also reorder the matrix in a somewhat strange way, where one processor
+would own multiple stages of a subdomain of the problem (which would be ordered sequentially in the matrix). From a
+meshing perspective, it is possible this is actually better, but it's a but more complicated.
+
+\item $P \leq N_ts$: I think the best way to do this is to require that $P$ divides $N_ts$, and implement to support
+an arbitrary number of stages per processor. The only difficult is that these stages may or may not correspond to
+the same time step. However, the block systems are sufficiently structured that I don't think this will be a huge deal,
+and it will make the code a good amount more flexible. 
+\end{itemize}
+
+\noindent\textbf{Implementation:}
+\begin{itemize}
+\item Take in Butcher tableaux as arrays $A,b,c$. Use the equations derived here to map these to some 2d array
+representation(s) with coefficients for $M$ and $\mathcal{L}$ in the $s \times s$ block equations corresponding to
+a given time step.
+
+\item Use processor id to determine which time step(s) and stages you are responsible for, and the time that each
+stage is evaluated at.
+
+\item Use the coefficients computed above to estimate nonzero allocation. Baseline should be nnz of $M$ plus
+nnz of $\mathcal{L}$ for every lower triangular block (including both is important; they largely overlap, but the
+seg faults we were getting were because there were certain spots that they didn't). Then, any coefficients that
+are zero, remove (or don't add in the first place).
+
+\item Construct operator very similarly to current FE/BE code, but here you loop over stages. For each stage, get
+the operator $L$, right-hand side, and mass matrix, and use the coefficients to build the rows of the global space-time
+matrix. If $\mathcal{L}$ is not time dependent, you should be able to compute it once and just update the right-hand
+side.
+
+
+
+\end{itemize}
+
+
+
+
+
+
+
+
+
+
+
+
+\end{document}

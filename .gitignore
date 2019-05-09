@@ -1,5 +1,5 @@
 # Add any directories, files, or patterns you don't want to be tracked by version control
-*.pdf
+
 *.mm
 *DS_Store
 *.o
@@ -18,3 +18,8 @@ driver
 *._*
 *.pyc
 *.npz
+
+spacetime.pdf
+notes.pdf
+disc_notes.pdf
+
