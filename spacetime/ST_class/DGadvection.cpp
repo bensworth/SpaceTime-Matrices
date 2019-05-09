@@ -343,7 +343,7 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
 }
 
 
-/* Time-independent spatial discretization of Laplacian */
+/* Time-independent DG spatial discretization of advection */
 void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
                                            double* &A_data, double* &B, double* &X,
                                            int &spatialDOFs, double t, int &bsize)

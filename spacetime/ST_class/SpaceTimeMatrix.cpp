@@ -9,11 +9,10 @@
 //      - Add hypre timing for setup and solve (see ij.c)
 
 
-
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int numTimeSteps, double dt)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_numTimeSteps{numTimeSteps},
-      m_dt{dt}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), 
+      m_dt{dt}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_bsize(1), m_hmin(-1), m_hmax(-1)
 {
@@ -126,7 +125,7 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     HYPRE_IJMatrixAssemble(m_Aij);
     HYPRE_IJMatrixGetObject(m_Aij, (void **) &m_A);
 
-    /* Create rhs and solution vectors */
+    // Create rhs and solution vectors
     HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_bij);
     HYPRE_IJVectorSetObjectType(m_bij, HYPRE_PARCSR);
     HYPRE_IJVectorInitialize(m_bij);
@@ -194,7 +193,7 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     HYPRE_IJMatrixAssemble(m_Aij);
     HYPRE_IJMatrixGetObject(m_Aij, (void **) &m_A);
 
-    /* Create sample rhs and solution vectors */
+    // Create sample rhs and solution vectors
     HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_bij);
     HYPRE_IJVectorSetObjectType(m_bij, HYPRE_PARCSR);
     HYPRE_IJVectorInitialize(m_bij);
@@ -424,7 +423,7 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel,
                              (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSetup, m_solver);  
     }
 
-    HYPRE_GMRESSetKDim(m_gmres, 5);
+    HYPRE_GMRESSetKDim(m_gmres, 50);
     HYPRE_GMRESSetMaxIter(m_gmres, maxiter);
     HYPRE_GMRESSetTol(m_gmres, tol);
     HYPRE_GMRESSetPrintLevel(m_gmres, printLevel);
@@ -492,9 +491,9 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;
-    int procNnz = m_ntPerProc * (M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
-    // Account for only identity at time t=0
-    if (tInd0 == 0) procNnz -= (M_rowptr[spatialDOFs] + nnzPerTime - spatialDOFs);
+    int procNnz = m_ntPerProc * (2*M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
+    // Account for only diagonal block at time t=0
+    if (tInd0 == 0) procNnz -= M_rowptr[spatialDOFs];
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -638,9 +637,9 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     onProcSize  = m_ntPerProc * spatialDOFs;
-    int procNnz = m_ntPerProc * (M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
-    // Account for only identity at time t=0
-    if (tInd0 == 0) procNnz -= (M_rowptr[spatialDOFs] + nnzPerTime - spatialDOFs);
+    int procNnz = m_ntPerProc * (2*M_rowptr[spatialDOFs] + nnzPerTime);     // nnzs on this processor
+    // Account for only diagonal block (mass matrix) at time t=0
+    if (tInd0 == 0) procNnz -= (M_rowptr[spatialDOFs] + nnzPerTime);
 
     rowptr  = new int[onProcSize + 1];
     colinds = new int[procNnz];
@@ -768,7 +767,7 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
                              B, X, localMinRow, localMaxRow, spatialDOFs,
                              m_dt*m_timeInd, m_bsize);
     int procRows = localMaxRow - localMinRow + 1;
-    int nnzPerTime = T_rowptr[procRows];    
+    int nnzPerTime = T_rowptr[procRows] - T_rowptr[0];    
 
     // Get mass matrix and scale by 1/dt
     int* M_rowptr;
@@ -778,11 +777,12 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     for (int i=0; i<M_rowptr[procRows]; i++) {
         M_data[i] /= m_dt;
     }
+    int nnzMPerTime = M_rowptr[procRows] - M_rowptr[0];    
 
     // Get number nnz on this processor.
     int procNnz;
     if (m_timeInd == 0) procNnz = procRows;
-    else procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
+    else procNnz = nnzPerTime + 2*nnzMPerTime;
 
     // Allocate CSR structure.
     rowptr  = new int[procRows + 1];
@@ -791,15 +791,11 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     int dataInd = 0;
     rowptr[0] = 0;
 
-    // Column indices for this processor given the time index and the first row
-    // stored on this processor of the spatial discretization (zero if whole
-    // spatial problem stored on one processor).
+    // Mass matrix and spatial matrix have column indices global w.r.t. the spatial
+    // discretization. Get global index w.r.t. space-time discretization.
     int colPlusOffd = (m_timeInd - 1)*spatialDOFs;
     int colPlusDiag = m_timeInd*spatialDOFs;
     std::map<int, double>::iterator it;
-    // int colPlusOffd = (m_timeInd - 1)*spatialDOFs + localMinRow; 
-    // OLD - I think this was incorrect -- Mass matrix and spatial matrix have
-    //      column indices global w.r.t. the spatial discretization
 
     // At time t=0, have fixed initial condition. Set matrix to identity
     // and fix RHS and initial guess to ICs.
@@ -815,7 +811,6 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
             data[dataInd] = 1.0;
             dataInd += 1;
             rowptr[i+1] = dataInd;
-            i += 1;
 
             // Set solution equal to initial condition
             // X[i] = B[i];
@@ -890,7 +885,7 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
                                  m_dt*(m_timeInd-1), m_bsize);
     }
     int procRows = localMaxRow - localMinRow + 1;
-    int nnzPerTime = T_rowptr[procRows];    
+    int nnzPerTime = T_rowptr[procRows] - T_rowptr[0];    
 
     // Get mass matrix and scale by 1/dt
     int* M_rowptr;
@@ -901,19 +896,13 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
         M_data[i] /= m_dt;
         // if (m_globRank == 3) std::cout << M_data[i] << ", ";
     }
-
-    // if (m_globRank == 3) {
-    //     std::cout << "\n\n";
-    //     for (int i=0; i<T_rowptr[procRows]; i++) {
-    //         std::cout << T_data[i] << ", ";
-    //     }
-    // }
+    int nnzMPerTime = M_rowptr[procRows] - M_rowptr[0];    
 
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
     int procNnz;
-    if (m_timeInd == 0) procNnz = spatialDOFs;
-    else procNnz = nnzPerTime + (M_rowptr[procRows] - M_rowptr[0]);
+    if (m_timeInd == 0) procNnz = nnzMPerTime;
+    else procNnz = nnzPerTime + 2*nnzMPerTime;
 
     // Allocate CSR structure.
     rowptr  = new int[procRows + 1];
@@ -922,13 +911,9 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
     int dataInd = 0;
     rowptr[0] = 0;
 
-    // Local CSR matrices in off-diagonal blocks here have (spatially) global
-    // column indices. Only need to account for min row indexing for the
-    // diagonal block.
+    // Mass matrix and spatial matrix have column indices global w.r.t. the spatial
+    // discretization. Get global index w.r.t. space-time discretization.
     int colPlusOffd = (m_timeInd - 1)*spatialDOFs;
-    // int colPlusDiag = m_timeInd*spatialDOFs + localMinRow;
-    // OLD - I think this was incorrect -- Mass matrix and spatial matrix have
-    //      column indices global w.r.t. the spatial discretization
     int colPlusDiag = m_timeInd*spatialDOFs;
     std::map<int, double>::iterator it;
 
@@ -946,7 +931,6 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds,  double* &data,
             data[dataInd] = 1.0;
             dataInd += 1;
             rowptr[i+1] = dataInd;
-            i += 1;
 
             // Set solution equal to initial condition
             X[i] = B[i];
