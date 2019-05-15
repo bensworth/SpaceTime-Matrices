@@ -7,6 +7,7 @@
 #include "HYPRE_krylov.h"
 #define SPACETIMEMATRIX
 
+
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
    double distance_R;
@@ -34,6 +35,14 @@ struct AMG_parameters {
 class SpaceTimeMatrix
 {
 private:
+    /* Struct containing Butcher table for an RK methods */
+    // TODO: What's the best way to have these arrays... is it OK to just do it like this and just fill-in the parts we need?
+    struct RK_butcher {
+        int s;     // Number of stages 
+        double a[10][10]; // Matrix of coefficients.
+        double b[10]; // Quadrature weights
+        double c[10]; // Quadrature nodes
+    };
 
     int     m_globRank;
     int     m_timeInd;
@@ -52,6 +61,7 @@ private:
     double  m_t0;
     double  m_t1;
     double  m_dt;
+    RK_butcher m_tableaux;
 
     MPI_Comm            m_globComm;
     MPI_Comm            m_spatialComm;
@@ -65,6 +75,7 @@ private:
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_solverOptions;
 
+    void GetButcherTableaux();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);

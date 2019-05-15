@@ -3,6 +3,9 @@
 #include <map>
 #include <algorithm>
 #include "SpaceTimeMatrix.hpp"
+#include <cmath> // OAK: I have to include this... There is some ambiguity with "abs". 
+// Something to do with how new OSX is setup now. But on stack exchage some people say this 
+// is not a good solution. But I think it'll do for now...
 
 // TODO:
 //      - Add isTimeDependent option
@@ -16,6 +19,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_bsize(1), m_hmin(-1), m_hmax(-1)
 {
+    
     // Get number of processes
     MPI_Comm_rank(m_globComm, &m_globRank);
     MPI_Comm_size(m_globComm, &m_numProc);
@@ -73,10 +77,130 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 
 void SpaceTimeMatrix::BuildMatrix()
 {
+    GetButcherTableaux();
     if (m_globRank == 0) std::cout << "Building matrix, " << m_useSpatialParallel << "\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
     if (m_globRank == 0) std::cout << "Space-time matrix assembled.\n";
+}
+
+
+// timeDisc with "1" as 1st digit are SDIRK, timeDisc with "3" as 1st digit are ERK
+void SpaceTimeMatrix::GetButcherTableaux() {
+
+    /* --- ERK tables --- */
+    // Forward Euler: 1st-order
+    if (m_timeDisc == 31) {
+        m_tableaux.s = 1;
+        m_tableaux.a[0][0] = 0.0;
+        m_tableaux.b[0] = 1.0; 
+        m_tableaux.c[0] = 0.0; 
+    
+    // 2nd-order Heun's method    
+} else if (m_timeDisc == 32) {
+        m_tableaux.s = 2;
+        m_tableaux.a[0][0] = 0.0;
+        m_tableaux.a[1][0] = 1.0;
+        m_tableaux.a[0][1] = 0.0;
+        m_tableaux.a[1][1] = 0.0;
+        m_tableaux.b[0] = 0.5;
+        m_tableaux.b[1] = 0.5;
+        m_tableaux.c[0] = 0.0;
+        m_tableaux.c[1] = 1.0;
+    
+    // 3rd-order optimal SSPERK
+} else if (m_timeDisc == 33) {
+        m_tableaux.s = 3;
+        m_tableaux.a[0][0] = 0.0; // 1st col
+        m_tableaux.a[1][0] = 1.0;
+        m_tableaux.a[2][0] = 1.0/4.0; 
+        m_tableaux.a[0][1] = 0.0; // 2nd col
+        m_tableaux.a[1][1] = 0.0;
+        m_tableaux.a[2][1] = 1.0/4.0;
+        m_tableaux.a[0][2] = 0.0;  // 3rd col
+        m_tableaux.a[1][2] = 0.0;
+        m_tableaux.a[2][2] = 0.0;
+        m_tableaux.b[0] = 1.0/6.0;
+        m_tableaux.b[1] = 1.0/6.0;
+        m_tableaux.b[2] = 2.0/3.0;
+        m_tableaux.c[0] = 0.0;
+        m_tableaux.c[1] = 1.0;
+        m_tableaux.c[2] = 1.0/2.0;
+
+    // Classical 4th-order ERK
+} else if (m_timeDisc == 34){
+        m_tableaux.s = 4;
+        m_tableaux.a[0][0] = 0.0; // 1st col
+        m_tableaux.a[1][0] = 1.0/2.0;
+        m_tableaux.a[2][0] = 0.0;
+        m_tableaux.a[3][0] = 0.0;
+        m_tableaux.a[0][1] = 0.0; // 2nd col
+        m_tableaux.a[1][1] = 0.0;
+        m_tableaux.a[2][1] = 1.0/2.0;
+        m_tableaux.a[3][1] = 0.0;
+        m_tableaux.a[0][2] = 0.0; // 3rd col
+        m_tableaux.a[1][2] = 0.0;
+        m_tableaux.a[2][2] = 0.0;
+        m_tableaux.a[3][2] = 1.0;
+        m_tableaux.a[0][3] = 0.0; // 4th col
+        m_tableaux.a[1][3] = 0.0;
+        m_tableaux.a[2][3] = 0.0;
+        m_tableaux.a[3][3] = 0.0;
+        m_tableaux.b[0] = 1.0/6.0;
+        m_tableaux.b[1] = 1.0/3.0;
+        m_tableaux.b[2] = 1.0/3.0;
+        m_tableaux.b[3] = 1.0/6.0;
+        m_tableaux.c[0] = 0.0;
+        m_tableaux.c[1] = 1.0/2.0;
+        m_tableaux.c[2] = 1.0/2.0;
+        m_tableaux.c[3] = 1.0;
+    
+    
+    /* --- SDIRK tables --- */
+    // Backward Euler, 1st-order
+    } else if (m_timeDisc == 11) {
+        m_tableaux.s = 1;
+        m_tableaux.a[0][0] = 1.0;
+        m_tableaux.b[0] = 1.0; 
+        m_tableaux.c[0] = 1.0; 
+    
+    // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
+    } else if (m_timeDisc == 12) {
+        double sqrt2 = 1.414213562373095;
+        m_tableaux.s = 2;
+        m_tableaux.a[0][0] = 1.0 - sqrt2/2.0;
+        m_tableaux.a[1][0] = sqrt2 - 1.0;
+        m_tableaux.a[0][1] = 0.0;
+        m_tableaux.a[1][1] = 1 - sqrt2/2.0;
+        m_tableaux.b[0] = 0.5;
+        m_tableaux.b[1] = 0.5;
+        m_tableaux.c[0] = 1 - sqrt2/2.0;
+        m_tableaux.c[1] = sqrt2/2.0;
+        
+    // 3rd-order (3-stage) L-stable SDIRK (see Butcher's book, p.261--262)
+    } else if (m_timeDisc == 33) {
+        double zeta    = 0.43586652150845899942;
+        double alpha   = 0.5*(1.0 + zeta);
+        double beta    = 0.5*(1.0 - zeta); 
+        double gamma   = -3.0/2.0*zeta*zeta + 4.0*zeta - 0.25;
+        double epsilon =  3.0/2.0*zeta*zeta - 5.0*zeta + 1.25;
+        m_tableaux.s = 3;
+        m_tableaux.a[0][0] = zeta; // 1st col
+        m_tableaux.a[1][0] = beta;
+        m_tableaux.a[2][0] = gamma; 
+        m_tableaux.a[0][1] = 0.0; // 2nd col
+        m_tableaux.a[1][1] = zeta;
+        m_tableaux.a[2][1] = epsilon;
+        m_tableaux.a[0][2] = 0.0;  // 3rd col
+        m_tableaux.a[1][2] = 0.0;
+        m_tableaux.a[2][2] = zeta;
+        m_tableaux.b[0] = gamma;
+        m_tableaux.b[1] = epsilon;
+        m_tableaux.b[2] = zeta;
+        m_tableaux.c[0] = zeta;
+        m_tableaux.c[1] = alpha;
+        m_tableaux.c[2] = 1.0;
+    }
 }
 
 
