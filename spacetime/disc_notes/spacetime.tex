@@ -250,6 +250,102 @@ However, the structure remains the same, where all entries take the form of $C_1
 some constants $C_1$ and $C_2$. Furthermore, from the general form of three-stage DIRK methods
 expressed above, it is easy to extrapolate the structure to an arbitrary number of stages.
 
+
+% ------------------------------------------------------------------------------------------------------- %
+% ------------------------------------------------------------------------------------------------------- %
+\subsection{$s$-stages}
+The RK update for a general $s \geq 1$-stage RK scheme is
+\begin{align*}
+\mathbf{u}_{n+1} = \mathbf{u}_{n} + \delta t \sum \limits_{i = 1}^s b_i \mathbf{k}_i.
+\end{align*}
+The stage vectors of an RK scheme with lower-triangular Butcher tableaux $(a_{ij} = 0, \, j > i)$ applied to ODEs \eqref{eq:odeM} satisfy
+\begin{align*}
+\mathbf{k}_i 
+&= 
+- M^{-1} {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i} a_{ij} M^{-1} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n} 
++ M^{-1} \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s,
+\end{align*}
+or, rearranging,
+\begin{align*}
+\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_i 
+&= 
+- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{j} 
++ \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s.
+\end{align*}
+Thus, eliminating $\mathbf{k}_s$ from the RK update yields
+\begin{align*}
+\mathbf{u}_{n+1} 
+= 
+\mathbf{u}_{n} + \delta t \sum \limits_{i = 1}^{s-1} b_i \mathbf{k}_i
++ \delta t b_s 
+\big[ 
+M + \delta t a_{ss} {\cal L}(t_n + c_s \delta t) 
+\big]^{-1}
+\big[
+- {\cal L}(t_n + c_s \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{i = 1}^{s-1} a_{si} {\cal L}(t_n + c_s \delta t) \mathbf{k}_{i} 
++ \mathbf{g}(t_n + c_s \delta t)
+\big],
+\end{align*}
+or, rearranging,
+\begin{align*}
+\big[ 
+\tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_n + c_s \delta t) 
+\big] 
+\mathbf{u}_{n+1} 
+&= 
+\big[ 
+\tfrac{1}{\delta t} M + ( a_{ss} - b_s) {\cal L}(t_n + c_s \delta t) 
+\big] 
+\mathbf{u}_{n} \\
+&\quad
++ \sum \limits_{i = 1}^{s-1} 
+\big[
+b_i M + \delta t  (b_i a_{ss} - b_s a_{si}) {\cal L}(t_n + c_s \delta t)
+\big] \mathbf{k}_i
++
+b_s \mathbf{g}(t_n + c_s \delta t).
+\end{align*}
+Note that the elimination of $\mathbf{k}_s$ from the system only changes the equation for $\mathbf{u}_{n+1}$ as stages $\mathbf{k}_i, \, i < s,$ do not depend on $\mathbf{k}_s$, i.e., the system of equations is lower triangular.
+
+\textcolor{red}{\textbf{Ben:} I think you might have made a typo/mistake in the general 3rd-order one as you have a $b_3$ in the coefficient of $u_{n+1}$ in the last row, but this is inconsistent with the general form here (and the form of the previous two cases)}
+
+So, in all of their glory, the (block) lower triangular system of equations marching the solution from $t_n$ to $t_{n+1}$ is
+\begin{align*}
+\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_i 
+&= 
+- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{j} 
++ \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s-1, \\
+\big[ 
+\tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_n + c_s \delta t) 
+\big] 
+\mathbf{u}_{n+1} 
+&= 
+\big[ 
+\tfrac{1}{\delta t} M + ( a_{ss} - b_s) {\cal L}(t_n + c_s \delta t) 
+\big] 
+\mathbf{u}_{n} \\
+&\quad
++ \sum \limits_{i = 1}^{s-1} 
+\big[
+b_i M + \delta t  (b_i a_{ss} - b_s a_{si}) {\cal L}(t_n + c_s \delta t)
+\big] \mathbf{k}_i
++
+b_s \mathbf{g}(t_n + c_s \delta t).
+\end{align*}
+Note that at $t = 0$, these equations are supplemented with an initial condition $\mathbf{u}_0 = u(\mathbf{x},0)$.
+
+\textcolor{red}{\textbf{Ben}: do you think it's a good idea to scale these stage equations by $1/\delta t$ such that the block diagonal has the same scaling for the stages and the solution? But I guess at the moment the columns have the same scaling (which we destroy if we rescale rows)}
+
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
 \subsection{Code structure}
@@ -291,6 +387,12 @@ are zero, remove (or don't add in the first place).
 the operator $L$, right-hand side, and mass matrix, and use the coefficients to build the rows of the global space-time
 matrix. If $\mathcal{L}$ is not time dependent, you should be able to compute it once and just update the right-hand
 side.
+
+\item \textcolor{red}{Question:} the 1st equation in the space-time system reads $I \mathbf{u}_0 = \mathbf{u}_0 \equiv {\rm initial\, condition}$. Do we want to scale this block row by something like 
+\[
+\tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_0 + c_s \delta t) 
+\]
+so that the scaling of this row is consistent with the other equations? AIR might not like it if there are different scales going on here.
 
 \end{itemize}
 
