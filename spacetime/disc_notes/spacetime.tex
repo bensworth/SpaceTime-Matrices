@@ -216,11 +216,11 @@ In matrix form, we have
 %
 {\small
 \begin{align*}
-\begin{bmatrix} \tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L} & \mathbf{0}  & \mathbf{0} & \mathbf{0}  \\
+\begin{bmatrix} \tfrac{1}{\delta t}M + a_{33}\mathcal{L} & \mathbf{0}  & \mathbf{0} & \mathbf{0}  \\
 	\mathcal{L} & M + \delta ta_{11}\mathcal{L} & \mathbf{0} & \mathbf{0} \\
 	\mathcal{L} & \delta t a_{21}\mathcal{L} & M + \delta ta_{22}\mathcal{L} & \mathbf{0} \\
 	-\left(\tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L}\right) & -\left(b_1M  - \delta t(b_3 a_{31} - b_1a_{33}) \mathcal{L}\right) &
-	-\left(b_2M  - \delta t(b_3 a_{32} - b_2a_{33}) \mathcal{L}\right) & \tfrac{1}{\delta t}M - (b_3-a_{33})\mathcal{L}  \end{bmatrix}
+	-\left(b_2M  - \delta t(b_3 a_{32} - b_2a_{33}) \mathcal{L}\right) & \tfrac{1}{\delta t}M + a_{33}\mathcal{L}  \end{bmatrix}
 	\\
 	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{k}_2 \\ \mathbf{u}_{n+1} \end{bmatrix} =
 	\begin{bmatrix} b_3\mathbf{g}(t_{n-1}+c_3\delta t) \\ \mathbf{g}(t_{n}+c_1\delta t) \\ \mathbf{g}(t_{n}+c_2\delta t) \\ b_3\mathbf{g}(t_{n}+c_3\delta t) \end{bmatrix}.
@@ -236,11 +236,11 @@ For example, plugging in values for explicit 3rd-order SSP RK yields
 %    & 1/6 & 1/6 & 2/3  \\
 %\end{array}
 \begin{align*}
-\begin{bmatrix} \tfrac{1}{\delta t}M - \tfrac{2}{3}\mathcal{L} & \mathbf{0}  & \mathbf{0} & \mathbf{0}  \\
+\begin{bmatrix} \tfrac{1}{\delta t}M & \mathbf{0}  & \mathbf{0} & \mathbf{0}  \\
 	\mathcal{L} & M & \mathbf{0} & \mathbf{0} \\
 	\mathcal{L} & \delta t \mathcal{L} & M & \mathbf{0} \\
 	-\left(\tfrac{1}{\delta t}M - \tfrac{2}{3}\mathcal{L}\right) & -\left(\tfrac{1}{6}M  - \tfrac{2}{3}\delta t\mathcal{L}\right) &
-	-\left(\tfrac{1}{6}M  - \tfrac{1}{6}\delta t \mathcal{L}\right) & \tfrac{1}{\delta t}M - \tfrac{2}{3}\mathcal{L}  \end{bmatrix}
+	-\left(\tfrac{1}{6}M  - \tfrac{1}{6}\delta t \mathcal{L}\right) & \tfrac{1}{\delta t}M \end{bmatrix}
 	\begin{bmatrix} \mathbf{u}_n \\ \mathbf{k}_1 \\ \mathbf{k}_2 \\ \mathbf{u}_{n+1} \end{bmatrix} =
 	\begin{bmatrix} \tfrac{2}{3}\mathbf{g}(t_{n-\frac{1}{2}}) \\ \mathbf{g}(t_{n}) \\ \mathbf{g}(t_{n+1}) \\ \tfrac{2}{3}\mathbf{g}(t_{n+\frac{1}{2}}) \end{bmatrix}.
 \end{align*}
@@ -314,8 +314,6 @@ b_s \mathbf{g}(t_n + c_s \delta t).
 \end{align*}
 Note that the elimination of $\mathbf{k}_s$ from the system only changes the equation for $\mathbf{u}_{n+1}$ as stages $\mathbf{k}_i, \, i < s,$ do not depend on $\mathbf{k}_s$, i.e., the system of equations is lower triangular.
 
-\textcolor{red}{\textbf{Ben:} I think you might have made a typo/mistake in the general 3rd-order one as you have a $b_3$ in the coefficient of $u_{n+1}$ in the last row, but this is inconsistent with the general form here (and the form of the previous two cases)}
-
 So, in all of their glory, the (block) lower triangular system of equations marching the solution from $t_n$ to $t_{n+1}$ is
 \begin{align*}
 \big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_i 
@@ -345,6 +343,15 @@ b_s \mathbf{g}(t_n + c_s \delta t).
 Note that at $t = 0$, these equations are supplemented with an initial condition $\mathbf{u}_0 = u(\mathbf{x},0)$.
 
 \textcolor{red}{\textbf{Ben}: do you think it's a good idea to scale these stage equations by $1/\delta t$ such that the block diagonal has the same scaling for the stages and the solution? But I guess at the moment the columns have the same scaling (which we destroy if we rescale rows)}
+\tcb{I wondered about this too.. AIR is in theory invariant to row scaling of the matrix, which is a nice property. I
+had decided no initially just so we didn't have to scale the right-hand side, but it may be good to keep the scaling
+a bit more balanced. 
+In looking at that, I found the off-diagonal blocks for $\mathbf{k}$ puzzling. $M$ should scale like $h^2$ and 
+$\mathcal{L}$ should scale like $h$ for advection and $h^2$ for diffusion. Also, $\mathcal{L}$ should be in some
+sense a positive operator. So for explicit schemes, $\mathcal{L}$ seems like a large, positive off-diagonal (block), which is
+probably larger than the diagonal block (entry-wise anyways). Usually this is not what you get with FD-type
+discretizations}
+
 
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
@@ -393,6 +400,7 @@ side.
 \tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_0 + c_s \delta t) 
 \]
 so that the scaling of this row is consistent with the other equations? AIR might not like it if there are different scales going on here.
+\tcb{As above, AIR is invariant to row scaling. Mostly I think we want to make the matrix entries $\mathcal{O}(1)$ where possible.}
 
 \end{itemize}
 
