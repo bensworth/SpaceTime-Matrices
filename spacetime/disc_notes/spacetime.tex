@@ -12,6 +12,8 @@
 \usepackage{blkarray}
 \setcounter{MaxMatrixCols}{20}
 
+
+\newcommand{\tcr}{\textcolor{blue}}
 \newcommand{\tcb}{\textcolor{blue}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO\@: #1]}}
 
@@ -315,7 +317,8 @@ b_s \mathbf{g}(t_n + c_s \delta t).
 Note that the elimination of $\mathbf{k}_s$ from the system only changes the equation for $\mathbf{u}_{n+1}$ as stages $\mathbf{k}_i, \, i < s,$ do not depend on $\mathbf{k}_s$, i.e., the system of equations is lower triangular.
 
 So, in all of their glory, the (block) lower triangular system of equations marching the solution from $t_n$ to $t_{n+1}$ is
-\begin{align*}
+\begin{align} \label{eq:time_step_w_stages}
+\begin{split}
 \big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_i 
 &= 
 - {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
@@ -339,7 +342,8 @@ b_i M + \delta t  (b_i a_{ss} - b_s a_{si}) {\cal L}(t_n + c_s \delta t)
 \big] \mathbf{k}_i
 +
 b_s \mathbf{g}(t_n + c_s \delta t).
-\end{align*}
+\end{split}
+\end{align}
 Note that at $t = 0$, these equations are supplemented with an initial condition $\mathbf{u}_0 = u(\mathbf{x},0)$.
 
 \textcolor{red}{\textbf{Ben}: do you think it's a good idea to scale these stage equations by $1/\delta t$ such that the block diagonal has the same scaling for the stages and the solution? But I guess at the moment the columns have the same scaling (which we destroy if we rescale rows)}
@@ -351,6 +355,53 @@ $\mathcal{L}$ should scale like $h$ for advection and $h^2$ for diffusion. Also,
 sense a positive operator. So for explicit schemes, $\mathcal{L}$ seems like a large, positive off-diagonal (block), which is
 probably larger than the diagonal block (entry-wise anyways). Usually this is not what you get with FD-type
 discretizations}
+
+
+I'm going to write these equations out in the format they're implemented in. Let $t_n \coloneqq n \delta t$, then:
+
+\noindent For $n = 0$:
+\begin{align}
+\begin{split}
+I \mathbf{u}_n &= u(\mathbf{x},0) \\
+\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
+&= 
+- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n,j} 
++ \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s-1.
+\end{split}
+\end{align}
+And for $n \in \{1,2,\ldots,N_t-1\}$\footnote{Note that $t_n \neq t_{n-1} + c_s \delta t $ for general RK schemes, which is why the first equation is referenced w.r.t the previous time level, $t_{n-1}$. Recall that this time appears in this equation due to the elimination of the last stage, $\mathbf{k}_{n,s}$, which is defined at this time.}:
+\begin{align}
+\begin{split}
+\big[ 
+\tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_{n-1} + c_s \delta t) 
+\big] 
+\mathbf{u}_{n} 
+&= 
+\big[ 
+\tfrac{1}{\delta t} M + ( a_{ss} - b_s) {\cal L}(t_{n-1} + c_s \delta t) 
+\big] 
+\mathbf{u}_{n-1} \\
+&\quad
++ \sum \limits_{i = 1}^{s-1} 
+\big[
+b_i M + \delta t  (b_i a_{ss} - b_s a_{si}) {\cal L}(t_{n-1} + c_s \delta t)
+\big] \mathbf{k}_{n-1,i}
++
+b_s \mathbf{g}(t_{n-1} + c_s \delta t), \\
+\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
+&= 
+- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n,j} 
++ \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s-1.
+\end{split}
+\end{align}
+
+
 
 
 % ------------------------------------------------------------------------------------------------------- %
@@ -374,8 +425,45 @@ meshing perspective, it is possible this is actually better, but it's a but more
 an arbitrary number of stages per processor. The only difficult is that these stages may or may not correspond to
 the same time step. However, the block systems are sufficiently structured that I don't think this will be a huge deal,
 and it will make the code a good amount more flexible. 
-\end{itemize}
 
+\item \textcolor{red}{Re: space-time parallelism $(P > N_t s)$ vs temporal-only parallelism $(P \leq N_t s)$:} I'm not sure that what we have done above is the correct thing to do. It seems like the right thing to do in terms of how the problem is set up, but not with respect to the way we need to be thinking about parallel-in-time. 
+\begin{enumerate}
+\item \textit{Parallelism from the perspective of the block linear system.} This is where I think what we are doing make sense. The matrix is blocked by rows (each block corresponds to a solution or stage), so when we have less processors than block rows ($P \leq N_t s $) we introduce parallelism across blocks (at least one block DOF per processor, be it a solution or stage value). When we have more processors than block rows ($P > N_t s$), we add parallelism into blocks (a single block DOF is distributed over more than one processor).
+
+Even though MGRIT solves the same block linear system (although the stage values would be excluded), it doesn't parallelize like this. It parallelizes first within blocks, and then temporal parallelism is introduced. One major difference here though is that $\Phi$ and intermediate solution values don't even need to be stored in memory, unlike in our approach. 
+\item \textit{Parallelism from the parallel-in-time perspective.} This is where what we're doing seems funny. The way parallel-in-time is thought about is that you saturate first the spatial parallelism, then you can add remaining resources in time. Note: It makes sense to do it in this ordering since temporal parallelism is typically much less efficient than spatial parallelism. 
+
+But, we're essentially doing the reverse of this: We add temporal parallelism, then given enough resources, we also add spatial parallelism, so I don't really understand how we'll ever be able to compete with sequential time stepping? The set up of the problem naturally means that we have to be fully parallelized in time before we can think about parallelizing in space.
+
+Note: There is no difference between the two approaches if we have enough processors. However, we're easily going to run into a situation where that's not the case. E.g., if we take $10^5$ time steps (this is within reason), we're going to need $P > s 10^5$ processors before we can even introduce spatial parallelism. Thus, I think quite often we're going to find ourselves in a regime of using temporal-only parallelism and not space-time parallelism that's saturated in space, like we want to. 
+\end{enumerate}
+
+\item A few remarks on the code structure/problem set up
+\begin{itemize}
+\item $N_t$ time points $0 \equiv t_0 < t_1 < \ldots < t_{N_t-1} \equiv T$, and mesh spacing $\Delta t = t_{n+1} - t_{n}$ is constant across the domain
+\item Take $N_t-1$ time steps
+\item Associated with every time point $t_n$, there is a set of $s$ DOFs: $\mathbf{v}_{n} \equiv (\mathbf{u}_n,\mathbf{k}_{n,1}, \ldots, \mathbf{k}_{n,s-1})^\top$. There are $N_t$ DOFs of the form $(\mathbf{v}_n)_{n = 0}^{N_t-1}$, or $N_t s$ DOFs of the form $(\mathbf{u}_n)_{n = 0}^{N_t-1} \cup (\mathbf{k}_{n,i})_{n,i=0,1}^{N_t-1,s-1}$
+\item The space-time linear system can be written in the form of a block lower triangular system
+\begin{align}
+\begin{bmatrix}
+\Phi^{\rm I}_0 & \\
+\Phi^{\rm E}_1 & \Phi^{\rm I}_1 &  \\
+					& \ddots & \ddots \\
+					& 				& \Phi^{\rm E}_{N_t-1} & \Phi^{\rm I}_{N_t-1} &  \\
+\end{bmatrix}
+\begin{bmatrix}
+\mathbf{v}_{0} \\
+\mathbf{v}_{1} \\ 
+\vdots \\
+\mathbf{v}_{N_t-1} \\
+\end{bmatrix}
+= \cdots
+\end{align}
+\item This formulation unfortunately ignores the solution at the final time, $\mathbf{u}_{N_t-1}$. However, including it make distributing processors very awkward since then there are $N_t s + 1$ DOFs. Another possibility would be to eliminate the initial condition, $\mathbf{u}_0$, from the system by adding it to the RHS. However, this leads to its own awkwardness because the stages defined over $t \in [0,\Delta t]$ require linear solves and matrix-vector products using the spatial discretization and $\mathbf{u}_0$, which is going to be a mess...
+\item $P > N_t s$: Means that every $\mathbf{u}_n$ and $\mathbf{k}_{n,i}$ is distributed over more than 1 process, i.e., there is spatial parallelism
+\item $P \leq N_t s$: Means that every $\mathbf{u}_n$ and $\mathbf{k}_{n,i}$ is distributed on at most one process (with equality achieved for the $P = N_t s$ case). This could mean that there are multiple processors to each $\mathbf{v}_n$, or that a single process owns $\mathbf{v}_n, \mathbf{v}_{n+1}, \ldots$ plus some number of components from $\mathbf{v}_{n-1}$, for example
+\end{itemize}
+\end{itemize}
 \noindent\textbf{Implementation:}
 \begin{itemize}
 \item Take in Butcher tableaux as arrays $A,b,c$. Use the equations derived here to map these to some 2d array

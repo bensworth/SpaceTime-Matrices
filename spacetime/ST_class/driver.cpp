@@ -21,7 +21,8 @@ int main(int argc, char *argv[])
 
     // Parameters
     bool isTimeDependent = true;
-    int numTimeSteps = 2;
+    int numTimeSteps = 2; // TODO: I think this should be removed...
+    int nt           = 2;
     int refLevels    = 1;
     int order        = 1;
     int dim          = 2;
@@ -60,8 +61,9 @@ int main(int argc, char *argv[])
                   "Tolerance to solve linear system.");
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
-    args.AddOption(&numTimeSteps, "-nt", "--num-time-steps",
-                  "Number of time steps.");
+    //args.AddOption(&numTimeSteps, "-nt", "--num-time-steps", // TOOD: I think this should be removed...
+    //              "Number of time steps.");
+    args.AddOption(&nt, "-nt", "--num-time-steps", "Number of time steps.");
     args.AddOption(&use_gmres, "-gmres", "--use-gmres",
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
     args.AddOption(&AMGiters, "-amgi", "--amg-iters",
@@ -111,24 +113,24 @@ int main(int argc, char *argv[])
     // For now have to keep SpaceTime object in scope so that MPI Communicators
     // get destroyed before MPI_Finalize() is called. 
     if (spatialDisc == 1) {
-        CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps,
+        CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
-        if (save_mat) {
-            STmatrix.SaveMatrix("test.mm");
-        }
-        STmatrix.SetAMGParameters(AMG);
-        if (use_gmres) {
-            STmatrix.SolveGMRES(solve_tol, max_iter, print_level, false,
-                                use_gmres, AMGiters);
-        }
-        else {
-            STmatrix.SolveAMG(solve_tol, max_iter, print_level, false);
-        }
-        STmatrix.PrintMeshData();
+        // if (save_mat) {
+        //     STmatrix.SaveMatrix("test.mm");
+        // }
+        // STmatrix.SetAMGParameters(AMG);
+        // if (use_gmres) {
+        //     STmatrix.SolveGMRES(solve_tol, max_iter, print_level, false,
+        //                         use_gmres, AMGiters);
+        // }
+        // else {
+        //     STmatrix.SolveAMG(solve_tol, max_iter, print_level, false);
+        // }
+        // STmatrix.PrintMeshData();
     }
     else {
-        DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps,
+        DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
         if (save_mat) {

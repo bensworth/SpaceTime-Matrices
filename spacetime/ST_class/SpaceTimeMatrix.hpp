@@ -35,22 +35,16 @@ struct AMG_parameters {
 class SpaceTimeMatrix
 {
 private:
-    /* Struct containing Butcher table for an RK methods */
-    // TODO: What's the best way to have these arrays... is it OK to just do it like this and just fill-in the parts we need?
-    struct RK_butcher {
-        int s;     // Number of stages 
-        double a[10][10]; // Matrix of coefficients.
-        double b[10]; // Quadrature weights
-        double c[10]; // Quadrature nodes
-    };
-
+    
     int     m_globRank;
     int     m_timeInd;
     int     m_spatialRank;
     int     m_timeDisc;
-    int     m_numTimeSteps;
+    int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
+    int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
     int     m_numProc;
-    int     m_ntPerProc;
+    int     m_ntPerProc; // TODO: this variable doesn't really make sense...
+    int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
     int     m_Np_x;
     int     m_bsize;
     int     m_spCommSize;
@@ -61,7 +55,10 @@ private:
     double  m_t0;
     double  m_t1;
     double  m_dt;
-    RK_butcher m_tableaux;
+    int     m_s_butcher;            /* Number of stages in RK scheme */
+    double  m_A_butcher[10][10];    /* Coefficients in RK Butcher tableaux */
+    double  m_b_butcher[10];        /* Coefficients in RK Butcher tableaux */
+    double  m_c_butcher[10];        /* Coefficients in RK Butcher tableaux */
 
     MPI_Comm            m_globComm;
     MPI_Comm            m_spatialComm;
@@ -89,6 +86,8 @@ private:
 
     // Routines to build space-time matrices when more than one time
     // step are allocated per processor.
+    void RKBlock(int* &rowptr, int* &colinds, double* &data, double* &B, 
+              double* &X, int &onProcSize);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
