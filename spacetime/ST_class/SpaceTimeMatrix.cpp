@@ -75,8 +75,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             MPI_Finalize();
             return;
         }
-        m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution variables and/or stage variables
-        //m_ntPerProc = m_numTimeSteps / m_numProc; // TODO: this variable doesn't really make sense...
+        m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
     }
 }
 
@@ -617,15 +616,15 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
                            double* &B, double* &X, int &onProcSize)
 {
     //std::cout << m_nDOFPerProc << "\tI'm here?????\n";
-    int DOFInd0 = m_globRank * m_nDOFPerProc; // Gloabl index of first variable I own
-    int DOFInd1 = DOFInd0 + m_nDOFPerProc - 1;  // Global index of last variable I own
+    int globalInd0 = m_globRank * m_nDOFPerProc;        // Global index of first variable I own
+    int globalInd1 = globalInd0 + m_nDOFPerProc - 1;    // Global index of last variable I own
 
-    int * localInd = new int[m_nDOFPerProc+10]; // Local index of each DOF inside block DOF
-    int * vInd     = new int[m_nDOFPerProc+10]; // Block DOF, v, that each DOF belongs to
-    for (int i = DOFInd0; i <= DOFInd1; i++) {
-        localInd[i - DOFInd0] = i % m_s_butcher;
-        vInd[i - DOFInd0]     = std::floor( (double) i / m_s_butcher );
-        //std::cout << "DOFInd0=" << DOFInd0 << ";DOFInd1=" << DOFInd1 << ";\tvInd=" << vInd[i-DOFInd0] <<  ";localInd=" << localInd[i-DOFInd0] << "\n";
+    int * lclInd = new int[m_nDOFPerProc];              // Local index of each DOF inside block DOF
+    int * blkInd = new int[m_nDOFPerProc];              // Block DOF, v, that each DOF belongs to
+    for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
+        lclInd[globalInd - globalInd0] = globalInd % m_s_butcher;
+        blkInd[globalInd - globalInd0] = std::floor( (double) globalInd / m_s_butcher );
+        //std::cout << "DOFInd0=" << DOFInd0 << ";DOFInd1=" << DOFInd1 << ";\tblkInd=" << blkInd[i-DOFInd0] <<  ";lclInd=" << lclInd[i-DOFInd0] << "\n";
     }
     
     // Get spatial discretization at time required by first 1st DOF.
@@ -635,9 +634,9 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     double* B0;
     double* X0;
     int spatialDOFs;
-    double t0 = m_dt * vInd[0] + m_dt * m_c_butcher[localInd[0]-1]; // Time to evaluate L at, as required by first DOF. Stage variable by default.
-    if (localInd[0] == 0 && vInd[0] > 0) {
-        t0 = m_dt * (vInd[0]-1) + m_dt * m_c_butcher[m_s_butcher-1];
+    double t0 = m_dt * blkInd[0] + m_dt * m_c_butcher[lclInd[0]-1]; // Time to evaluate L at, as required by first DOF. Stage variable by default.
+    if (lclInd[0] == 0 && blkInd[0] > 0) {
+        t0 = m_dt * (blkInd[0]-1) + m_dt * m_c_butcher[m_s_butcher-1];
     }
     getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, t0, m_bsize);
     int nnzL = T_rowptr[spatialDOFs];    
@@ -649,24 +648,25 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     getMassMatrix(M_rowptr, M_colinds, M_data);
     int nnzM = M_rowptr[spatialDOFs];
     
-    // Get total NNZ on this processor.
+    
+    /* ------ Get total NNZ on this processor. ------ */
     //  -Assumes NNZ of spatial discretization does not change with time
     //  -Doesn't assume sparsity of M and L overlap: This nnz count is an upperbound.
     int procNnz = 0;
-    for (int i = 0; i <= DOFInd1 - DOFInd0; i++) {
-        int k = localInd[i];
+    for (int i = 0; i <= globalInd1 - globalInd0; i++) {
+        int k = lclInd[i];
         // Solution-type variable 
         if (k == 0) {
             // Initial condition just has identity coupling
-            if (vInd[i] == 0) {
+            if (blkInd[i] == 0) {
                 procNnz += spatialDOFs;
-            // All other solution variables except the initial condition
+            // All other solution DOFs except the one at t = 0
             } else {
                 // Coupling to itself
                 procNnz += nnzM;
                 if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] != 0.0) procNnz += nnzL;
         
-                // Coupling to u variable at previous time 
+                // Coupling to solution DOF at previous time 
                 procNnz += nnzM;
                 if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] != 0.0) procNnz += nnzL; 
         
@@ -679,7 +679,7 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
             
         // Stage-type variable
         } else {
-            k--; 
+            k--; // Work with this to index Butcher arrays directly.
             // Coupling to itself
             procNnz += nnzM;
             if (m_A_butcher[k][k] != 0.0) procNnz += nnzL;
@@ -707,17 +707,17 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     // rowptr[0] = 0;
     // 
     // // Loop over DOFs on this processor and build sparse space-time matrix rows
-    // for (int vi = vInd0; vi <= vInd1; vi++) {
+    // for (int vi = blkInd0; vi <= blkInd1; vi++) {
     // 
     //     // Build spatial discretization matrix for the current RK node (provided it's time dependent)
-    //     if ((vi > vInd0) && m_isTimeDependent) {
+    //     if ((vi > blkInd0) && m_isTimeDependent) {
     //         delete[] T_rowptr;
     //         delete[] T_colinds;
     //         delete[] T_data;
     //         delete[] B0;
     //         delete[] X0;
     //         getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0,
-    //                                  X0, spatialDOFs, m_dt*tInds[vi-vInd0] + m_dt*m_c_butcher[stageInds[vi-vInd0]], m_bsize);
+    //                                  X0, spatialDOFs, m_dt*tInds[vi-blkInd0] + m_dt*m_c_butcher[stageInds[vi-blkInd0]], m_bsize);
     //     }
     // 
     //     int colPlusOffd  = (ti - 1)*spatialDOFs;
@@ -726,10 +726,10 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     // 
     // 
     //     // u-type variable
-    //     if (stageInds[vi-vInd0] == m_s_butcher-1) {
+    //     if (stageInds[vi-blkInd0] == m_s_butcher-1) {
     // 
     //         // This is the initial conditon, u0.
-    //         if (vInd0 == 0) {
+    //         if (blkInd0 == 0) {
     //             // Add initial condition to rhs
     //             addInitialCondition(B);
     // 
@@ -760,7 +760,7 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     // 
     // 
     //         // Update RHS vector if in initial time block.
-    //         if (tInds[vi-vInd0] == 0) {
+    //         if (tInds[vi-blkInd0] == 0) {
     //             addInitialCondition(U0); // Get u0 
     // 
     //             if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher] != 0.0) {
@@ -860,8 +860,8 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     //         std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
     //     }
     // }
-    // delete[] localInd;
-    // delete[] vInd;
+    // delete[] lclInd;
+    // delete[] blkInd;
     // delete[] T_rowptr;
     // delete[] T_colinds;
     // delete[] T_data;

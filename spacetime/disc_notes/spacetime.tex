@@ -361,6 +361,7 @@ I'm going to write these equations out in the format they're implemented in. Let
 
 \noindent For $n = 0$:
 \begin{align}
+\label{eq:implement_n0}
 \begin{split}
 I \mathbf{u}_n &= u(\mathbf{x},0) \\
 \big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
@@ -373,7 +374,8 @@ i = 1,\ldots,s-1.
 \end{split}
 \end{align}
 And for $n \in \{1,2,\ldots,N_t-1\}$\footnote{Note that $t_n \neq t_{n-1} + c_s \delta t $ for general RK schemes, which is why the first equation is referenced w.r.t the previous time level, $t_{n-1}$. Recall that this time appears in this equation due to the elimination of the last stage, $\mathbf{k}_{n,s}$, which is defined at this time.}:
-\begin{align}
+\begin{align} 
+\label{eq:implement_ngeneral}
 \begin{split}
 \big[ 
 \tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_{n-1} + c_s \delta t) 
@@ -400,10 +402,26 @@ b_s \mathbf{g}(t_{n-1} + c_s \delta t), \\
 i = 1,\ldots,s-1.
 \end{split}
 \end{align}
+Notice that the structure of the equation for $\mathbf{u}_0$ in \eqref{eq:implement_n0} is different to that for $\mathbf{u}_n$, $n > 0$, in \eqref{eq:implement_ngeneral}, and, so a separate implementation is required.
 
 
+So, there are a total of $s N_t$ unknowns, and they are grouped together through the variables
+\begin{align}
+\mathbf{v}_n = (\mathbf{u}_n, \mathbf{k}_{n,1}, \ldots, \mathbf{k}_{n,s-1})^\top, \quad n \in \{0,\ldots,N_t-1\}.
+\end{align}
 
+If we have $P \leq s N_t$, then a processor owns  $\kappa = \frac{s N_t}{P} \in \mathbb{N}$ DOFs. Note that $\kappa$ doesn't have to be one, and it does not have to be $s$, i.e., the vector $\mathbf{v}_n$ can be split across multiple processors, or one processor can own many such variables. 
 
+I'm going to refer to the $\mathbf{v}_n$ as a `global' DOF, and a $\mathbf{u}_n$ or $\mathbf{k}_{n,i}$ as a `local' DOF of `solution' or `stage' type, respectively. 
+\begin{table}
+\centering
+\begin{tabular}{c|c|c|c}
+variable & global index & block index & local index \\ \hline 
+$\mathbf{v}_n$ & -- & $n$ & --  \\
+$\mathbf{u}_n$ & $ns$ & $n$ & $0$  \\
+$\mathbf{k}_{n,i}$ & $ns+i$ & $n$ & $i$  \\ 
+\end{tabular}
+\end{table}
 % ------------------------------------------------------------------------------------------------------- %
 % ------------------------------------------------------------------------------------------------------- %
 \subsection{Code structure}
