@@ -426,8 +426,8 @@ $\mathbf{k}_{n,i}$ & $ns+i$ & $n$ & $i$  \\
 
 \textbf{Questions}
 \begin{enumerate}
-\item Do we really need to explicitly check that mass matrix data is not zero/not smaller than 1e-16?
-\item We need a separate function for getting the initial condition. At the moment this is lumped into getting the spatial discretization but this is no good; I think if you call the spatial discretization at $t=0$ then maybe you get the initial condition? We need to be able to separate the boundary conditions from the initial condition. For example, if the spatial discretization is time-independent, we'll never call it again for $t > 0$, but then how are we meant to get the boundary conditions?
+\item Do we really need to explicitly check that mass matrix data is not zero/not smaller than 1e-16? Ahh, is this perhaps because it's assembled with quadrature and maybe some of the integrals evaluated to zero but we don't necessarily know that ahead of time, or maybe who ever implemented  it might be too lazy to compute only non-zero integrals? Also, do we really need to check spatial discretization data too?
+\item Boundary conditions for stages? Is this an issue for Galerkin/FEM methods? It's completely non-trivial for FD/FV methods unless using periodic BCs... 
 \end{enumerate}
 
 
