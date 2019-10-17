@@ -86,7 +86,7 @@ private:
 
     // Routines to build space-time matrices when more than one time
     // step are allocated per processor.
-    void RKBlock(int* &rowptr, int* &colinds, double* &data, double* &B, 
+    void RK(int* &rowptr, int* &colinds, double* &data, double* &B, 
               double* &X, int &onProcSize);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);

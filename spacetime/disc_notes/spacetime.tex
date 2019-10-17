@@ -357,78 +357,7 @@ probably larger than the diagonal block (entry-wise anyways). Usually this is no
 discretizations}
 
 
-I'm going to write these equations out in the format they're implemented in. Let $t_n \coloneqq n \delta t$, then:
 
-\noindent For $n = 0$:
-\begin{align}
-\label{eq:implement_n0}
-\begin{split}
-I \mathbf{u}_n &= u(\mathbf{x},0) \\
-\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
-&= 
-- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
-- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n,j} 
-+ \mathbf{g}(t_n + c_i \delta t),
-\quad
-i = 1,\ldots,s-1.
-\end{split}
-\end{align}
-And for $n \in \{1,2,\ldots,N_t-1\}$\footnote{Note that $t_n \neq t_{n-1} + c_s \delta t $ for general RK schemes, which is why the first equation is referenced w.r.t the previous time level, $t_{n-1}$. Recall that this time appears in this equation due to the elimination of the last stage, $\mathbf{k}_{n,s}$, which is defined at this time.}:
-\begin{align} 
-\label{eq:implement_ngeneral}
-\begin{split}
-\big[ 
-\tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_{n-1} + c_s \delta t) 
-\big] 
-\mathbf{u}_{n} 
-&= 
-\big[ 
-\tfrac{1}{\delta t} M + ( a_{ss} - b_s) {\cal L}(t_{n-1} + c_s \delta t) 
-\big] 
-\mathbf{u}_{n-1} \\
-&\quad
-+ \sum \limits_{i = 1}^{s-1} 
-\big[
-b_i M + \delta t  (b_i a_{ss} - b_s a_{si}) {\cal L}(t_{n-1} + c_s \delta t)
-\big] \mathbf{k}_{n-1,i}
-+
-b_s \mathbf{g}(t_{n-1} + c_s \delta t), \\
-\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
-&= 
-- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
-- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n,j} 
-+ \mathbf{g}(t_n + c_i \delta t),
-\quad
-i = 1,\ldots,s-1.
-\end{split}
-\end{align}
-Notice that the structure of the equation for $\mathbf{u}_0$ in \eqref{eq:implement_n0} is different to that for $\mathbf{u}_n$, $n > 0$, in \eqref{eq:implement_ngeneral}, and, so a separate implementation is required.
-
-
-So, there are a total of $s N_t$ unknowns, and they are grouped together through the variables
-\begin{align}
-\mathbf{v}_n = (\mathbf{u}_n, \mathbf{k}_{n,1}, \ldots, \mathbf{k}_{n,s-1})^\top, \quad n \in \{0,\ldots,N_t-1\}.
-\end{align}
-
-If we have $P \leq s N_t$, then a processor owns  $\kappa = \frac{s N_t}{P} \in \mathbb{N}$ DOFs. Note that $\kappa$ doesn't have to be one, and it does not have to be $s$, i.e., the vector $\mathbf{v}_n$ can be split across multiple processors, or one processor can own many such variables. 
-
-I'm going to refer to the $\mathbf{v}_n$ as a `global' DOF, and a $\mathbf{u}_n$ or $\mathbf{k}_{n,i}$ as a `local' DOF of `solution' or `stage' type, respectively. 
-\begin{table}
-\centering
-\begin{tabular}{c|c|c|c}
-variable & global index & block index & local index \\ \hline 
-$\mathbf{v}_n$ & -- & $n$ & --  \\
-$\mathbf{u}_n$ & $ns$ & $n$ & $0$  \\
-$\mathbf{k}_{n,i}$ & $ns+i$ & $n$ & $i$  \\ 
-\end{tabular}
-\end{table}
-
-
-\textbf{Questions}
-\begin{enumerate}
-\item Do we really need to explicitly check that mass matrix data is not zero/not smaller than 1e-16? Ahh, is this perhaps because it's assembled with quadrature and maybe some of the integrals evaluated to zero but we don't necessarily know that ahead of time, or maybe who ever implemented  it might be too lazy to compute only non-zero integrals? Also, do we really need to check spatial discretization data too?
-\item Boundary conditions for stages? Is this an issue for Galerkin/FEM methods? It's completely non-trivial for FD/FV methods unless using periodic BCs... 
-\end{enumerate}
 
 
 % ------------------------------------------------------------------------------------------------------- %
@@ -464,32 +393,6 @@ But, we're essentially doing the reverse of this: We add temporal parallelism, t
 
 Note: There is no difference between the two approaches if we have enough processors. However, we're easily going to run into a situation where that's not the case. E.g., if we take $10^5$ time steps (this is within reason), we're going to need $P > s 10^5$ processors before we can even introduce spatial parallelism. Thus, I think quite often we're going to find ourselves in a regime of using temporal-only parallelism and not space-time parallelism that's saturated in space, like we want to. 
 \end{enumerate}
-
-\item A few remarks on the code structure/problem set up
-\begin{itemize}
-\item $N_t$ time points $0 \equiv t_0 < t_1 < \ldots < t_{N_t-1} \equiv T$, and mesh spacing $\Delta t = t_{n+1} - t_{n}$ is constant across the domain
-\item Take $N_t-1$ time steps
-\item Associated with every time point $t_n$, there is a set of $s$ DOFs: $\mathbf{v}_{n} \equiv (\mathbf{u}_n,\mathbf{k}_{n,1}, \ldots, \mathbf{k}_{n,s-1})^\top$. There are $N_t$ DOFs of the form $(\mathbf{v}_n)_{n = 0}^{N_t-1}$, or $N_t s$ DOFs of the form $(\mathbf{u}_n)_{n = 0}^{N_t-1} \cup (\mathbf{k}_{n,i})_{n,i=0,1}^{N_t-1,s-1}$
-\item The space-time linear system can be written in the form of a block lower triangular system
-\begin{align}
-\begin{bmatrix}
-\Phi^{\rm I}_0 & \\
-\Phi^{\rm E}_1 & \Phi^{\rm I}_1 &  \\
-					& \ddots & \ddots \\
-					& 				& \Phi^{\rm E}_{N_t-1} & \Phi^{\rm I}_{N_t-1} &  \\
-\end{bmatrix}
-\begin{bmatrix}
-\mathbf{v}_{0} \\
-\mathbf{v}_{1} \\ 
-\vdots \\
-\mathbf{v}_{N_t-1} \\
-\end{bmatrix}
-= \cdots
-\end{align}
-\item This formulation unfortunately ignores the solution at the final time, $\mathbf{u}_{N_t-1}$. However, including it make distributing processors very awkward since then there are $N_t s + 1$ DOFs. Another possibility would be to eliminate the initial condition, $\mathbf{u}_0$, from the system by adding it to the RHS. However, this leads to its own awkwardness because the stages defined over $t \in [0,\Delta t]$ require linear solves and matrix-vector products using the spatial discretization and $\mathbf{u}_0$, which is going to be a mess...
-\item $P > N_t s$: Means that every $\mathbf{u}_n$ and $\mathbf{k}_{n,i}$ is distributed over more than 1 process, i.e., there is spatial parallelism
-\item $P \leq N_t s$: Means that every $\mathbf{u}_n$ and $\mathbf{k}_{n,i}$ is distributed on at most one process (with equality achieved for the $P = N_t s$ case). This could mean that there are multiple processors to each $\mathbf{v}_n$, or that a single process owns $\mathbf{v}_n, \mathbf{v}_{n+1}, \ldots$ plus some number of components from $\mathbf{v}_{n-1}$, for example
-\end{itemize}
 \end{itemize}
 \noindent\textbf{Implementation:}
 \begin{itemize}
@@ -537,7 +440,105 @@ If is time dependent, have to rebuild every time which is expensive. Space-time 
 
 
 
+\subsection{Some further implementation details}
+\textit{This section is helpful to look at when implementing the code/understanding it.} \\
 
+\noindent A few remarks on the code structure/problem set up
+\begin{itemize}
+\item $N_t$ time points: $0 \equiv t_0 < t_1 < \ldots < t_{N_t-1} \equiv T$, where $t_n \coloneqq n \delta t$
+\item Take $N_t-1$ time steps to get from $t_0$ to $t_{N_t-1}$
+\item Mesh spacing $\Delta t = t_{n+1} - t_{n}$ is assumed constant $\forall n$
+\item This formulation unfortunately ignores the solution at the final time, $\mathbf{u}_{N_t-1}$. Including $\mathbf{u}_{N_t-1}$ makes distributing processors very awkward since then there are $N_t s + 1$ DOFs. One possibility is to eliminate the initial condition, $\mathbf{u}_0$, from the system by adding it to the RHS. However, this leads to its own awkwardness because the stages defined over $t \in [t_0,t_1]$ require linear solves and matrix-vector products using the spatial discretization and $\mathbf{u}_0$, which is going to be a mess...
+\end{itemize}
+
+\noindent \underline{For $n = 0$:}
+\begin{align}
+\label{eq:implement_n0}
+\begin{split}
+I \mathbf{u}_n &= u(\mathbf{x},0) \\
+\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
+&= 
+- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n,j} 
++ \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s-1.
+\end{split}
+\end{align}
+\underline{And for $n \in \{1,2,\ldots,N_t-1\}$}\footnote{Note that $t_n \neq t_{n-1} + c_s \delta t $ for general RK schemes, which is why the equation for $\mathbf{u}_n$ references the previous time level, $t_{n-1}$. Recall that this time appears in this equation due to the elimination of the last stage, $\mathbf{k}_{n,s}$, which is defined at this time.}:
+\begin{align} 
+\label{eq:implement_ngeneral}
+\begin{split}
+\big[ 
+\tfrac{1}{\delta t} M + a_{ss} {\cal L}(t_{n-1} + c_s \delta t) 
+\big] 
+\mathbf{u}_{n} 
+&= 
+\big[ 
+\tfrac{1}{\delta t} M + ( a_{ss} - b_s) {\cal L}(t_{n-1} + c_s \delta t) 
+\big] 
+\mathbf{u}_{n-1} \\
+&\quad
++ \sum \limits_{i = 1}^{s-1} 
+\big[
+b_i M + \delta t  (b_i a_{ss} - b_s a_{si}) {\cal L}(t_{n-1} + c_s \delta t)
+\big] \mathbf{k}_{n-1,i}
++
+b_s \mathbf{g}(t_{n-1} + c_s \delta t), \\
+\big[ M + \delta t a_{ii} {\cal L}(t_n + c_i \delta t) \big] \mathbf{k}_{n,i} 
+&= 
+- {\cal L}(t_n + c_i \delta t) \mathbf{u}_{n} 
+- \delta t \sum \limits_{j = 1}^{i-1} a_{ij} {\cal L}(t_n + c_i \delta t) \mathbf{k}_{n,j} 
++ \mathbf{g}(t_n + c_i \delta t),
+\quad
+i = 1,\ldots,s-1.
+\end{split}
+\end{align}
+Notice that the structure of the equation for $\mathbf{u}_0$ in \eqref{eq:implement_n0} is different to that for $\mathbf{u}_n$, $n > 0$, in \eqref{eq:implement_ngeneral}, and, so a separate implementation is required. There is a total of $s N_t$ variables (ignoring the number of spatial DOFs).
+
+The entire space-time system is naturally blocked into blocks of $s$ equations/unknowns. We can write these as the variables
+\begin{align}
+\mathbf{v}_n = (\mathbf{u}_n, \mathbf{k}_{n,1}, \ldots, \mathbf{k}_{n,s-1})^\top, \quad n \in \{0,\ldots,N_t-1\}.
+\end{align}
+The space-time linear system can be written in the form of a block lower triangular system for $\mathbf{v}$:
+\begin{align}
+\begin{bmatrix}
+\Phi^{\rm I}_0 & \\
+\Phi^{\rm E}_1 & \Phi^{\rm I}_1 &  \\
+					& \ddots & \ddots \\
+					& 				& \Phi^{\rm E}_{N_t-1} & \Phi^{\rm I}_{N_t-1} &  \\
+\end{bmatrix}
+\begin{bmatrix}
+\mathbf{v}_{0} \\
+\mathbf{v}_{1} \\ 
+\vdots \\
+\mathbf{v}_{N_t-1} \\
+\end{bmatrix}
+= \cdots
+\end{align} \\
+
+\noindent \textbf{Time-only parallelism:}  This happens when we have a number of processors $P \leq s N_t$. Each processor then owns $\frac{s N_t}{P} \in \mathbb{N}$ DOFs. Note that this doesn't have to be one, and it does not have to be $s$, i.e., the vector $\mathbf{v}_n$ can be split across multiple processors, or one processor can own many such variables. 
+
+In the implementation, we need to be able to distinguish between the different types of variables in the vectors $\mathbf{v}_n$, and so it's convenient to index them as in Table \ref{tab:variable_inds}.
+\begin{table}[h]
+\caption{Indexing for variables in implementation. \label{tab:variable_inds}}
+\centering
+\begin{tabular}{c|c|c|c}
+variable & global index & block index & local index \\ \hline 
+$\mathbf{v}_n$ & -- & $n$ & --  \\
+$\mathbf{u}_n$ & $ns$ & $n$ & $0$  \\
+$\mathbf{k}_{n,i}$ & $ns+i$ & $n$ & $i$  \\ 
+\end{tabular}
+\end{table}
+
+
+\noindent \textbf{Space-time parallelism:} This happens when we have a number of processors $P > s N_t$.
+
+\noindent \textbf{\textcolor{red}{Questions:}}
+\begin{enumerate}
+\item Do we really need to explicitly check that mass matrix data and spatial discretization data is not zero/not smaller than 1e-16? It seems like it just creates unnecessary overhead? If the user explicitly passes zeros in with the mass matrix and spatial discretization then the implementation won't be as efficient as possible, but isn't that their fault for not properly sparsifying their operators?
+\item One thing to be aware of is supplying boundary conditions for RK stages. Is there a natural way to do this for FEM methods? For FD/FV methods this is completely non-trivial unless using periodic boundaries. 
+\end{enumerate}
 
 
 

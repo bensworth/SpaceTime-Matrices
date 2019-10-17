@@ -10,6 +10,7 @@ using namespace mfem;
 //  srun -n 240 ./driver -s 2 -l 6 -nt 40 -t 31 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.0025 -lump 0
 // mpirun -np 4 ./driver -s 1 -l 2 -nt 12 -t 11 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.01 -lump 0
 
+
 int main(int argc, char *argv[])
 {
     // Initialize parallel
@@ -116,18 +117,18 @@ int main(int argc, char *argv[])
         CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
-        // if (save_mat) {
-        //     STmatrix.SaveMatrix("test.mm");
-        // }
-        // STmatrix.SetAMGParameters(AMG);
-        // if (use_gmres) {
-        //     STmatrix.SolveGMRES(solve_tol, max_iter, print_level, false,
-        //                         use_gmres, AMGiters);
-        // }
-        // else {
-        //     STmatrix.SolveAMG(solve_tol, max_iter, print_level, false);
-        // }
-        // STmatrix.PrintMeshData();
+        if (save_mat) {
+            STmatrix.SaveMatrix("test.mm");
+        }
+        STmatrix.SetAMGParameters(AMG);
+        if (use_gmres) {
+            STmatrix.SolveGMRES(solve_tol, max_iter, print_level, false,
+                                use_gmres, AMGiters);
+        }
+        else {
+            STmatrix.SolveAMG(solve_tol, max_iter, print_level, false);
+        }
+        STmatrix.PrintMeshData();
     }
     else {
         DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,

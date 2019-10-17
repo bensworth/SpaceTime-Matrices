@@ -28,12 +28,12 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
     MPI_Comm_size(m_globComm, &m_numProc);
 
     // Set member variables
-    if (m_globRank == 0) {
-        std::cout << "dt = " << m_dt << "\n";
-        std::cout << "nt = " << m_nt << "\n";
-        std::cout << "s = " << m_s_butcher << "\n";
-        std::cout << "P = " << m_numProc << "\n";
-    }
+    // if (m_globRank == 0) {
+    //     std::cout << "dt = " << m_dt << "\n";
+    //     std::cout << "nt = " << m_nt << "\n";
+    //     std::cout << "s = " << m_s_butcher << "\n";
+    //     std::cout << "P = " << m_numProc << "\n";
+    // }
 
     
     // Check that number of time steps times number of stages divides the number MPI processes or vice versa.
@@ -76,6 +76,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             return;
         }
         m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
+        //  TOOD: delete... This variable is for the old implementation... 
+        m_ntPerProc = m_nt / m_numProc; 
     }
 }
 
@@ -304,66 +306,63 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     double* B;
     double* X;
     int onProcSize;
-    RKBlock(rowptr, colinds, data, B, X, onProcSize);
-    
-    //MPI_Finalize();
-    return;
-    
-    // if (m_timeDisc == 11) {
-    //     BDF1(rowptr, colinds, data, B, X, onProcSize);
-    // }
-    // else if (m_timeDisc == 31) {
-    //     AB1(rowptr, colinds, data, B, X, onProcSize);
-    // }
-    // else {
-    //     std::cout << "WARNING: invalid choice of time integration.\n";
-    //     MPI_Finalize();
-    //     return;
-    // }
+    RK(rowptr, colinds, data, B, X, onProcSize);
+    // TODO : Delete the stuff below. But just keep for the moment.. 
+   // if (m_timeDisc == 11) {
+   //      BDF1(rowptr, colinds, data, B, X, onProcSize);
+   //  }
+   //  else if (m_timeDisc == 31) {
+   //      AB1(rowptr, colinds, data, B, X, onProcSize);
+   //  }
+   //  else {
+   //      std::cout << "WARNING: invalid choice of time integration.\n";
+   //      MPI_Finalize();
+   //      return;
+   //  }
 
-    // // Initialize matrix
-    // int ilower = m_globRank*onProcSize;
-    // int iupper = (m_globRank+1)*onProcSize - 1;
-    // HYPRE_IJMatrixCreate(MPI_COMM_WORLD, ilower, iupper, ilower, iupper, &m_Aij);
-    // HYPRE_IJMatrixSetObjectType(m_Aij, HYPRE_PARCSR);
-    // HYPRE_IJMatrixInitialize(m_Aij);
-    // 
-    // // Set matrix coefficients
-    // int* rows = new int[onProcSize];
-    // int* cols_per_row = new int[onProcSize];
-    // for (int i=0; i<onProcSize; i++) {
-    //     rows[i] = ilower + i;
-    //     cols_per_row[i] = rowptr[i+1] - rowptr[i];
-    // }
-    // HYPRE_IJMatrixSetValues(m_Aij, onProcSize, cols_per_row, rows, colinds, data);
-    // 
-    // // Finalize construction
-    // HYPRE_IJMatrixAssemble(m_Aij);
-    // HYPRE_IJMatrixGetObject(m_Aij, (void **) &m_A);
-    // 
-    // // Create sample rhs and solution vectors
-    // HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_bij);
-    // HYPRE_IJVectorSetObjectType(m_bij, HYPRE_PARCSR);
-    // HYPRE_IJVectorInitialize(m_bij);
-    // HYPRE_IJVectorSetValues(m_bij, onProcSize, rows, B);
-    // HYPRE_IJVectorAssemble(m_bij);
-    // HYPRE_IJVectorGetObject(m_bij, (void **) &m_b);
-    // 
-    // HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_xij);
-    // HYPRE_IJVectorSetObjectType(m_xij, HYPRE_PARCSR);
-    // HYPRE_IJVectorInitialize(m_xij);
-    // HYPRE_IJVectorSetValues(m_xij, onProcSize, rows, X);
-    // HYPRE_IJVectorAssemble(m_xij);
-    // HYPRE_IJVectorGetObject(m_xij, (void **) &m_x);
-    // 
-    // // Remove pointers that should have been copied by Hypre
-    // delete[] rowptr;
-    // delete[] colinds;
-    // delete[] data;
-    // delete[] B;
-    // delete[] X;
-    // delete[] rows;
-    // delete[] cols_per_row;
+    // Initialize matrix
+    int ilower = m_globRank*onProcSize;
+    int iupper = (m_globRank+1)*onProcSize - 1;
+    HYPRE_IJMatrixCreate(MPI_COMM_WORLD, ilower, iupper, ilower, iupper, &m_Aij);
+    HYPRE_IJMatrixSetObjectType(m_Aij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(m_Aij);
+    
+    // Set matrix coefficients
+    int* rows = new int[onProcSize];
+    int* cols_per_row = new int[onProcSize];
+    for (int i=0; i<onProcSize; i++) {
+        rows[i] = ilower + i;
+        cols_per_row[i] = rowptr[i+1] - rowptr[i];
+    }
+    HYPRE_IJMatrixSetValues(m_Aij, onProcSize, cols_per_row, rows, colinds, data);
+    
+    // Finalize construction
+    HYPRE_IJMatrixAssemble(m_Aij);
+    HYPRE_IJMatrixGetObject(m_Aij, (void **) &m_A);
+    
+    // Create sample rhs and solution vectors
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_bij);
+    HYPRE_IJVectorSetObjectType(m_bij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(m_bij);
+    HYPRE_IJVectorSetValues(m_bij, onProcSize, rows, B);
+    HYPRE_IJVectorAssemble(m_bij);
+    HYPRE_IJVectorGetObject(m_bij, (void **) &m_b);
+    
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &m_xij);
+    HYPRE_IJVectorSetObjectType(m_xij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(m_xij);
+    HYPRE_IJVectorSetValues(m_xij, onProcSize, rows, X);
+    HYPRE_IJVectorAssemble(m_xij);
+    HYPRE_IJVectorGetObject(m_xij, (void **) &m_x);
+    
+    // Remove pointers that should have been copied by Hypre
+    delete[] rowptr;
+    delete[] colinds;
+    delete[] data;
+    delete[] B;
+    delete[] X;
+    delete[] rows;
+    delete[] cols_per_row;
 }
 
 
@@ -436,7 +435,6 @@ void SpaceTimeMatrix::PrintMeshData()
         "\n\thmax = " << m_hmax << "\n\tdt   = " << m_dt << "\n\n";
     }
 }
-
 
 /* Initialize AMG solver based on parameters in m_solverOptions struct. */
 void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
@@ -611,14 +609,11 @@ void SpaceTimeMatrix::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_
 // (No spatial parallelism)
 // NOTES:
 //  Does not make any assumption about overlap in the sparsity pattern of the spatial 
-// discretization and the mass matrix. 
-//  When estimating matrix nnz, assumes nnz of spatial discretization does not depend on time
-//
-// 
-//
+// discretization and the mass matrix when estimating matrix nnz, 
+//  assumes nnz of spatial discretization does not depend on time
 
 /* Arbitrary component(s) of s-stage RK block(s) w/ last stage eliminated. */
-void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
+void SpaceTimeMatrix::RK(int* &rowptr, int* &colinds, double* &data,
                            double* &B, double* &X, int &onProcSize)
 {
     int globalInd0 = m_globRank * m_nDOFPerProc;        // Global index of first variable I own
@@ -645,7 +640,8 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
         t = m_dt * blockInd[0] + m_dt * m_c_butcher[localInd[0]-1]; 
     }
     getSpatialDiscretization(T_rowptr, T_colinds, T_data, B0, X0, spatialDOFs, t, m_bsize);
-    int nnzL = T_rowptr[spatialDOFs];    
+    int nnzL = T_rowptr[spatialDOFs];   
+    
     
     // Get mass matrix
     int* M_rowptr;
@@ -653,6 +649,11 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
     double* M_data;
     getMassMatrix(M_rowptr, M_colinds, M_data);
     int nnzM = M_rowptr[spatialDOFs];
+    // TODO: Why is this not making sense  for DG??
+    
+    // std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
+    // std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
+    // std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
     
     
     /* ------ Get total NNZ on this processor. ------ */
@@ -685,7 +686,7 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
             
         // Stage-type DOF
         } else {
-            k--; // Work with this to index Butcher arrays directly.
+            k -= 1; // Work with this to index Butcher arrays directly.
             // Coupling to itself
             procNnz += nnzM;
             if (m_A_butcher[k][k] != 0.0) procNnz += nnzL;
@@ -699,8 +700,7 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
             }
         }
     }
-    std::cout << "nnz on proc " << m_globRank << " = " << procNnz << '\n';
-    
+    //std::cout << "nnz on proc " << m_globRank << " = " << procNnz << '\n';
     
     onProcSize  = m_nDOFPerProc * spatialDOFs; // Number of rows I own
     rowptr  = new int[onProcSize + 1];
@@ -946,6 +946,8 @@ void SpaceTimeMatrix::RKBlock(int* &rowptr, int* &colinds, double* &data,
         std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
     }
     
+    //std::cout << "Actual nnz on proc " << m_globRank << " = " << rowptr[onProcSize] << "\n";
+    
     // Clean up.
     delete[] localInd;
     delete[] blockInd;
@@ -989,6 +991,10 @@ void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,
     for (int i=0; i<M_rowptr[spatialDOFs]; i++) {
         M_data[i] /= m_dt;
     }
+
+    std::cout << "nnzL on proc " << m_globRank << " = " << T_rowptr[spatialDOFs] << '\n';
+    std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
+    std::cout << "nnzM on proc " << m_globRank << " = " << M_rowptr[spatialDOFs] << '\n';
 
     // Get size/nnz of spatial discretization and total for rows on this processor.
     // Allocate CSR structure.
