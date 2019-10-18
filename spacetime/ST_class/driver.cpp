@@ -2,6 +2,7 @@
 #include <fstream>
 #include "CGdiffusion.hpp"
 #include "DGadvection.hpp"
+#include "FDadvection.hpp"
 #include "mfem.hpp"
 using namespace mfem;
 
@@ -130,7 +131,7 @@ int main(int argc, char *argv[])
         }
         STmatrix.PrintMeshData();
     }
-    else {
+    else if (spatialDisc == 2) {
         DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
@@ -147,7 +148,42 @@ int main(int argc, char *argv[])
         }
         STmatrix.PrintMeshData();
     }
+    else if (spatialDisc == 3) {
+        // Let's set the time step so that we run at 85% of the CFL of the given ERK discretization
+        // These limits apply for ERKp+Up schemes
+        double CFLlim = 0.0;
+        if (order == 1)  {
+            CFLlim = 1.0;
+        } else if (order == 2) {
+            CFLlim = 0.5;
+        } else if (order == 3) {
+            CFLlim = 1.62589;
+        } else if (order == 4) {
+            CFLlim = 1.04449;
+        } else if  (order == 5) {
+            CFLlim = 1.96583;
+        }
+        
+        // Assume nx = 2^(refLevels + 2), and x \in [-1,1]
+        dt = 2.0 / pow(2.0, refLevels + 2)  * CFLlim;
+        
+        FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
+                                dt, refLevels, order);
 
+        STmatrix.BuildMatrix();
+        if (save_mat) {
+            STmatrix.SaveMatrix("A_FD.mm");
+        }
+        STmatrix.SetAMGParameters(AMG);
+        if (use_gmres) {
+            STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
+                                true, use_gmres, AMGiters);
+        }
+        else {
+            STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+        }
+        
+    }                     
     MPI_Finalize();
     return 0;
 }
