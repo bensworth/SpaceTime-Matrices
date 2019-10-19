@@ -12,6 +12,7 @@
 //      - Add hypre timing for setup and solve (see ij.c)
 
 
+
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int nt, double dt)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_nt{nt},
@@ -101,87 +102,113 @@ void SpaceTimeMatrix::BuildMatrix()
 }
 
 
-// timeDisc with "1" as 1st digit are SDIRK, timeDisc with "3" as 1st digit are ERK
+/* Print data to file that allows one to extract the 
+    relevant data for plotting, etc. from the saved solution. Pass
+    in dictionary with information also to be saved to file that isn't a member 
+    variable (e.g. space disc info)
+*/
+void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo) 
+{
+    std::ofstream solinfo;
+    solinfo.open(filename);
+    solinfo << "P=" << m_numProc << "\n";
+    solinfo << "nt=" << m_nt << "\n";
+    solinfo << "dt=" << m_dt << "\n";
+    solinfo << "s=" << m_s_butcher << "\n";
+    solinfo << "timeDisc=" << m_timeDisc << "\n";
+    
+    std::map<std::string, std::string>::iterator it;
+    for (it=additionalInfo.begin(); it!=additionalInfo.end(); it++) {
+        solinfo << it->first << "=" << it->second << "\n";
+    }
+
+    solinfo.close();
+}
+
+
+// timeDisc with "1" as 1st digit are ERK, timeDisc with "2" as 1st digit are SDIRK
+// 2nd digit == number of stages
+// 3rd digit == order of method
 void SpaceTimeMatrix::GetButcherTableaux() {
 
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
-    if (m_timeDisc == 31) {
+    if (m_timeDisc == 111) {
         m_s_butcher = 1;
         m_A_butcher[0][0] = 0.0;
         m_b_butcher[0] = 1.0; 
         m_c_butcher[0] = 0.0; 
     
     // 2nd-order Heun's method    
-    } else if (m_timeDisc == 32) {
-            m_s_butcher = 2;
-            m_A_butcher[0][0] = 0.0;
-            m_A_butcher[1][0] = 1.0;
-            m_A_butcher[0][1] = 0.0;
-            m_A_butcher[1][1] = 0.0;
-            m_b_butcher[0] = 0.5;
-            m_b_butcher[1] = 0.5;
-            m_c_butcher[0] = 0.0;
-            m_c_butcher[1] = 1.0;
+    } else if (m_timeDisc == 122) {
+        m_s_butcher = 2;
+        m_A_butcher[0][0] = 0.0;
+        m_A_butcher[1][0] = 1.0;
+        m_A_butcher[0][1] = 0.0;
+        m_A_butcher[1][1] = 0.0;
+        m_b_butcher[0] = 0.5;
+        m_b_butcher[1] = 0.5;
+        m_c_butcher[0] = 0.0;
+        m_c_butcher[1] = 1.0;
         
     // 3rd-order optimal SSPERK
-    } else if (m_timeDisc == 33) {
-            m_s_butcher = 3;
-            m_A_butcher[0][0] = 0.0; // 1st col
-            m_A_butcher[1][0] = 1.0;
-            m_A_butcher[2][0] = 1.0/4.0; 
-            m_A_butcher[0][1] = 0.0; // 2nd col
-            m_A_butcher[1][1] = 0.0;
-            m_A_butcher[2][1] = 1.0/4.0;
-            m_A_butcher[0][2] = 0.0;  // 3rd col
-            m_A_butcher[1][2] = 0.0;
-            m_A_butcher[2][2] = 0.0;
-            m_b_butcher[0] = 1.0/6.0;
-            m_b_butcher[1] = 1.0/6.0;
-            m_b_butcher[2] = 2.0/3.0;
-            m_c_butcher[0] = 0.0;
-            m_c_butcher[1] = 1.0;
-            m_c_butcher[2] = 1.0/2.0;
+    } else if (m_timeDisc == 133) {
+        m_s_butcher = 3;
+        m_A_butcher[0][0] = 0.0; // 1st col
+        m_A_butcher[1][0] = 1.0;
+        m_A_butcher[2][0] = 1.0/4.0; 
+        m_A_butcher[0][1] = 0.0; // 2nd col
+        m_A_butcher[1][1] = 0.0;
+        m_A_butcher[2][1] = 1.0/4.0;
+        m_A_butcher[0][2] = 0.0;  // 3rd col
+        m_A_butcher[1][2] = 0.0;
+        m_A_butcher[2][2] = 0.0;
+        m_b_butcher[0] = 1.0/6.0;
+        m_b_butcher[1] = 1.0/6.0;
+        m_b_butcher[2] = 2.0/3.0;
+        m_c_butcher[0] = 0.0;
+        m_c_butcher[1] = 1.0;
+        m_c_butcher[2] = 1.0/2.0;
 
     // Classical 4th-order ERK
-    } else if (m_timeDisc == 34){
-            m_s_butcher = 4;
-            m_A_butcher[0][0] = 0.0; // 1st col
-            m_A_butcher[1][0] = 1.0/2.0;
-            m_A_butcher[2][0] = 0.0;
-            m_A_butcher[3][0] = 0.0;
-            m_A_butcher[0][1] = 0.0; // 2nd col
-            m_A_butcher[1][1] = 0.0;
-            m_A_butcher[2][1] = 1.0/2.0;
-            m_A_butcher[3][1] = 0.0;
-            m_A_butcher[0][2] = 0.0; // 3rd col
-            m_A_butcher[1][2] = 0.0;
-            m_A_butcher[2][2] = 0.0;
-            m_A_butcher[3][2] = 1.0;
-            m_A_butcher[0][3] = 0.0; // 4th col
-            m_A_butcher[1][3] = 0.0;
-            m_A_butcher[2][3] = 0.0;
-            m_A_butcher[3][3] = 0.0;
-            m_b_butcher[0] = 1.0/6.0;
-            m_b_butcher[1] = 1.0/3.0;
-            m_b_butcher[2] = 1.0/3.0;
-            m_b_butcher[3] = 1.0/6.0;
-            m_c_butcher[0] = 0.0;
-            m_c_butcher[1] = 1.0/2.0;
-            m_c_butcher[2] = 1.0/2.0;
-            m_c_butcher[3] = 1.0;
+} else if (m_timeDisc == 144){
+        m_s_butcher = 4;
+        m_A_butcher[0][0] = 0.0; // 1st col
+        m_A_butcher[1][0] = 1.0/2.0;
+        m_A_butcher[2][0] = 0.0;
+        m_A_butcher[3][0] = 0.0;
+        m_A_butcher[0][1] = 0.0; // 2nd col
+        m_A_butcher[1][1] = 0.0;
+        m_A_butcher[2][1] = 1.0/2.0;
+        m_A_butcher[3][1] = 0.0;
+        m_A_butcher[0][2] = 0.0; // 3rd col
+        m_A_butcher[1][2] = 0.0;
+        m_A_butcher[2][2] = 0.0;
+        m_A_butcher[3][2] = 1.0;
+        m_A_butcher[0][3] = 0.0; // 4th col
+        m_A_butcher[1][3] = 0.0;
+        m_A_butcher[2][3] = 0.0;
+        m_A_butcher[3][3] = 0.0;
+        m_b_butcher[0] = 1.0/6.0;
+        m_b_butcher[1] = 1.0/3.0;
+        m_b_butcher[2] = 1.0/3.0;
+        m_b_butcher[3] = 1.0/6.0;
+        m_c_butcher[0] = 0.0;
+        m_c_butcher[1] = 1.0/2.0;
+        m_c_butcher[2] = 1.0/2.0;
+        m_c_butcher[3] = 1.0;
     
     
     /* --- SDIRK tables --- */
     // Backward Euler, 1st-order
-    } else if (m_timeDisc == 11) {
+    } else if (m_timeDisc == 211) {
         m_s_butcher = 1;
         m_A_butcher[0][0] = 1.0;
         m_b_butcher[0] = 1.0; 
         m_c_butcher[0] = 1.0; 
     
     // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
-    } else if (m_timeDisc == 12) {
+    } else if (m_timeDisc == 222) {
         double sqrt2 = 1.414213562373095;
         m_s_butcher = 2;
         m_A_butcher[0][0] = 1.0 - sqrt2/2.0;
@@ -194,7 +221,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         m_c_butcher[1] = sqrt2/2.0;
         
     // 3rd-order (3-stage) L-stable SDIRK (see Butcher's book, p.261--262)
-    } else if (m_timeDisc == 13) {
+    } else if (m_timeDisc == 233) {
         double zeta    = 0.43586652150845899942;
         double alpha   = 0.5*(1.0 + zeta);
         double beta    = 0.5*(1.0 - zeta); 

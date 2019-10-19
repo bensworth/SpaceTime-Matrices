@@ -9,8 +9,11 @@
 // 
 double FDadvection::initCond(const double x) 
 {        
-        double cx = sin(2 * PI * x);
-        return cx*cx*cx*cx;
+        double c = sin(2 * PI * x);
+        std::cout << c << "\n";
+        return pow(c, 4.0);
+        
+        //return -3.5;
 }
 
 
@@ -43,7 +46,7 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 {
     //m_nx = 16;
     m_nx = pow(2, refLevels+2);
-    m_dx = 2.0 / m_nx;
+    m_dx = 2.0 / m_nx; // Assume x \in [-1,1].
 }
 
 
@@ -202,7 +205,7 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
     X = new double[m_nx];
     B = new double[m_nx];
     for (int i = 0; i < m_nx; i++) {
-        X[i] = 1.0;
+        X[i] = 2.0;
         B[i] = 0.0;
     }
 }

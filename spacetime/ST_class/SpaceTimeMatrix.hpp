@@ -1,5 +1,6 @@
 #include <mpi.h>
 #include "HYPRE.h"
+#include <map>
 #include <string>
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
@@ -131,6 +132,7 @@ public:
     void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
     void SaveRHS(std::string filename) { HYPRE_IJVectorPrint(m_bij, filename.c_str()); }
     void SaveX(std::string filename) { HYPRE_IJVectorPrint(m_xij, filename.c_str()); }
+    void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
 
     void SetAMG();
     void SetAIR();

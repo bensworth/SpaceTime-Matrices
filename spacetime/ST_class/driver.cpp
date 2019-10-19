@@ -30,9 +30,10 @@ int main(int argc, char *argv[])
     int dim          = 2;
     int use_gmres    = 0;
     int save_mat     = 0;
+    int save_sol     = 0;
     double solve_tol = 1e-8;
     int print_level  = 3;
-    int timeDisc     = 11;
+    int timeDisc     = 211;
     int spatialDisc  = 1;
     int max_iter     = 250;
     double dt        = -1;
@@ -46,7 +47,7 @@ int main(int argc, char *argv[])
 
     OptionsParser args(argc, argv);
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
-                   "Spatial discretization (1=CG diffusion, 2=DG advection");
+                   "Spatial discretization (1=CG diffusion, 2=DG advection, 3=FD advection");
     args.AddOption(&timeDisc, "-t", "--time-disc",
                   "Time discretization (11=BDF1; 31=AB1).");
     args.AddOption(&order, "-o", "--order",
@@ -70,8 +71,10 @@ int main(int argc, char *argv[])
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
     args.AddOption(&AMGiters, "-amgi", "--amg-iters",
                   "Number of BoomerAMG iterations to precondition one GMRES step.");
-    args.AddOption(&save_mat, "-save", "--save-mat",
+    args.AddOption(&save_mat, "-saveA", "--save-mat",
                   "Boolean to save matrix to file.");
+    args.AddOption(&save_sol, "-saveX", "--save-sol",
+                  "Boolean to save solution to file.");
     args.AddOption(&(AMG.cycle_type), "-c", "--cycle-type",
                   "Cycle type; 0=F, 1=V, 2=W.");
     args.AddOption(&(AMG.distance_R), "-AIR", "--AIR-distance",
@@ -149,7 +152,7 @@ int main(int argc, char *argv[])
         STmatrix.PrintMeshData();
     }
     else if (spatialDisc == 3) {
-        // Let's set the time step so that we run at 85% of the CFL of the given ERK discretization
+        
         // These limits apply for ERKp+Up schemes
         double CFLlim = 0.0;
         if (order == 1)  {
@@ -164,15 +167,23 @@ int main(int argc, char *argv[])
             CFLlim = 1.96583;
         }
         
+        // Let's set the time step so that we run at 85% of the CFL of the given ERK discretization
         // Assume nx = 2^(refLevels + 2), and x \in [-1,1]
-        dt = 2.0 / pow(2.0, refLevels + 2)  * CFLlim;
+        dt = 2.0 / pow(2.0, refLevels + 2) * CFLlim;
+        double CFL_fraction = 0.85;
+        dt *= CFL_fraction;
+        
+        
+        std::cout << "\n\nreal dt = " << dt << "\n\n";
+        
+        
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
                                 dt, refLevels, order);
 
         STmatrix.BuildMatrix();
         if (save_mat) {
-            STmatrix.SaveMatrix("A_FD.mm");
+            STmatrix.SaveMatrix("data/A_FD.mm");
         }
         STmatrix.SetAMGParameters(AMG);
         if (use_gmres) {
@@ -183,7 +194,22 @@ int main(int argc, char *argv[])
             STmatrix.SolveAMG(solve_tol, max_iter, print_level);
         }
         
-    }                     
+        if (save_sol) {
+            std::string file_name = "data/X_FD.txt";
+            STmatrix.SaveX(file_name);
+            // Save data to file enabling easier inspection of solution            
+            if (rank == 0) {
+                std::map<std::string, std::string> space_info;
+                space_info["space_refLevels"] = std::to_string(refLevels);
+                space_info["space_order"] = std::to_string(order);
+                space_info["space_dim"] = std::to_string(dim);
+                STmatrix.SaveSolInfo(file_name, space_info);    
+            }
+        }
+        
+        
+    }                         
     MPI_Finalize();
     return 0;
 }
+
