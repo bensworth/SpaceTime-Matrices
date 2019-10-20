@@ -40,7 +40,7 @@ int main(int argc, char *argv[])
     int lump_mass    = true;
     int AMGiters = 1;
 
-    // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
+    //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "FA";
@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
                    "Spatial discretization (1=CG diffusion, 2=DG advection, 3=FD advection");
     args.AddOption(&timeDisc, "-t", "--time-disc",
-                  "Time discretization (11=BDF1; 31=AB1).");
+                  "Time discretization (see RK IDs).");
     args.AddOption(&order, "-o", "--order",
                   "Finite element order.");
     args.AddOption(&dt, "-dt", "--dt",
@@ -151,6 +151,8 @@ int main(int argc, char *argv[])
         }
         STmatrix.PrintMeshData();
     }
+    
+    /* Finite-difference discretization of advection */
     else if (spatialDisc == 3) {
         
         // These limits apply for ERKp+Up schemes
@@ -167,14 +169,24 @@ int main(int argc, char *argv[])
             CFLlim = 1.96583;
         }
         
-        // Let's set the time step so that we run at 85% of the CFL of the given ERK discretization
+        // Time step so that we run at 85% of the CFL of the given ERK discretization
         // Assume nx = 2^(refLevels + 2), and x \in [-1,1]
-        dt = 2.0 / pow(2.0, refLevels + 2) * CFLlim;
-        double CFL_fraction = 0.85;
-        dt *= CFL_fraction;
+        // dt = 2.0 / pow(2.0, refLevels + 2) * CFLlim;
+        // double CFL_fraction = 0.85;
+        // dt *= CFL_fraction;
+        // 
+        // 
+        // int nperiods = 1;
+        // double T = 2.0 * nperiods;
+        // // Time step so that we run at approximately 85% of CFL limit, but cycle the 
+        // // solution of some number of periods
+        // 
+        // nt = floor(T / dt);
+        // dt = T / (nt - 1);
         
+        dt = 2.0 / pow(2.0, refLevels + 2);
         
-        std::cout << "\n\nreal dt = " << dt << "\n\n";
+        std::cout << "\n\ndt = " << dt << "\t T = " << (nt-1)*dt << "\n\n";
         
         
         
@@ -199,10 +211,11 @@ int main(int argc, char *argv[])
             STmatrix.SaveX(file_name);
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
+                int nx = pow(2, refLevels+2);
                 std::map<std::string, std::string> space_info;
-                space_info["space_refLevels"] = std::to_string(refLevels);
-                space_info["space_order"] = std::to_string(order);
-                space_info["space_dim"] = std::to_string(dim);
+                space_info["space_order"]     = std::to_string(order);
+                space_info["nx"]              = std::to_string(nx);
+                space_info["space_dim"]       = std::to_string(dim);
                 STmatrix.SaveSolInfo(file_name, space_info);    
             }
         }

@@ -111,15 +111,16 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
 {
     std::ofstream solinfo;
     solinfo.open(filename);
-    solinfo << "P=" << m_numProc << "\n";
-    solinfo << "nt=" << m_nt << "\n";
-    solinfo << "dt=" << m_dt << "\n";
-    solinfo << "s=" << m_s_butcher << "\n";
-    solinfo << "timeDisc=" << m_timeDisc << "\n";
+    solinfo << "P " << m_numProc << "\n";
+    solinfo << "nt " << m_nt << "\n";
+    solinfo << "dt " << m_dt << "\n";
+    solinfo << "s " << m_s_butcher << "\n";
+    solinfo << "timeDisc " << m_timeDisc << "\n";
+    solinfo << "spatialParallel " << m_useSpatialParallel << "\n";
     
     std::map<std::string, std::string>::iterator it;
     for (it=additionalInfo.begin(); it!=additionalInfo.end(); it++) {
-        solinfo << it->first << "=" << it->second << "\n";
+        solinfo << it->first << " " << it->second << "\n";
     }
 
     solinfo.close();

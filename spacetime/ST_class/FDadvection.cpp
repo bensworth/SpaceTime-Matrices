@@ -4,31 +4,37 @@
 #include <algorithm>
 #include <iostream>
 
-//using namespace std;
+// TODO: 
+// Upwinding for variable coefficient
+// 2D in space
 
 // 
-double FDadvection::initCond(const double x) 
+double FDadvection::InitCond(const double x) 
 {        
-        double c = sin(2 * PI * x);
-        std::cout << c << "\n";
-        return pow(c, 4.0);
+        // double c = sin(PI * x);
+        // return pow(c, 4.0);
+        
+        return cos(PI * x);
         
         //return -3.5;
 }
 
 
 
-// void FDadvection::mesh(double *&x) {
-//     double xmin = -1.0;
-//     double xmax = 1.0;
-//     m_dx = (xmax - xmin)/m_nx;
-// 
-//     x = new double[m_nx];
-// 
-//     for (int i = 0; i < m_nx; i++) {
-//         x[i] = xmin + i * m_dx;
-//     }
-// }
+// Return the value of a point in space given its index
+double FDadvection::MeshIndToVal(const int xInd)
+{
+    return -1.0 + xInd * m_dx;
+}
+
+// RHS of PDE
+double FDadvection::Source(const double x, const double t)
+{
+    return -2*PI*cos(PI*x)*cos(2*PI*t) -PI*sin(PI*x)*cos(2*PI*t);
+    //return -2*PI*cos(PI*x)*cos(2*PI*t) + sin(2*PI*t)*-PI*sin(PI*x)*cos(2*PI*t);
+    //return 0.0;
+}
+
 
 
 FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
@@ -44,7 +50,6 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt), 
     m_refLevels{refLevels}, m_order{order}
 {
-    //m_nx = 16;
     m_nx = pow(2, refLevels+2);
     m_dx = 2.0 / m_nx; // Assume x \in [-1,1].
 }
@@ -161,6 +166,9 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
     int dataInd = 0;
     A_rowptr[0] = 0;
     
+    X = new double[m_nx];
+    B = new double[m_nx];
+    
     // Get stencil for discretization
     int * L_stencilColinds;
     double * L_stencilData;
@@ -174,6 +182,7 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
                 dataInd += 1;
             }
             A_rowptr[row+1] = dataInd;
+            B[row] = Source(MeshIndToVal(row), t);
     }
     
     // DOFs in interior whose setncils cannot hit boundary
@@ -184,6 +193,7 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
                 dataInd += 1;
             }
             A_rowptr[row+1] = dataInd;
+            B[row] = Source(MeshIndToVal(row), t);
     }
     
     // DOFs on RHS of domain whose stencil is possibly influenced by boundary
@@ -195,6 +205,7 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
                 dataInd += 1;
             }
             A_rowptr[row+1] = dataInd;
+            B[row] = Source(MeshIndToVal(row), t);
     }
     
     // Don't need these any more
@@ -203,10 +214,10 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
     
     // Set initial guess to unity, and set RHS equal to zero
     X = new double[m_nx];
-    B = new double[m_nx];
+    //B = new double[m_nx];
     for (int i = 0; i < m_nx; i++) {
         X[i] = 2.0;
-        B[i] = 0.0;
+        //B[i] = 0.0;
     }
 }
 
@@ -233,10 +244,8 @@ void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B) {
 // Add initial condition to vector B.
 void FDadvection::addInitialCondition(double *B)
 {
-    double x = -1.0;
     for (int i = 0; i < m_nx; i++) {
-        B[i] += initCond(x);
-        x += m_dx;
+        B[i] += InitCond(MeshIndToVal(i));
     }
 }
 

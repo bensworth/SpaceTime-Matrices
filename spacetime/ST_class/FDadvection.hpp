@@ -30,7 +30,11 @@ private:
     void addInitialCondition(double *B);
 
     void getSpatialDiscretizationStencil(int * &colinds, double * &data);
-    double initCond(const double x);
+    double InitCond(const double x);
+    
+    double MeshIndToVal(const int xInd);
+    
+    double Source(const double x, const double t);
     
     //void mesh(double *&x);
 
