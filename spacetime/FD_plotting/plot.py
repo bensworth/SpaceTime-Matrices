@@ -63,7 +63,7 @@ if not params["spatialParallel"]:
 else:
     raise ValueError("Plotting for space parallel not implemented...")
  
-print(Ufilename)
+#print(Ufilename)
 
 
 
@@ -99,17 +99,28 @@ u0[:] = u0_dense[:NX]
 # def uexact(x,t):
 #     return np.cos(np.pi*x)  * np.cos(2*np.pi*t)
 
+def uexact(x,t):
+    if (x == np.pi):
+        return np.nan
+    else:
+        return np.sin( 2 * np.arctan( np.exp(-t)*np.tan(x/2) ) ) / np.sin( x )
+        
+
 if params["space_dim"] == 1:
-    
-    
-    
     nx = NX
     x = np.linspace(-1, 1, nx+1)
     x = x[:-1] # nx points in [-1, 1)
     T = params["dt"]  * (params["nt"] - 1)
     
-    # for i in range(0,nx):
-    #     u0[i] = uexact(x[i],T)
+    for i in range(0,nx):
+        #u0[i] = uexact(x[i],T)
+        u = uexact(np.pi*(x[i]+1),T)
+        if (np.isnan(u)):
+            u0[i] = 0.0
+            uT[i] = 0.0
+        else:
+            u0[i] = u
+
     
     # Compare uT against the exact solution
     print("nx = {}, |u0 - uT| = {:.4e}".format(nx, np.linalg.norm(u0 - uT, np.inf)))

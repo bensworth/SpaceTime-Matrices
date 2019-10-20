@@ -171,23 +171,27 @@ int main(int argc, char *argv[])
         
         // Time step so that we run at 85% of the CFL of the given ERK discretization
         // Assume nx = 2^(refLevels + 2), and x \in [-1,1]
-        // dt = 2.0 / pow(2.0, refLevels + 2) * CFLlim;
-        // double CFL_fraction = 0.85;
-        // dt *= CFL_fraction;
-        // 
-        // 
-        // int nperiods = 1;
-        // double T = 2.0 * nperiods;
-        // // Time step so that we run at approximately 85% of CFL limit, but cycle the 
-        // // solution of some number of periods
-        // 
-        // nt = floor(T / dt);
-        // dt = T / (nt - 1);
+        dt = 2.0 / pow(2.0, refLevels + 2) * CFLlim;
+        double CFL_fraction = 0.85;
+        dt *= CFL_fraction;
         
-        dt = 2.0 / pow(2.0, refLevels + 2);
+        // 
+        int nperiods = 1;
+        double T = 2.0 * nperiods;
+        //T = 2.828427124746199;
+        T = 1.0;
         
-        std::cout << "\n\ndt = " << dt << "\t T = " << (nt-1)*dt << "\n\n";
+        // Time step so that we run at approximately 85% of CFL limit, but cycle the 
+        // solution of some number of periods
         
+        nt = floor(T / dt);
+        dt = T / (nt - 1);
+        
+        // Set dt == dx
+        // dt = 2.0 / pow(2.0, refLevels + 2);
+        // 
+        // std::cout << "\n\ndt = " << dt << "\t T = " << (nt-1)*dt << "\n\n";
+        // 
         
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
