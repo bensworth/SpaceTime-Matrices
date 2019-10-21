@@ -38,6 +38,7 @@ int main(int argc, char *argv[])
     int max_iter     = 250;
     double dt        = -1;
     int lump_mass    = true;
+    int FD_ProblemID = 1;
     int AMGiters = 1;
 
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
@@ -58,6 +59,8 @@ int main(int argc, char *argv[])
                   "Number levels mesh refinement.");
     args.AddOption(&lump_mass, "-lump", "--lump-mass",
                   "Lump mass matrix to be diagonal.");
+    args.AddOption(&FD_ProblemID, "-FD_ID", "--FD-prob-ID",
+                  "Finite difference problem ID.");
     args.AddOption(&print_level, "-p", "--print-level",
                   "Hypre print level.");
     args.AddOption(&solve_tol, "-tol", "--solve-tol",
@@ -175,27 +178,16 @@ int main(int argc, char *argv[])
         double CFL_fraction = 0.85;
         dt *= CFL_fraction;
         
-        // 
-        int nperiods = 1;
-        double T = 2.0 * nperiods;
-        //T = 2.828427124746199;
+        // Manually set time to integrate to
         T = 1.0;
         
-        // Time step so that we run at approximately 85% of CFL limit, but cycle the 
-        // solution of some number of periods
-        
+        // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
         nt = floor(T / dt);
         dt = T / (nt - 1);
         
-        // Set dt == dx
-        // dt = 2.0 / pow(2.0, refLevels + 2);
-        // 
-        // std::cout << "\n\ndt = " << dt << "\t T = " << (nt-1)*dt << "\n\n";
-        // 
-        
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
-                                dt, refLevels, order);
+                                dt, refLevels, order, FD_ProblemID);
 
         STmatrix.BuildMatrix();
         if (save_mat) {
@@ -220,6 +212,7 @@ int main(int argc, char *argv[])
                 space_info["space_order"]     = std::to_string(order);
                 space_info["nx"]              = std::to_string(nx);
                 space_info["space_dim"]       = std::to_string(dim);
+                space_info["problemID"]       = std::to_string(FD_ProblemID);
                 STmatrix.SaveSolInfo(file_name, space_info);    
             }
         }
