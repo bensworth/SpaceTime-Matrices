@@ -8,8 +8,11 @@
 // is not a good solution. But I think it'll do for now...
 
 // TODO:
+//      - Add A-stable schemes, compare whether this matters vs. L-stable (it does for MGRiT)
 //      - Add isTimeDependent option
 //      - Add hypre timing for setup and solve (see ij.c)
+//      - Plotting code for spatial solution
+//      - namespace for RK tableaux/AMG parameters? Keep structs separate from class? 
 
 
 
