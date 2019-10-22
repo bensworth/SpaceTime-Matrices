@@ -5,7 +5,7 @@
 #include <iostream>
 
 // TODO: 
-// Parallel in space using HYPRE
+// Parallel in 2D...
 
 // 
 double FDadvection::InitCond(const double x) 
@@ -94,53 +94,56 @@ FDadvection::~FDadvection()
 }
 
 
+// Get local CSR structure of FD spatial  discretization.
+// Can be run serially by passing NULL spatialComm
 void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize) 
 {
-    
-    
-    // TODO: I feel like these are things that should be done in the constructor??
     int spatialRank;
     int spatialCommSize;
-    MPI_Comm_rank(spatialComm, &spatialRank);    
-    MPI_Comm_size(spatialComm, &spatialCommSize);    
-    
     int onProcSize;
     
-    if ( (m_nx % spatialCommSize) != 0 ) {
-        if (spatialRank == 0) {
-            std::cout << "Error: Number of spatial DOFs (" << m_nx << ") does not divide number of spatial processes (" << spatialCommSize << ")\n";
+    // Spatial communicator is NULL: Code is serial, so entire discretization is put on single process
+    if (!spatialComm) {
+        spatialRank = 0;
+        spatialCommSize = 1;
+        onProcSize = m_nx;
+        
+    // Spatial communicator exists so ensure proccessor distribution makes sense
+    } else {
+        MPI_Comm_rank(spatialComm, &spatialRank);    
+        MPI_Comm_size(spatialComm, &spatialCommSize);        
+        if ( (m_nx % spatialCommSize) != 0 ) {
+            if (spatialRank == 0) {
+                std::cout << "Error: Number of spatial DOFs (" << m_nx << ") does not divide number of spatial processes (" << spatialCommSize << ")\n";
+            }
+            MPI_Finalize();
+            exit(1);
         }
-        MPI_Finalize();
-        exit(1);
+        if ( spatialCommSize > m_nx ) {
+            if (spatialRank == 0) {
+                std::cout << "Error: Number of spatial DOFs (" << m_nx << ") exceeds number of spatial processes (" << spatialCommSize << ")\n";
+            }
+            MPI_Finalize();
+            exit(1);
+        }
     }
     
-    if ( spatialCommSize > m_nx ) {
-        if (spatialRank == 0) {
-            std::cout << "Error: Number of spatial DOFs (" << m_nx << ") exceeds number of spatial processes (" << spatialCommSize << ")\n";
-        }
-        MPI_Finalize();
-        exit(1);
-    }
     
     onProcSize  = m_nx / spatialCommSize;       // Number of rows on proc
     localMinRow = spatialRank * onProcSize;     // First row I own
-    localMaxRow = localMinRow + onProcSize - 1; // Last row I own
+    localMaxRow = localMinRow + onProcSize - 1; // Last row I own    
+    spatialDOFs = m_nx;
+    int A_nnz   = (m_order + 1) * onProcSize;  // Nnz on proc
     
-    //std::cout << "spatialRank = " << spatialRank << "; min row = " << localMinRow << "; max row = " << localMaxRow << '\n';
-    
-    spatialDOFs =  m_nx;
     A_rowptr  = new int[onProcSize + 1];
-    int A_nnz = (m_order + 1) * onProcSize;  // Nnz per row times number of rows...
     A_colinds = new int[A_nnz];
     A_data    = new double[A_nnz];
-    
     int rowcount   = 0;
     int dataInd    = 0;
     A_rowptr[0]    = 0;
-    
     X = new double[onProcSize];
     B = new double[onProcSize];
     
@@ -179,14 +182,14 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
             if ((row > m_order) && (row < m_nx - m_order - 1)) {
                 for (int count = 0; count < m_order+1; count++) {
                     A_colinds[dataInd] = L_PlusColinds[count] + row;
-                    A_data[dataInd]    = L_PlusData[count];
+                    A_data[dataInd]    = L_LocalData[count];
                     dataInd += 1;
                 }
             // Boundary DOFs whose stencils are possibly flow over boundary
             } else {
                 for (int count = 0; count < m_order+1; count++) {
                     A_colinds[dataInd] = (L_PlusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
-                    A_data[dataInd]    = L_PlusData[count];
+                    A_data[dataInd]    = L_LocalData[count];
                     dataInd += 1;
                 }
             }
@@ -197,14 +200,14 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
             if ((row > m_order) && (row < m_nx - m_order - 1)) {
                 for (int count = 0; count < m_order+1; count++) {
                     A_colinds[dataInd] = L_MinusColinds[count] + row;
-                    A_data[dataInd]    = L_MinusData[count];
+                    A_data[dataInd]    = L_LocalData[count];
                     dataInd += 1;
                 }
             // Boundary DOFs whose stencils are possibly flow over boundary
             } else {
                 for (int count = 0; count < m_order+1; count++) {
                     A_colinds[dataInd] = (L_MinusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
-                    A_data[dataInd]    = L_MinusData[count];
+                    A_data[dataInd]    = L_LocalData[count];
                     dataInd += 1;
                 }
             }
@@ -243,118 +246,16 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
 
 
 
-
 /* FD spatial discretization of advection */
+// Simply call the parallel code with NULL spatial communicator
+// This saves doubling up on code that's almost identical
 void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
                                            double * &A_data, double * &B, double * &X,
                                            int &spatialDOFs, double t, int &bsize)
 {
-    
-    spatialDOFs = m_nx;
-    A_rowptr  = new int[m_nx+1];
-    int A_nnz = (m_order + 1) * m_nx;
-    A_colinds = new int[A_nnz];
-    A_data    = new double[A_nnz];
-    
-    int dataInd = 0;
-    A_rowptr[0] = 0;
-    
-    X = new double[m_nx];
-    B = new double[m_nx];
-    
-    
-    // Get stencils for upwind discretizations, wind blowing left to right
-    int * L_PlusColinds;
-    double * L_PlusData;
-    getUpwindStencil(L_PlusColinds, L_PlusData);
-    
-    // Scale entries by mesh size
-    for (int i = 0; i < m_order + 1; i++) {
-        L_PlusData[i] /= m_dx;
-    }
-    
-    // Generate stencils for wind blowing right to left by flipping stencils
-    int * L_MinusColinds = new int[m_order + 1];;
-    double * L_MinusData = new double[m_order + 1];
-    for (int i = 0; i < m_order + 1; i++) {
-        L_MinusColinds[i] = -L_PlusColinds[m_order-i];
-        L_MinusData[i]    = -L_PlusData[m_order-i];
-    } 
-    
-    // Place holder for weights to discretize derivative at each individual point
-    double * L_LocalData = new double[m_order + 1];
-    int windDirection;
-    
-    // Loop over all rows of the spatial discretization
-    for (int row = 0; row < m_nx; row++) {
-    
-        // Get the weight for discretizing spatial component at this point in space time
-        getLocalUpwindDiscretization(row, t, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
-    
-        // Wind blows left to right
-        if (windDirection > 0) {            
-            // DOFs in interior whose stencils cannot hit boundary    
-            if ((row > m_order) && (row < m_nx - m_order - 1)) {
-                for (int count = 0; count < m_order+1; count++) {
-                    A_colinds[dataInd] = L_PlusColinds[count] + row;
-                    A_data[dataInd]    = L_PlusData[count];
-                    dataInd += 1;
-                }
-            // Boundary DOFs whose stencils are possibly flow over boundary
-            } else {
-                for (int count = 0; count < m_order+1; count++) {
-                    A_colinds[dataInd] = (L_PlusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
-                    A_data[dataInd]    = L_PlusData[count];
-                    dataInd += 1;
-                }
-            }
-        
-        // Wind blows right to left
-        } else {
-            // DOFs in interior whose stencils cannot hit boundary    
-            if ((row > m_order) && (row < m_nx - m_order - 1)) {
-                for (int count = 0; count < m_order+1; count++) {
-                    A_colinds[dataInd] = L_MinusColinds[count] + row;
-                    A_data[dataInd]    = L_MinusData[count];
-                    dataInd += 1;
-                }
-            // Boundary DOFs whose stencils are possibly flow over boundary
-            } else {
-                for (int count = 0; count < m_order+1; count++) {
-                    A_colinds[dataInd] = (L_MinusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
-                    A_data[dataInd]    = L_MinusData[count];
-                    dataInd += 1;
-                }
-            }
-        }
-    
-        // Set source term and guess at the solution
-        B[row] = PDE_Source(MeshIndToVal(row), t);
-        X[row] = 1.0; // TODO : Set this to a random value?    
-    
-        A_rowptr[row+1] = dataInd;
-    }
-    
-    // Assemble the mass matrix (identity matrix) if it has not been done previously
-    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        std::cout << "I'm assembling massss\n\n";
-        m_M_rowptr  = new int[m_nx+1];
-        m_M_colinds = new int[m_nx];
-        m_M_data    = new double[m_nx];
-        m_M_rowptr[0] = 0;
-        for (int i = 0; i < m_nx; i++) {
-            m_M_colinds[i]  = i;
-            m_M_data[i]     = 1.0;
-            m_M_rowptr[i+1] = i+1;
-        } 
-    }
-    
-    // Don't need these any more
-    delete[] L_PlusColinds;
-    delete[] L_PlusData;
-    delete[] L_MinusColinds;
-    delete[] L_MinusData;
-    delete[] L_LocalData;
+    int dummy1;
+    int dummy2;
+    getSpatialDiscretization(NULL, A_rowptr, A_colinds, A_data, B, X, dummy1, dummy2, spatialDOFs, t, bsize);
 }
 
 
