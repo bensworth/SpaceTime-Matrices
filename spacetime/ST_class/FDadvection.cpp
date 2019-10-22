@@ -20,7 +20,7 @@ double FDadvection::InitCond(const double x)
 }
 
 
-// Wave speed of PDE as a function of x and t
+// Wave speed for 1D problem
 double FDadvection::WaveSpeed(const double x, const double t) {
     if (m_problemID == 1) {
         return 1.0;
@@ -30,6 +30,21 @@ double FDadvection::WaveSpeed(const double x, const double t) {
         return 0.0;
     }
 }
+
+
+// Wave speed for 2D problem; need to choose component as 1 or 2.
+double FDadvection::WaveSpeed(const double x, const double y, const double t, const int component) {
+    if (m_problemID == 1) {
+        if (component == 1) {
+            return 1.0;
+        } else {
+            return 1.0;
+        }
+    } else {
+        return 0.0;
+    }
+}
+
 
 
 // Return the value of a point in space given its index
@@ -64,9 +79,9 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
 
 FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, int refLevels, int order, int problemID): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt), 
-    m_refLevels{refLevels}, m_order{order}, m_problemID{problemID}
+                         double dt, int dim, int refLevels, int order, int problemID): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
+    m_dim{dim}, m_refLevels{refLevels}, m_order{order}, m_problemID{problemID}
 {
     m_nx = pow(2, refLevels+2);
     m_dx = 2.0 / m_nx; // Assume x \in [-1,1].
@@ -150,7 +165,7 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
     // Get stencils for upwind discretizations, wind blowing left to right
     int * L_PlusColinds;
     double * L_PlusData;
-    getUpwindStencil(L_PlusColinds, L_PlusData);
+    get1DUpwindStencil(L_PlusColinds, L_PlusData);
     
     // Scale entries by mesh size
     for (int i = 0; i < m_order + 1; i++) {
@@ -168,14 +183,19 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
     // Place holder for weights to discretize derivative at each individual point
     double * L_LocalData = new double[m_order + 1];
     int windDirection;
+    double x;
     
-    
+         
     // Loop over all rows of the spatial discretization on this processor
     for (int row = localMinRow; row <= localMaxRow; row++) {
     
+        x = MeshIndToVal(row);        
+        // Get function which given an integer offset computes wavespeed(x + dx*offset, t)
+        auto localWaveSpeed = [=](int offset) { return WaveSpeed(x + m_dx * offset, t); };
+                
         // Get the weight for discretizing spatial component at this point in space time
-        getLocalUpwindDiscretization(row, t, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
-    
+        getLocalUpwindDiscretization(localWaveSpeed, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
+        
         // Wind blows left to right
         if (windDirection > 0) {            
             // DOFs in interior whose stencils cannot hit boundary    
@@ -259,49 +279,95 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
 }
 
 
-// Return weights for the upwind spatial discretization of the PDE at the point (x,t)
-void FDadvection::getLocalUpwindDiscretization(int xInd, double t, int &windDirection, double * &L_Data,
-                                                double * &L_PlusData, int * &L_PlusColinds, 
-                                                double * &L_MinusData, int * &L_MinusColinds)
-{
-    
-    double x = MeshIndToVal(xInd); // Mesh point we're discretizing at
-    double waveSpeed = WaveSpeed(x, t); // Wave speed at point in question. This alone determines the upwind direction
+
+// Compute upwind direction and weights to provide upwind discretization of linear flux function
+void FDadvection::getLocalUpwindDiscretization(std::function<double (const int&)> localWaveSpeed, 
+                                                int &windDirection, double * &localWeights,
+                                                double * &plusWeights, int * &plusInds, 
+                                                double * &minusWeights, int * &minusInds)
+{    
+    // Wave speed at point in question. The sign of this determines the upwind direction
+    double waveSpeed0 = localWaveSpeed(0); 
     
     // Wind blows from left to right
-    if (waveSpeed >= 0.0) {
+    if (waveSpeed0 >= 0.0) {
         windDirection = 1;
-        
-        // PDE is in conservation form: Need to discretize (wavespeed(x,t)*u)_x
+    
+        // PDE is in conservation form: Need to discretize (wavespeed*u)_x
         if (m_conservativeForm) {
-            for (int colInd = 0; colInd < m_order + 1; colInd++) {
-                L_Data[colInd] = WaveSpeed(x + m_dx * L_PlusColinds[colInd], t) * L_PlusData[colInd];
+            for (int ind = 0; ind < m_order + 1; ind++) {
+                localWeights[ind] = localWaveSpeed(plusInds[ind]) * plusWeights[ind];
             }
-            
-        // PDE is in non-conservation form: Need to discretize wavespeed(x,t)*u_x    
+    
+        // PDE is in non-conservation form: Need to discretize wavespeed*u_x    
         } else {
-            for (int colInd = 0; colInd < m_order + 1; colInd++) {
-                L_Data[colInd] = waveSpeed * L_PlusData[colInd];
+            for (int ind = 0; ind < m_order + 1; ind++) {
+                localWeights[ind] = waveSpeed0 * plusWeights[ind];
             }
         }
-        
+    
     // Wind blows from right to left    
     } else {
         windDirection = -1;
-        // PDE is in conservation form: Need to discretize (wavespeed(x,t)*u)_x
+        // PDE is in conservation form: Need to discretize (wavespeed*u)_x
         if (m_conservativeForm) {
-            for (int colInd = 0; colInd < m_order + 1; colInd++) {
-                L_Data[colInd] = WaveSpeed(x + m_dx * L_MinusColinds[colInd], t) * L_MinusData[colInd];
+            for (int ind = 0; ind < m_order + 1; ind++) {
+                localWeights[ind] = localWaveSpeed(minusInds[ind]) * minusWeights[ind];
             }
-            
-        // PDE is in non-conservation form: Need to discretize wavespeed(x,t)*u_x      
+    
+        // PDE is in non-conservation form: Need to discretize wavespeed*u_x      
         } else {
-            for (int colInd = 0; colInd < m_order + 1; colInd++) {
-                L_Data[colInd] = waveSpeed * L_MinusData[colInd];
+            for (int ind = 0; ind < m_order + 1; ind++) {
+                localWeights[ind] = waveSpeed0 * minusWeights[ind];
             }
         }
     }    
 }
+
+
+// // Return weights for the upwind spatial discretization of the PDE at the point (x,t)
+// void FDadvection::getLocalUpwindDiscretization(int xInd, double t, int &windDirection, double * &L_Data,
+//                                                 double * &L_PlusData, int * &L_PlusColinds, 
+//                                                 double * &L_MinusData, int * &L_MinusColinds)
+// {
+// 
+//     double x = MeshIndToVal(xInd); // Mesh point we're discretizing at
+//     double waveSpeed = WaveSpeed(x, t); // Wave speed at point in question. This alone determines the upwind direction
+// 
+//     // Wind blows from left to right
+//     if (waveSpeed >= 0.0) {
+//         windDirection = 1;
+// 
+//         // PDE is in conservation form: Need to discretize (wavespeed(x,t)*u)_x
+//         if (m_conservativeForm) {
+//             for (int colInd = 0; colInd < m_order + 1; colInd++) {
+//                 L_Data[colInd] = WaveSpeed(x + m_dx * L_PlusColinds[colInd], t) * L_PlusData[colInd];
+//             }
+// 
+//         // PDE is in non-conservation form: Need to discretize wavespeed(x,t)*u_x    
+//         } else {
+//             for (int colInd = 0; colInd < m_order + 1; colInd++) {
+//                 L_Data[colInd] = waveSpeed * L_PlusData[colInd];
+//             }
+//         }
+// 
+//     // Wind blows from right to left    
+//     } else {
+//         windDirection = -1;
+//         // PDE is in conservation form: Need to discretize (wavespeed(x,t)*u)_x
+//         if (m_conservativeForm) {
+//             for (int colInd = 0; colInd < m_order + 1; colInd++) {
+//                 L_Data[colInd] = WaveSpeed(x + m_dx * L_MinusColinds[colInd], t) * L_MinusData[colInd];
+//             }
+// 
+//         // PDE is in non-conservation form: Need to discretize wavespeed(x,t)*u_x      
+//         } else {
+//             for (int colInd = 0; colInd < m_order + 1; colInd++) {
+//                 L_Data[colInd] = waveSpeed * L_MinusData[colInd];
+//             }
+//         }
+//     }    
+// }
 
 
 // The mass matrix (the identity) is assembled when the spatial discretization is assembled
@@ -353,7 +419,7 @@ void FDadvection::addInitialCondition(double *B)
 
 
 // Stencils for upwind spatial discretizations of dx * du/dx. Wind is assumed to blow left to right. 
-void FDadvection::getUpwindStencil(int * &colinds, double * &data)
+void FDadvection::get1DUpwindStencil(int * &colinds, double * &data)
 {
     colinds = new int[m_order+1];
     data    = new double[m_order+1];

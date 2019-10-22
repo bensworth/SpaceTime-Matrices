@@ -24,6 +24,8 @@ class FDadvection : public SpaceTimeMatrix
 {
 private:
         
+    int m_dim;              // Number of spatial dimensions
+        
     int m_problemID;        // ID for test problems
     int m_conservativeForm; // Boolean: 1 == PDE in conservative form; 0 == PDE in non-conservative form
 	int m_order;            // Order of disc, between 1 and 5
@@ -51,13 +53,24 @@ private:
     void addInitialCondition(double *B);
 
 
-    void getLocalUpwindDiscretization(int xInd, double t, int &windDirection, double * &L_Data,
-                                        double * &L_PLusData, int * &L_PlusColinds, 
-                                        double * &L_MinusData, int * &L_MinusColinds);
+
+    void getLocalUpwindDiscretization(std::function<double (const int&)> localWaveSpeed, 
+                                                    int &windDirection, double * &localWeights,
+                                                    double * &plusWeights, int * &plusInds, 
+                                                    double * &minusWeights, int * &minusInds);
+
+                                                
+
+    // 
+    // void getLocalUpwindDiscretization(int xInd, double t, int &windDirection, double * &L_Data,
+    //                                     double * &L_PLusData, int * &L_PlusColinds, 
+    //                                     double * &L_MinusData, int * &L_MinusColinds);
                                         
-    void getUpwindStencil(int * &colinds, double * &data);
+                                        
+    void get1DUpwindStencil(int * &colinds, double * &data);
     double InitCond(const double x);
-    double WaveSpeed(const double x, const double t);
+    double WaveSpeed(const double x, const double t); // 1D wave speed
+    double WaveSpeed(const double x, const double y, const double t, const int component); // 2D wave speed
     double MeshIndToVal(const int xInd);
     double PDE_Source(const double x, const double t);
 
@@ -67,7 +80,7 @@ public:
 	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				double dt);
 	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, int refLevels, int order, int problemID);
+				double dt, int dim, int refLevels, int order, int problemID);
     ~FDadvection();
 
 };
