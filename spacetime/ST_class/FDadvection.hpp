@@ -23,6 +23,9 @@ NOTES:
 class FDadvection : public SpaceTimeMatrix
 {
 private:
+    //int m_spatialRank;
+    //int m_spatialCommSize;
+    
     int m_problemID;        // ID for test problems
     int m_conservativeForm; // Boolean: 1 == PDE in conservative form; 0 == PDE in non-conservative form
 	int m_order;            // Order of disc, between 1 and 5

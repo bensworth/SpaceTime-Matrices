@@ -82,7 +82,9 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     // Need to initialize these to NULL so we can distinguish them from once they have been built
     m_M_rowptr  = NULL;
     m_M_colinds = NULL;
-    m_M_data    = NULL;    
+    m_M_data    = NULL;  
+    
+    //std::cout << "Do I use spatial parallel:   " << m_useSpatialParallel << "\n";
 }
 
 
@@ -95,11 +97,149 @@ FDadvection::~FDadvection()
 void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, int &bsize) {
+                                  int &spatialDOFs, double t, int &bsize) 
+{
     
     
-                                      
-                                  }
+    // TODO: I feel like these are things that should be done in the constructor??
+    int spatialRank;
+    int spatialCommSize;
+    MPI_Comm_rank(spatialComm, &spatialRank);    
+    MPI_Comm_size(spatialComm, &spatialCommSize);    
+    
+    int onProcSize;
+    
+    if ( (m_nx % spatialCommSize) != 0 ) {
+        if (spatialRank == 0) {
+            std::cout << "Error: Number of spatial DOFs (" << m_nx << ") does not divide number of spatial processes (" << spatialCommSize << ")\n";
+        }
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    if ( spatialCommSize > m_nx ) {
+        if (spatialRank == 0) {
+            std::cout << "Error: Number of spatial DOFs (" << m_nx << ") exceeds number of spatial processes (" << spatialCommSize << ")\n";
+        }
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    onProcSize  = m_nx / spatialCommSize;       // Number of rows on proc
+    localMinRow = spatialRank * onProcSize;     // First row I own
+    localMaxRow = localMinRow + onProcSize - 1; // Last row I own
+    
+    //std::cout << "spatialRank = " << spatialRank << "; min row = " << localMinRow << "; max row = " << localMaxRow << '\n';
+    
+    spatialDOFs =  m_nx;
+    A_rowptr  = new int[onProcSize + 1];
+    int A_nnz = (m_order + 1) * onProcSize;  // Nnz per row times number of rows...
+    A_colinds = new int[A_nnz];
+    A_data    = new double[A_nnz];
+    
+    int rowcount   = 0;
+    int dataInd    = 0;
+    A_rowptr[0]    = 0;
+    
+    X = new double[onProcSize];
+    B = new double[onProcSize];
+    
+    // Get stencils for upwind discretizations, wind blowing left to right
+    int * L_PlusColinds;
+    double * L_PlusData;
+    getUpwindStencil(L_PlusColinds, L_PlusData);
+    
+    // Scale entries by mesh size
+    for (int i = 0; i < m_order + 1; i++) {
+        L_PlusData[i] /= m_dx;
+    }
+    
+    // Generate stencils for wind blowing right to left by flipping stencils
+    int * L_MinusColinds = new int[m_order + 1];;
+    double * L_MinusData = new double[m_order + 1];
+    for (int i = 0; i < m_order + 1; i++) {
+        L_MinusColinds[i] = -L_PlusColinds[m_order-i];
+        L_MinusData[i]    = -L_PlusData[m_order-i];
+    } 
+    
+    // Place holder for weights to discretize derivative at each individual point
+    double * L_LocalData = new double[m_order + 1];
+    int windDirection;
+    
+    
+    // Loop over all rows of the spatial discretization on this processor
+    for (int row = localMinRow; row <= localMaxRow; row++) {
+    
+        // Get the weight for discretizing spatial component at this point in space time
+        getLocalUpwindDiscretization(row, t, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
+    
+        // Wind blows left to right
+        if (windDirection > 0) {            
+            // DOFs in interior whose stencils cannot hit boundary    
+            if ((row > m_order) && (row < m_nx - m_order - 1)) {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = L_PlusColinds[count] + row;
+                    A_data[dataInd]    = L_PlusData[count];
+                    dataInd += 1;
+                }
+            // Boundary DOFs whose stencils are possibly flow over boundary
+            } else {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = (L_PlusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
+                    A_data[dataInd]    = L_PlusData[count];
+                    dataInd += 1;
+                }
+            }
+        
+        // Wind blows right to left
+        } else {
+            // DOFs in interior whose stencils cannot hit boundary    
+            if ((row > m_order) && (row < m_nx - m_order - 1)) {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = L_MinusColinds[count] + row;
+                    A_data[dataInd]    = L_MinusData[count];
+                    dataInd += 1;
+                }
+            // Boundary DOFs whose stencils are possibly flow over boundary
+            } else {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = (L_MinusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
+                    A_data[dataInd]    = L_MinusData[count];
+                    dataInd += 1;
+                }
+            }
+        }
+    
+        // Set source term and guess at the solution
+        B[rowcount] = PDE_Source(MeshIndToVal(row), t);
+        X[rowcount] = 1.0; // TODO : Set this to a random value?    
+    
+        A_rowptr[rowcount+1] = dataInd;
+        rowcount += 1;
+    }
+    
+    // Assemble the mass matrix (identity matrix) if it has not been done previously
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+        m_M_rowptr  = new int[onProcSize+1];
+        m_M_colinds = new int[onProcSize];
+        m_M_data    = new double[onProcSize];
+        m_M_rowptr[0] = 0;
+        rowcount = 0;
+        for (int row = localMinRow; row <= localMaxRow; row++) {
+            m_M_colinds[rowcount]  = row;
+            m_M_data[rowcount]     = 1.0;
+            m_M_rowptr[rowcount+1] = rowcount+1;
+            rowcount += 1;
+        } 
+    }
+    
+    // Don't need these any more
+    delete[] L_PlusColinds;
+    delete[] L_PlusData;
+    delete[] L_MinusColinds;
+    delete[] L_MinusData;
+    delete[] L_LocalData;
+}
 
 
 
@@ -109,7 +249,6 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
                                            double * &A_data, double * &B, double * &X,
                                            int &spatialDOFs, double t, int &bsize)
 {
-    //std::cout << "spatial disc order = " << m_order << '\n';
     
     spatialDOFs = m_nx;
     A_rowptr  = new int[m_nx+1];
@@ -146,89 +285,54 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
     double * L_LocalData = new double[m_order + 1];
     int windDirection;
     
-    // DOFs on LHS of domain whose stencil is possibly influenced by boundary
-    for (int row = 0; row < m_order + 1; row++) {
-        
-        // Get the weight for discretizing spatial component at this point in space time
-        getLocalUpwindDiscretization(row, t, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
-        
-        // Wind blows left to right
-        if (windDirection > 0) {
-            for (int count = 0; count < m_order+1; count++) {
-                A_colinds[dataInd] = (L_PlusColinds[count] + row + m_nx) % m_nx;
-                A_data[dataInd] = L_LocalData[count];
-                dataInd += 1;
-            }
-            
-        // Wind blows right to left
-        } else {
-            for (int count = 0; count < m_order+1; count++) {
-                A_colinds[dataInd] = (L_MinusColinds[count] + row + m_nx) % m_nx;
-                A_data[dataInd] = L_LocalData[count];
-                dataInd += 1;
-            }
-        }
-        
-        A_rowptr[row+1] = dataInd;
-        B[row] = PDE_Source(MeshIndToVal(row), t);
-        X[row] = 1.0; // TOOD : Set this to a random value?
-    }
+    // Loop over all rows of the spatial discretization
+    for (int row = 0; row < m_nx; row++) {
     
-    // DOFs in interior whose setncils cannot hit boundary
-    for (int row = m_order + 1; row < m_nx - m_order - 1; row++) {
-        
         // Get the weight for discretizing spatial component at this point in space time
         getLocalUpwindDiscretization(row, t, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
-        
-        // Wind blows left to right
-        if (windDirection > 0) {
-            for (int count = 0; count < m_order+1; count++) {
-                A_colinds[dataInd] = L_PlusColinds[count] + row;
-                A_data[dataInd] = L_LocalData[count];
-                dataInd += 1;
-            }
-            
-        // Wind blows right to left
-        } else {
-            for (int count = 0; count < m_order+1; count++) {
-                A_colinds[dataInd] = L_MinusColinds[count] + row;
-                A_data[dataInd] = L_LocalData[count];
-                dataInd += 1;
-            }
-        }
-        
-        A_rowptr[row+1] = dataInd;
-        B[row] = PDE_Source(MeshIndToVal(row), t);
-        X[row] = 1.0; // TOOD : Set this to a random value?
-    }
     
-    // DOFs on RHS of domain whose stencil is possibly influenced by boundary
-    // DOFs in interior whose setncils cannot hit boundary
-    for (int row = m_nx - m_order - 1; row < m_nx; row++) {
-        
-        // Get the weight for discretizing spatial component at this point in space time
-        getLocalUpwindDiscretization(row, t, windDirection, L_LocalData, L_PlusData, L_PlusColinds, L_MinusData, L_MinusColinds);
-        
         // Wind blows left to right
-        if (windDirection > 0) {
-            for (int count = 0; count < m_order+1; count++) {
-                A_colinds[dataInd] = (L_PlusColinds[count] + row) % m_nx;
-                A_data[dataInd] = L_LocalData[count];
-                dataInd += 1;
+        if (windDirection > 0) {            
+            // DOFs in interior whose stencils cannot hit boundary    
+            if ((row > m_order) && (row < m_nx - m_order - 1)) {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = L_PlusColinds[count] + row;
+                    A_data[dataInd]    = L_PlusData[count];
+                    dataInd += 1;
+                }
+            // Boundary DOFs whose stencils are possibly flow over boundary
+            } else {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = (L_PlusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
+                    A_data[dataInd]    = L_PlusData[count];
+                    dataInd += 1;
+                }
             }
-            
+        
         // Wind blows right to left
         } else {
-            for (int count = 0; count < m_order+1; count++) {
-                A_colinds[dataInd] = (L_MinusColinds[count] + row) % m_nx;
-                A_data[dataInd] = L_LocalData[count];
-                dataInd += 1;
+            // DOFs in interior whose stencils cannot hit boundary    
+            if ((row > m_order) && (row < m_nx - m_order - 1)) {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = L_MinusColinds[count] + row;
+                    A_data[dataInd]    = L_MinusData[count];
+                    dataInd += 1;
+                }
+            // Boundary DOFs whose stencils are possibly flow over boundary
+            } else {
+                for (int count = 0; count < m_order+1; count++) {
+                    A_colinds[dataInd] = (L_MinusColinds[count] + row + m_nx) % m_nx; // Account for periodicity here. This always puts in range 0,nx-1
+                    A_data[dataInd]    = L_MinusData[count];
+                    dataInd += 1;
+                }
             }
         }
-        
-        A_rowptr[row+1] = dataInd;
+    
+        // Set source term and guess at the solution
         B[row] = PDE_Source(MeshIndToVal(row), t);
-        X[row] = 1.0; // TOOD : Set this to a random value?
+        X[row] = 1.0; // TODO : Set this to a random value?    
+    
+        A_rowptr[row+1] = dataInd;
     }
     
     // Assemble the mass matrix (identity matrix) if it has not been done previously
@@ -302,7 +406,6 @@ void FDadvection::getLocalUpwindDiscretization(int xInd, double t, int &windDire
 // The mass matrix (the identity) is assembled when the spatial discretization is assembled
 // Note that it has to be done this way to account for spatial parallelism since this functions
 // definition does not make reference to the spatial comm group
-
 void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
 {
     // Check that mass matrix has been constructed
@@ -318,8 +421,24 @@ void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_d
 }
 
 
+// Add initial condition to vector B.
 void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B) {
+
+    // Need to work out where my rows are.
+    int spatialRank;
+    int spatialCommSize;
+    MPI_Comm_rank(spatialComm, &spatialRank);    
+    MPI_Comm_size(spatialComm, &spatialCommSize);    
+        
+    int onProcSize = m_nx / spatialCommSize; 
+    int localMinRow = spatialRank * onProcSize; 
+    int localMaxRow = localMinRow + onProcSize - 1; 
     
+    int rowcount = 0;
+    for (int row = localMinRow; row <= localMaxRow; row++) {
+        B[rowcount] += InitCond(MeshIndToVal(row));
+        rowcount += 1;
+    }
 }
 
 

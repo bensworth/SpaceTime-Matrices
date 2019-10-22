@@ -158,6 +158,8 @@ int main(int argc, char *argv[])
     /* Finite-difference discretization of advection */
     else if (spatialDisc == 3) {
         
+        dim = 1;
+        
         // These limits apply for ERKp+Up schemes
         double CFLlim = 0.0;
         if (order == 1)  {
@@ -190,6 +192,24 @@ int main(int argc, char *argv[])
                                 dt, refLevels, order, FD_ProblemID);
 
         STmatrix.BuildMatrix();
+        
+        // if (save_sol) {
+        //     std::string file_name = "data/X_FD.txt";
+        //     STmatrix.SaveX(file_name);
+        //     // Save data to file enabling easier inspection of solution            
+        //     if (rank == 0) {
+        //         int nx = pow(2, refLevels+2);
+        //         std::map<std::string, std::string> space_info;
+        //         // space_info["space_parallel"]  = std::to_string(STmatrix.m_useSpatialParallel);
+        //         // space_info["space_nP"]        = std::to_string(STmatrix.m_Np_x);
+        //         space_info["space_order"]     = std::to_string(order);
+        //         space_info["nx"]              = std::to_string(nx);
+        //         space_info["space_dim"]       = std::to_string(dim);
+        //         space_info["problemID"]       = std::to_string(FD_ProblemID);
+        //         STmatrix.SaveSolInfo(file_name, space_info);    
+        //     }
+        // }
+        
         if (save_mat) {
             STmatrix.SaveMatrix("data/A_FD.mm");
         }

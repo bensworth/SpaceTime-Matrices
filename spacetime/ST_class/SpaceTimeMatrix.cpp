@@ -121,6 +121,7 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
     solinfo << "s " << m_s_butcher << "\n";
     solinfo << "timeDisc " << m_timeDisc << "\n";
     solinfo << "spatialParallel " << m_useSpatialParallel << "\n";
+    if (m_useSpatialParallel) solinfo << "spatial_Np_x " << m_Np_x << "\n";
     
     std::map<std::string, std::string>::iterator it;
     for (it=additionalInfo.begin(); it!=additionalInfo.end(); it++) {
@@ -1305,6 +1306,8 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                         int &localMaxRow, int &spatialDOFs)
 {
     
+    //std::cout << "Global rank = " << m_globRank << "; Local rank = " << m_spatialRank << "\n";
+    
     int globalInd = m_DOFInd;                   // Global index of variable I own
     int localInd  = globalInd % m_s_butcher;    // Local index of variable I own
     // TODO: I guess I can just use integer division here? 
@@ -1326,6 +1329,12 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
     int onProcSize = localMaxRow - localMinRow + 1; // Number of rows of spatial disc I own
     int nnzL       = T_rowptr[onProcSize] - T_rowptr[0];    // Nnz in the component of spatial disc I own
     
+    //std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
+    //std::cout << "spatialDOFs on proc " << m_globRank << " = " << onProcSize << '\n';
+    
+    //MPI_Finalize();
+    //exit(0);
+    
     // Get mass matrix
     int* M_rowptr;
     int* M_colinds;
@@ -1333,10 +1342,10 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
     getMassMatrix(M_rowptr, M_colinds, M_data);
     int nnzM = M_rowptr[onProcSize] - M_rowptr[0];
     
-    std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
-    std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
-    std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
-    
+    // std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
+    // std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
+    // std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
+    // 
     
     /* ------ Get total NNZ on this processor. ------ */
     //  -Doesn't assume sparsity of M and L overlap: This nnz count is an upperbound.
@@ -1352,28 +1361,28 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
             // Coupling to itself
             procNnz += nnzM;
             if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] != 0.0) procNnz += nnzL;
-
+    
             // Coupling to solution DOF at previous time 
             procNnz += nnzM;
             if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] != 0.0) procNnz += nnzL; 
-
+    
             // Coupling to stage variables at previous time 
             for (int j = 0; j < m_s_butcher-1; j++) {
                 if (m_b_butcher[j] != 0.0) procNnz += nnzM;
                 if (m_b_butcher[j]*m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1]*m_A_butcher[m_s_butcher-1][j] != 0.0) procNnz += nnzL;
             }
         }
-
+    
     // Stage-type DOF
     } else {
         k -= 1; // Work with this to index Butcher arrays directly.
         // Coupling to itself
         procNnz += nnzM;
         if (m_A_butcher[k][k] != 0.0) procNnz += nnzL;
-
+    
         // Coupling to solution at previous time
         procNnz += nnzL;
-
+    
         // Coupling to previous stage variables at current time
         for (int j = 0; j < k; j++) {
             if (m_A_butcher[k][j] != 0.0) procNnz += nnzL;
@@ -1403,24 +1412,28 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
     if (localInd == 0) {
         // Initial condition: Set matrix to identity and fix RHS and initial guess to ICs.
         if (blockInd == 0) {
-
+    
             // Loop over each row
             for (int row=0; row<onProcSize; row++) {
                 colinds[dataInd] = localMinRow + row; // Note globalColOffset == 0 for this DOF
                 data[dataInd] = 1.0;
                 dataInd += 1;
                 rowptr[row+1] = dataInd;
-                
-                X[row] = 0.0; // Set these to 0 then replace it with IC below
+    
+                // Set these to 0 then replace it with IC below
+                B[row] = 0.0;
+                X[row] = 0.0; 
             }
-            addInitialCondition(B);
-            addInitialCondition(X); 
-
+            addInitialCondition(m_spatialComm, B);
+            addInitialCondition(m_spatialComm, X); 
+    
+            //std::cout << "Global rank = " << m_globRank << "; Local rank = " << m_spatialRank << "\n";
+    
         // Solution-type DOF at time t > 0
         } else {
             // This DOF couples s DOFs back to the solution at the previous time
             globalColOffset = spatialDOFs * (globalInd - m_s_butcher);
-
+    
             // Loop over each row in spatial discretization, working from left-most column/variables to right-most
             for (int row=0; row<onProcSize; row++) {
                 /* ------ Coupling to solution at previous time ------ */
@@ -1431,7 +1444,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                         entries[M_colinds[j]] = M_data[j] / m_dt;
                     }
                 }
-
+    
                 // Add spatial discretization data to mass-matrix data
                 temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1];
                 if (temp != 0.0) {
@@ -1441,15 +1454,15 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                         }
                     }
                 }
-
+    
                 // Add this data to global matrix
                 for (it=entries.begin(); it!=entries.end(); it++) {
                     colinds[dataInd] = globalColOffset + it->first;
                     data[dataInd] = -it->second;
                     dataInd += 1;
                 }
-
-
+    
+    
                 /* ------ Coupling to stages at previous time ------ */
                 // Loop over all stage DOFs
                 for (int i = 0; i < m_s_butcher - 1; i++) {
@@ -1463,7 +1476,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                             }
                         }
                     }
-
+    
                     // Add spatial discretization data to mass-matrix data
                     temp = m_b_butcher[i] * m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] * m_A_butcher[m_s_butcher-1][i];
                     if (temp != 0.0) {
@@ -1474,7 +1487,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                             }
                         }
                     }
-
+    
                     // Add this data to global matrix
                     localColOffset = globalColOffset + (i+1) * spatialDOFs;
                     for (it=entries2.begin(); it!=entries2.end(); it++) {
@@ -1483,8 +1496,8 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                         dataInd += 1;
                     }
                 }
-
-
+    
+    
                 /* ------ Coupling to myself/solution at current time ------ */
                 std::map<int, double> entries3; 
                 // Get mass-matrix data
@@ -1493,7 +1506,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                         entries3[M_colinds[j]] = M_data[j] / m_dt;
                     }
                 }
-
+    
                 // Add spatial discretization data to mass-matrix data
                 temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1];
                 if (temp != 0.0) {
@@ -1503,7 +1516,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                         }
                     }
                 }
-
+    
                 // Add this data to global matrix
                 localColOffset = globalColOffset + m_s_butcher * spatialDOFs;
                 for (it=entries3.begin(); it!=entries3.end(); it++) {
@@ -1511,11 +1524,11 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                     data[dataInd] = it->second;
                     dataInd += 1;
                 }
-
-
+    
+    
                 // Scale solution-independent spatial component by coefficient
                 B[row] *= m_b_butcher[m_s_butcher-1];
-
+    
                 // Move to next row for current variable
                 rowptr[row+1] = dataInd;
             }
@@ -1526,7 +1539,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
     } else {
         int kInd = localInd; // 1's-based index of current stage DOF
         globalColOffset = spatialDOFs * (globalInd - kInd); // We couple back to the solution at current time
-
+    
         // Loop over each row in spatial discretization, working from left-most column/variables to right-most
         for (int row=0; row<onProcSize; row++) {
             /* ------ Coupling to solution at current time ------ */
@@ -1535,7 +1548,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                 data[dataInd] = T_data[j];
                 dataInd += 1;
             }
-
+    
             /* ------ Coupling to stages that come before me ------ */
             for (int i=0; i<kInd-1; i++) {
                 temp = m_A_butcher[kInd-1][i];
@@ -1551,7 +1564,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                     }
                 }
             }
-
+    
             /* ------ Coupling to myself ------ */
             std::map<int, double> entries; 
             // Get mass-matrix data
@@ -1560,7 +1573,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                     entries[M_colinds[j]] = M_data[j];
                 }
             }
-
+    
             // Add spatial discretization data to mass-matrix data
             temp = m_A_butcher[kInd-1][kInd-1];
             if (temp != 0.0) {
@@ -1571,7 +1584,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                     }
                 }
             }
-
+    
             // Add this data to global matrix
             localColOffset = globalColOffset + kInd * spatialDOFs;
             for (it=entries.begin(); it!=entries.end(); it++) {
@@ -1579,7 +1592,7 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
                 data[dataInd] = it->second;
                 dataInd += 1;
             }
-
+    
             // Move to next row for current variable
             rowptr[row+1] = dataInd;
         }
@@ -1600,9 +1613,6 @@ void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data,
     delete[] M_rowptr;
     delete[] M_colinds;
     delete[] M_data;
-    
-    // MPI_Finalize();
-    // exit(1);
 }
 
 /* First-order BDF implicit scheme (Backward Euler / 1st-order Adams-Moulton). */
