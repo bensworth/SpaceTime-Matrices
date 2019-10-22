@@ -179,11 +179,11 @@ int main(int argc, char *argv[])
         dt *= CFL_fraction;
         
         // Manually set time to integrate to
-        T = 1.0;
-        
-        // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        nt = floor(T / dt);
-        dt = T / (nt - 1);
+        // double T = 1.0;
+        // 
+        // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
+        // nt = floor(T / dt);
+        // dt = T / (nt - 1);
         
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 

@@ -38,47 +38,51 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
 
     
     // Check that number of time steps times number of stages divides the number MPI processes or vice versa.
-    // Temporal + spatial parallelism only
-    if (m_nt * m_s_butcher < m_numProc) {
+    /* ------ Temporal + spatial parallelism ------ */
+    if (m_numProc > (m_nt * m_s_butcher)) {
         if (m_globRank == 0) {
-                std::cout << "Error: Spatial + temporal parallelism not yet implemented!\n";
+            std::cout << "Spatial + temporal parallelism mode!\n";    
         }
-        MPI_Finalize();
-        return;
         
-        // m_useSpatialParallel = true;
-        // // TODO: Check that the number of processors divides the correct number...
-        // if (m_numProc % (m_numTimeSteps * m_s_butcher) != 0) {
-        //     if (m_globRank == 0) {
-        //         std::cout << "Error: number of time steps * number of RK stages does not divide number of processes.\n";
-        //     }
-        //     MPI_Finalize();
-        //     return;
-        // }
-        // else {
-        //     m_Np_x = m_numProc / (m_numTimeSteps * m_s_butcher);
-        // }
-        // 
-        // // Set up communication group for spatial discretizations.
-        // m_timeInd = m_globRank / m_Np_x;
-        // MPI_Comm_split(m_globComm, m_timeInd, m_globRank, &m_spatialComm);
-        // MPI_Comm_rank(m_spatialComm, &m_spatialRank);
-        // MPI_Comm_size(m_spatialComm, &m_spCommSize);
-
-    }
-    // Temporal parallelism only
-    else {
-        m_useSpatialParallel = false;
-        if ( (m_nt * m_s_butcher) % m_numProc  != 0) {
+        m_useSpatialParallel = true;
+        if (m_numProc % (m_nt * m_s_butcher) != 0) {
             if (m_globRank == 0) {
                 std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << "\n";
             }
             MPI_Finalize();
             return;
         }
+        else {
+            m_Np_x = m_numProc / (m_nt * m_s_butcher); 
+        }
+         
+        // Set up communication group for spatial discretizations.
+        m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
+        m_DOFInd = m_globRank / m_Np_x;
+        MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
+        MPI_Comm_rank(m_spatialComm, &m_spatialRank);
+        MPI_Comm_size(m_spatialComm, &m_spCommSize);
+        
+        
+        // // TODO: delete  me
+        // if (m_globRank == 0) {
+        //     MPI_Finalize();
+        //     return;
+        // }
+
+    }
+    /* ------ Temporal parallelism only ------ */
+    else {
+        m_useSpatialParallel = false;
+        if ( (m_nt * m_s_butcher) % m_numProc  != 0) {
+            if (m_globRank == 0) {
+                std::cout << "Error: number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << " does not divide number of processes " << m_numProc << "\n";
+            }
+            MPI_Finalize();
+            return;
+        }
         m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
-        //  TOOD: delete... This variable is for the old implementation... 
-        m_ntPerProc = m_nt / m_numProc; 
+        m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation... 
     }
 }
 
@@ -265,28 +269,30 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     int localMinRow;
     int localMaxRow;
     int spatialDOFs;
-    if (m_timeDisc == 11) {
-        BDF1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    }
-    else if (m_timeDisc == 31) {
-        AB1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
-    }
-    else {
-        std::cout << "WARNING: invalid choice of time integration.\n";
-        MPI_Finalize();
-        return;
-    }
+    RK(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
+    // TODO: remove code below, but keep for the moment. 
+    // if (m_timeDisc == 11) {
+    //     BDF1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
+    // }
+    // else if (m_timeDisc == 31) {
+    //     AB1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
+    // }
+    // else {
+    //     std::cout << "WARNING: invalid choice of time integration.\n";
+    //     MPI_Finalize();
+    //     return;
+    // }
 
     // Initialize matrix
     int onProcSize = localMaxRow - localMinRow + 1;
-    int ilower = m_timeInd*spatialDOFs + localMinRow;
-    int iupper = m_timeInd*spatialDOFs + localMaxRow;
+    int ilower = m_DOFInd*spatialDOFs + localMinRow;
+    int iupper = m_DOFInd*spatialDOFs + localMaxRow;
     HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &m_Aij);
     HYPRE_IJMatrixSetObjectType(m_Aij, HYPRE_PARCSR);
     HYPRE_IJMatrixInitialize(m_Aij);
 
     // Set matrix coefficients
-    int* rows = new int[onProcSize];
+    int* rows         = new int[onProcSize];
     int* cols_per_row = new int[onProcSize];
     for (int i=0; i<onProcSize; i++) {
         rows[i] = ilower + i;
@@ -651,7 +657,7 @@ void SpaceTimeMatrix::RK(int* &rowptr, int* &colinds, double* &data,
     int * blockInd = new int[m_nDOFPerProc];            // Block DOF, v, that each DOF belongs to
     for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
         localInd[globalInd - globalInd0] = globalInd % m_s_butcher;
-        blockInd[globalInd - globalInd0] = std::floor( (double) globalInd / m_s_butcher );
+        blockInd[globalInd - globalInd0] = std::floor( (double) globalInd / m_s_butcher ); // TODO: Just use integer division here rather than floor?
     }
     
     // Get spatial discretization at time required by first 1st DOF.
@@ -730,19 +736,19 @@ void SpaceTimeMatrix::RK(int* &rowptr, int* &colinds, double* &data,
     }
     //std::cout << "nnz on proc " << m_globRank << " = " << procNnz << '\n';
     
-    onProcSize  = m_nDOFPerProc * spatialDOFs; // Number of rows I own
-    rowptr  = new int[onProcSize + 1];
-    colinds = new int[procNnz];
-    data = new double[procNnz];
-    B = new double[onProcSize];
-    X = new double[onProcSize];
-    rowptr[0] = 0; 
+    onProcSize = m_nDOFPerProc * spatialDOFs; // Number of rows I own
+    rowptr     = new int[onProcSize + 1];
+    colinds    = new int[procNnz];
+    data       = new double[procNnz];
+    B          = new double[onProcSize];
+    X          = new double[onProcSize];
+    rowptr[0]  = 0; 
     
-    int dataInd = 0;
-    int rowOffset = 0;          // Row offset for current DOF w.r.t rows on proc
+    int dataInd         = 0;
+    int rowOffset       = 0;    // Row offset for current DOF w.r.t rows on proc
     int globalColOffset = 0;    // Global index of first column for furthest DOF that we couple back to
-    int localColOffset = 0;     // Temporary variable to help indexing
-    double temp = 0.0;          // Temporary constant 
+    int localColOffset  = 0;    // Temporary variable to help indexing
+    double temp         = 0.0;  // Temporary constant 
     
     
     /* ------------------------------------------------------------------------------------------------- */
@@ -1292,6 +1298,312 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
 /* ------------------------------------------------------------------------- */
 /* ------------------ At most one time step per processor ------------------ */
 /* ------------------------------------------------------------------------- */
+// (Spatial parallelism)
+
+void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data, 
+                        double *&B, double *&X, int &localMinRow, 
+                        int &localMaxRow, int &spatialDOFs)
+{
+    
+    int globalInd = m_DOFInd;                   // Global index of variable I own
+    int localInd  = globalInd % m_s_butcher;    // Local index of variable I own
+    // TODO: I guess I can just use integer division here? 
+    int blockInd  = std::floor( (double) globalInd / m_s_butcher ); // Block index of variable I own
+    
+    // Get spatial discretization 
+    int* T_rowptr;
+    int* T_colinds;
+    double* T_data;
+    double t = 0.0; // Time to evaluate spatial discretization
+    if (localInd == 0) { // Solution-type DOF that's not the initial condition
+        if (blockInd != 0) t = m_dt * (blockInd-1) + m_dt * m_c_butcher[m_s_butcher-1]; 
+    } else { // Stage-type DOF
+        t = m_dt * blockInd + m_dt * m_c_butcher[localInd-1]; 
+    }
+    getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data, 
+                            B, X, localMinRow, localMaxRow, spatialDOFs, 
+                            t, m_bsize);
+    int onProcSize = localMaxRow - localMinRow + 1; // Number of rows of spatial disc I own
+    int nnzL       = T_rowptr[onProcSize] - T_rowptr[0];    // Nnz in the component of spatial disc I own
+    
+    // Get mass matrix
+    int* M_rowptr;
+    int* M_colinds;
+    double* M_data;
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    int nnzM = M_rowptr[onProcSize] - M_rowptr[0];
+    
+    std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
+    std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
+    std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
+    
+    
+    /* ------ Get total NNZ on this processor. ------ */
+    //  -Doesn't assume sparsity of M and L overlap: This nnz count is an upperbound.
+    int procNnz = 0;
+    int k = localInd;
+    // Solution-type variable 
+    if (k == 0) {
+        // Initial condition just has identity coupling
+        if (blockInd == 0) {
+            procNnz += spatialDOFs;
+        // All solution DOFs at t > 0
+        } else {
+            // Coupling to itself
+            procNnz += nnzM;
+            if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] != 0.0) procNnz += nnzL;
+
+            // Coupling to solution DOF at previous time 
+            procNnz += nnzM;
+            if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] != 0.0) procNnz += nnzL; 
+
+            // Coupling to stage variables at previous time 
+            for (int j = 0; j < m_s_butcher-1; j++) {
+                if (m_b_butcher[j] != 0.0) procNnz += nnzM;
+                if (m_b_butcher[j]*m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1]*m_A_butcher[m_s_butcher-1][j] != 0.0) procNnz += nnzL;
+            }
+        }
+
+    // Stage-type DOF
+    } else {
+        k -= 1; // Work with this to index Butcher arrays directly.
+        // Coupling to itself
+        procNnz += nnzM;
+        if (m_A_butcher[k][k] != 0.0) procNnz += nnzL;
+
+        // Coupling to solution at previous time
+        procNnz += nnzL;
+
+        // Coupling to previous stage variables at current time
+        for (int j = 0; j < k; j++) {
+            if (m_A_butcher[k][j] != 0.0) procNnz += nnzL;
+        }
+    }
+    
+    //std::cout << "nnz on proc " << m_globRank << " = " << procNnz << '\n';
+    
+    rowptr    = new int[onProcSize + 1];
+    colinds   = new int[procNnz];
+    data      = new double[procNnz];
+    rowptr[0] = 0; 
+    
+    int dataInd         = 0;
+    int globalColOffset = 0;    // Global index of first column for furthest DOF that we couple back to
+    int localColOffset  = 0;    // Temporary variable to help indexing
+    double temp         = 0.0;  // Temporary constant 
+    
+    /* ---------------------------------------------------------------------------------------------- */
+    /* ------ Build my component of the block row of the space-time matrix belonging to my DOF ------ */
+    /* ---------------------------------------------------------------------------------------------- */
+    
+    std::map<int, double>::iterator it;
+    /* -------------------------------------------------------- */
+    /* ------ Assemble block row for a solution-type DOF ------ */
+    /* -------------------------------------------------------- */
+    if (localInd == 0) {
+        // Initial condition: Set matrix to identity and fix RHS and initial guess to ICs.
+        if (blockInd == 0) {
+
+            // Loop over each row
+            for (int row=0; row<onProcSize; row++) {
+                colinds[dataInd] = localMinRow + row; // Note globalColOffset == 0 for this DOF
+                data[dataInd] = 1.0;
+                dataInd += 1;
+                rowptr[row+1] = dataInd;
+                
+                X[row] = 0.0; // Set these to 0 then replace it with IC below
+            }
+            addInitialCondition(B);
+            addInitialCondition(X); 
+
+        // Solution-type DOF at time t > 0
+        } else {
+            // This DOF couples s DOFs back to the solution at the previous time
+            globalColOffset = spatialDOFs * (globalInd - m_s_butcher);
+
+            // Loop over each row in spatial discretization, working from left-most column/variables to right-most
+            for (int row=0; row<onProcSize; row++) {
+                /* ------ Coupling to solution at previous time ------ */
+                std::map<int, double> entries; 
+                // Get mass-matrix data
+                for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
+                    if (std::abs(M_data[j]) > 1e-16) {
+                        entries[M_colinds[j]] = M_data[j] / m_dt;
+                    }
+                }
+
+                // Add spatial discretization data to mass-matrix data
+                temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1];
+                if (temp != 0.0) {
+                    for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
+                        if (std::abs(T_data[j]) > 1e-16) {
+                            entries[T_colinds[j]] += temp * T_data[j];
+                        }
+                    }
+                }
+
+                // Add this data to global matrix
+                for (it=entries.begin(); it!=entries.end(); it++) {
+                    colinds[dataInd] = globalColOffset + it->first;
+                    data[dataInd] = -it->second;
+                    dataInd += 1;
+                }
+
+
+                /* ------ Coupling to stages at previous time ------ */
+                // Loop over all stage DOFs
+                for (int i = 0; i < m_s_butcher - 1; i++) {
+                    std::map<int, double> entries2; 
+                    // Get mass-matrix data
+                    temp = m_b_butcher[i];
+                    if (temp != 0.0) {
+                        for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
+                            if (std::abs(M_data[j]) > 1e-16) {
+                                entries2[M_colinds[j]] = temp * M_data[j];
+                            }
+                        }
+                    }
+
+                    // Add spatial discretization data to mass-matrix data
+                    temp = m_b_butcher[i] * m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] * m_A_butcher[m_s_butcher-1][i];
+                    if (temp != 0.0) {
+                        temp *= m_dt;
+                        for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
+                            if (std::abs(T_data[j]) > 1e-16) {
+                                entries2[T_colinds[j]] += temp * T_data[j];
+                            }
+                        }
+                    }
+
+                    // Add this data to global matrix
+                    localColOffset = globalColOffset + (i+1) * spatialDOFs;
+                    for (it=entries2.begin(); it!=entries2.end(); it++) {
+                        colinds[dataInd] = localColOffset + it->first;
+                        data[dataInd] = -it->second;
+                        dataInd += 1;
+                    }
+                }
+
+
+                /* ------ Coupling to myself/solution at current time ------ */
+                std::map<int, double> entries3; 
+                // Get mass-matrix data
+                for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
+                    if (std::abs(M_data[j]) > 1e-16) {
+                        entries3[M_colinds[j]] = M_data[j] / m_dt;
+                    }
+                }
+
+                // Add spatial discretization data to mass-matrix data
+                temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1];
+                if (temp != 0.0) {
+                    for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
+                        if (std::abs(T_data[j]) > 1e-16) {
+                            entries3[T_colinds[j]] += temp * T_data[j];
+                        }
+                    }
+                }
+
+                // Add this data to global matrix
+                localColOffset = globalColOffset + m_s_butcher * spatialDOFs;
+                for (it=entries3.begin(); it!=entries3.end(); it++) {
+                    colinds[dataInd] = localColOffset + it->first;
+                    data[dataInd] = it->second;
+                    dataInd += 1;
+                }
+
+
+                // Scale solution-independent spatial component by coefficient
+                B[row] *= m_b_butcher[m_s_butcher-1];
+
+                // Move to next row for current variable
+                rowptr[row+1] = dataInd;
+            }
+        }
+    /* ----------------------------------------------------- */
+    /* ------ Assemble block row for a stage-type DOF ------ */
+    /* ----------------------------------------------------- */
+    } else {
+        int kInd = localInd; // 1's-based index of current stage DOF
+        globalColOffset = spatialDOFs * (globalInd - kInd); // We couple back to the solution at current time
+
+        // Loop over each row in spatial discretization, working from left-most column/variables to right-most
+        for (int row=0; row<onProcSize; row++) {
+            /* ------ Coupling to solution at current time ------ */
+            for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
+                colinds[dataInd] = globalColOffset + T_colinds[j];
+                data[dataInd] = T_data[j];
+                dataInd += 1;
+            }
+
+            /* ------ Coupling to stages that come before me ------ */
+            for (int i=0; i<kInd-1; i++) {
+                temp = m_A_butcher[kInd-1][i];
+                if (temp != 0.0) {
+                    temp *= m_dt;
+                    localColOffset = globalColOffset + (i+1) * spatialDOFs;
+                    for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
+                        if (std::abs(T_data[j]) > 1e-16) {
+                            colinds[dataInd] = localColOffset + T_colinds[j];
+                            data[dataInd] = temp * T_data[j];
+                            dataInd += 1;
+                        }
+                    }
+                }
+            }
+
+            /* ------ Coupling to myself ------ */
+            std::map<int, double> entries; 
+            // Get mass-matrix data
+            for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
+                if (std::abs(M_data[j]) > 1e-16) {
+                    entries[M_colinds[j]] = M_data[j];
+                }
+            }
+
+            // Add spatial discretization data to mass-matrix data
+            temp = m_A_butcher[kInd-1][kInd-1];
+            if (temp != 0.0) {
+                temp *= m_dt;
+                for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
+                    if (std::abs(T_data[j]) > 1e-16) {
+                        entries[T_colinds[j]] += temp * T_data[j];
+                    }
+                }
+            }
+
+            // Add this data to global matrix
+            localColOffset = globalColOffset + kInd * spatialDOFs;
+            for (it=entries.begin(); it!=entries.end(); it++) {
+                colinds[dataInd] = localColOffset + it->first;
+                data[dataInd] = it->second;
+                dataInd += 1;
+            }
+
+            // Move to next row for current variable
+            rowptr[row+1] = dataInd;
+        }
+    }
+    // Finished assembling component of global space-time matrix
+    
+    // Check that sufficient data was allocated
+    if (dataInd > procNnz) {
+        std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
+    }
+    
+    //std::cout << "Actual nnz on proc " << m_globRank << " = " << rowptr[onProcSize] << "\n";
+    
+    // Clean up.
+    delete[] T_rowptr;
+    delete[] T_colinds;
+    delete[] T_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
+    
+    // MPI_Finalize();
+    // exit(1);
+}
 
 /* First-order BDF implicit scheme (Backward Euler / 1st-order Adams-Moulton). */
 void SpaceTimeMatrix::BDF1(int* &rowptr, int* &colinds, double* &data,

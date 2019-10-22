@@ -38,7 +38,8 @@ class SpaceTimeMatrix
 private:
     
     int     m_globRank;
-    int     m_timeInd;
+    int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
+    int     m_DOFInd; /* Index of DOF that spatial comm group belongs to */
     int     m_spatialRank;
     int     m_timeDisc;
     int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
@@ -46,7 +47,7 @@ private:
     int     m_numProc;
     int     m_ntPerProc; // TODO: this variable doesn't really make sense...
     int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
-    int     m_Np_x;
+    int     m_Np_x;                 /* Number of processors that spatial discretization is put on */
     int     m_bsize;
     int     m_spCommSize;
     bool    m_useSpatialParallel;
@@ -78,15 +79,16 @@ private:
     void GetMatrix_ntGT1();
     void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);
 
-    // Routines to build space-time matrices when the spatial discretization
-    // takes up one or more processors.
+    // Routine to build space-time matrices when the spatial discretization
+    // takes more than one processor.
+    void RK(int *&rowptr, int *&colinds, double *&data, double *&B,
+              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
 
-    // Routines to build space-time matrices when more than one time
-    // step are allocated per processor.
+    // Routine to build space-time matrices when spatial at least one DOF is allocated per processor.
     void RK(int* &rowptr, int* &colinds, double* &data, double* &B, 
               double* &X, int &onProcSize);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
