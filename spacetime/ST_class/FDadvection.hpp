@@ -2,6 +2,8 @@
 	#include "SpaceTimeMatrix.hpp"
 #endif
 
+#include <vector>
+
 #define PI 3.14159265358979323846
 
 /* Provide finite-difference discretizations to the advection PDEs. There are two forms of advection PDE:
@@ -23,27 +25,27 @@ NOTES:
 class FDadvection : public SpaceTimeMatrix
 {
 private:
-        
-    int m_dim;              // Number of spatial dimensions
-        
     int m_problemID;        // ID for test problems
-    int m_conservativeForm; // Boolean: 1 == PDE in conservative form; 0 == PDE in non-conservative form
-	int m_order;            // Order of disc, between 1 and 5
     int m_refLevels;        // Have nx == 2^(refLevels + 2) spatial DOFs
-    int m_nx;               // Number of DOFs in space
-    double m_dx;            // Mesh spacing
+    
+    bool m_conservativeForm;            // TRUE == PDE in conservative form; FALSE == PDE in non-conservative form
+    int m_dim;                          // Number of spatial dimensions
+    std::vector<int> m_order;           // Order of discretization
+    std::vector<int> m_nx;              // Number of DOFs
+    std::vector<double> m_dx;           // Mesh spacing
+    std::vector<double> m_boundary0;    // Lower boundary of domain
 
     // TODO... This class shouldn't really provide any mass matrix support at all...
     int * m_M_rowptr;
     int * m_M_colinds; 
     double * m_M_data;
 
-    void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
-                                  int *&A_colinds, double *&A_data, double *&B,
+    void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
+                                  int *&L_colinds, double *&L_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize);
 	
-	void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
+	void getSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data,
                                   double *&B, double *&X, int &spatialDOFs, double t,
                                   int &bsize);
                                   
@@ -54,25 +56,22 @@ private:
 
 
 
-    void getLocalUpwindDiscretization(std::function<double (const int&)> localWaveSpeed, 
-                                                    int &windDirection, double * &localWeights,
-                                                    double * &plusWeights, int * &plusInds, 
-                                                    double * &minusWeights, int * &minusInds);
+    void getLocalUpwindDiscretization(int &windDirection, double * &localWeights,
+                                        const std::function<double(int)> localWaveSpeed,
+                                        double * const &plusWeights, int * const &plusInds, 
+                                        double * const &minusWeights, int * const &minusInds,
+                                        int nWeights);
 
-                                                
-
-    // 
-    // void getLocalUpwindDiscretization(int xInd, double t, int &windDirection, double * &L_Data,
-    //                                     double * &L_PLusData, int * &L_PlusColinds, 
-    //                                     double * &L_MinusData, int * &L_MinusColinds);
                                         
                                         
-    void get1DUpwindStencil(int * &colinds, double * &data);
-    double InitCond(const double x);
-    double WaveSpeed(const double x, const double t); // 1D wave speed
-    double WaveSpeed(const double x, const double y, const double t, const int component); // 2D wave speed
-    double MeshIndToVal(const int xInd);
-    double PDE_Source(const double x, const double t);
+    double MeshIndToPoint(int meshInd, int dim);
+    void get1DUpwindStencil(int * &inds, double * &weight, int dim);
+    double InitCond(double x); // 1D initial condition
+    double InitCond(double x, double y); // 2D initial condition
+    double WaveSpeed(double x, double t); // 1D wave speed
+    double WaveSpeed(double x, double y, double t, int component); // 2D wave speed
+    double PDE_Source(double x, double t); // 1D source
+    double PDE_Source(double x, double y, double t); // 2D source
 
 public:
 
