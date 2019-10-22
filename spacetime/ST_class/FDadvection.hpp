@@ -30,6 +30,10 @@ private:
     int m_nx;               // Number of DOFs in space
     double m_dx;            // Mesh spacing
 
+    // TODO... This class shouldn't really provide any mass matrix support at all...
+    int * m_M_rowptr;
+    int * m_M_colinds; 
+    double * m_M_data;
 
     void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,

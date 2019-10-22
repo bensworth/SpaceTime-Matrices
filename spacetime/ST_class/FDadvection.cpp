@@ -79,6 +79,10 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_conservativeForm = 1;
     }
         
+    // Need to initialize these to NULL so we can distinguish them from once they have been built
+    m_M_rowptr  = NULL;
+    m_M_colinds = NULL;
+    m_M_data    = NULL;    
 }
 
 
@@ -92,13 +96,15 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_
                                   int *&A_colinds, double *&A_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize) {
+    
+    
                                       
                                   }
 
 
 
 
-/* Time-independent DG spatial discretization of advection */
+/* FD spatial discretization of advection */
 void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
                                            double * &A_data, double * &B, double * &X,
                                            int &spatialDOFs, double t, int &bsize)
@@ -225,6 +231,20 @@ void FDadvection::getSpatialDiscretization(int * &A_rowptr, int * &A_colinds,
         X[row] = 1.0; // TOOD : Set this to a random value?
     }
     
+    // Assemble the mass matrix (identity matrix) if it has not been done previously
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+        std::cout << "I'm assembling massss\n\n";
+        m_M_rowptr  = new int[m_nx+1];
+        m_M_colinds = new int[m_nx];
+        m_M_data    = new double[m_nx];
+        m_M_rowptr[0] = 0;
+        for (int i = 0; i < m_nx; i++) {
+            m_M_colinds[i]  = i;
+            m_M_data[i]     = 1.0;
+            m_M_rowptr[i+1] = i+1;
+        } 
+    }
+    
     // Don't need these any more
     delete[] L_PlusColinds;
     delete[] L_PlusData;
@@ -279,18 +299,22 @@ void FDadvection::getLocalUpwindDiscretization(int xInd, double t, int &windDire
 }
 
 
-// Just return the identity matrix: We don't have a mass matrix for FD discretizations
+// The mass matrix (the identity) is assembled when the spatial discretization is assembled
+// Note that it has to be done this way to account for spatial parallelism since this functions
+// definition does not make reference to the spatial comm group
+
 void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
 {
-    M_rowptr  = new int[m_nx+1];
-    M_colinds = new int[m_nx];
-    M_data    = new double[m_nx];
-    M_rowptr[0] = 0;
-    for (int i = 0; i < m_nx; i++) {
-        M_colinds[i]  = i;
-        M_data[i]     = 1.0;
-        M_rowptr[i+1] = i+1;
-    }    
+    // Check that mass matrix has been constructed
+    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
+        std::cout << "WARNING: Mass matrix not integrated. Spatial discretization must be assembled once first\n";
+        return;
+    }
+    
+    // Direct pointers to mass matrix data arrays
+    M_rowptr = m_M_rowptr;
+    M_colinds = m_M_colinds; 
+    M_data = m_M_data;   
 }
 
 
