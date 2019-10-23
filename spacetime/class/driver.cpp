@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
-#include "MySpaceTime.hpp"
+#include "CGdiffusion.hpp"
+#include "DGadvection.hpp"
 #include "mfem.hpp"
 using namespace mfem;
 
@@ -25,12 +26,19 @@ int main(int argc, char *argv[])
     double solve_tol = 1e-8;
     int print_level = 3;
     int timeDisc = 11;
+    int spatialDisc = 1;
+    int max_iter = 100;
 
-	AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    const char* temp_prerelax = "";
-    const char* temp_postrelax = "FFC";
+    // AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
+    // const char* temp_prerelax = "";
+    // const char* temp_postrelax = "FFC";
+    AMG_parameters AMG = {"A", "A", 6, 6, 0.01, 6, -1, 0.1, 0};
+    const char* temp_prerelax = "A";
+    const char* temp_postrelax = "A";
 
     OptionsParser args(argc, argv);
+    args.AddOption(&spatialDisc, "-s", "--spatial-disc",
+                   "Spatial discretization (1=CG diffusion, 2=DG advection");
     args.AddOption(&timeDisc, "-t", "--time-disc",
                   "Time discretization (11=BDF1; 12=BDF2; 13=BDF3; 21=AM1; 22=AM2; 31=AB1; 32=AB2).");
     args.AddOption(&order, "-o", "--order",
@@ -83,13 +91,19 @@ int main(int argc, char *argv[])
 
     // For now have to keep SpaceTime object in scope so that MPI Communicators
     // get destroyed before MPI_Finalize() is called. 
-    {
-        MySpaceTime STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
+    if (spatialDisc == 1) {
+        CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
         STmatrix.BuildMatrix();
         STmatrix.SetAMGParameters(AMG);
-
-        if (use_gmres) STmatrix.SolveGMRES(solve_tol);
-        else STmatrix.SolveAMG(solve_tol);
+        if (use_gmres) STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
+        else STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+    }
+    else {
+        DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, numTimeSteps, refLevels, order);
+        STmatrix.BuildMatrix();
+        STmatrix.SetAMGParameters(AMG);
+        if (use_gmres) STmatrix.SolveGMRES(solve_tol, max_iter, print_level);
+        else STmatrix.SolveAMG(solve_tol, max_iter, print_level);
     }
 
     MPI_Finalize();

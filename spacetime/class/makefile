@@ -1,10 +1,9 @@
 # Compiler, compile options, and link options
-
 # Ben's stuff
-#MFEM_DIR  = /g/g19/bs/cab/mfem
-#HYPRE_DIR = $(MFEM_DIR)/../hypre/src/hypre
-#METIS_DIR = $(MFEM_DIR)/../metis/build/Linux-x86_64
-#CXX      = mpiicpc
+# MFEM_DIR  = /g/g19/bs/quartz/mfem
+# HYPRE_DIR = $(MFEM_DIR)/../hypre/src/hypre
+# METIS_DIR = $(MFEM_DIR)/../metis/build/Linux-x86_64
+#CXX      = mpicxx
 #FLAGS    = -g -std=c++11
 #INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include -I./src
 #CXXFLAGS = $(FLAGS) $(INC)
@@ -16,6 +15,7 @@ MFEM_DIR  = /usr/local
 HYPRE_DIR = /usr/local
 METIS_DIR = /usr/local
 CXX      = mpic++
+
 FLAGS    = -g -std=c++11
 INC      = -I$(MFEM_DIR) -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include -I./src
 CXXFLAGS = $(FLAGS) $(INC)
@@ -27,7 +27,7 @@ LDLIBS   = -lmfem -lHYPRE -lmetis
 # Files to compile
 #	TODO : Maybe should put class files in subdirectory so can use wildcard.
 # SOURCE_FILES  = $(wildcard *.cpp)
-SOURCE_FILES  = SpaceTimeMatrix.cpp MySpaceTime.cpp
+SOURCE_FILES  = SpaceTimeMatrix.cpp CGdiffusion.cpp DGadvection.cpp $(wildcard ./src/*.cpp)
 OBJECT_FILES  = $(SOURCE_FILES:.cpp=.o)
 EXEC_FILES    = driver
 

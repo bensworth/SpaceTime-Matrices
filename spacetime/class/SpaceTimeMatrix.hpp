@@ -6,6 +6,7 @@
 #include "HYPRE_krylov.h"
 
 #include "_hypre_parcsr_mv.h"
+#define SPACETIMEMATRIX
 
 /* Struct containing Butcher table for RK methods */
 struct RK_butcher
@@ -78,6 +79,19 @@ private:
     void GetMatrix_ntGT1();
     void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);
 
+    // Runge--Kutta schemes to initialize multistep methods
+    void updateMultiRHS_ntGT1(MPI_Comm comm);
+    void updateMultiRHS_ntLT1();
+    void getButcher(RK_butcher &butch, int option);
+    void ERK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
+                HYPRE_ParVector * par_u0, double t0, double dt, 
+                int ilower, int iupper, int * M_rowptr, int * M_colinds, 
+                double * M_data);
+    void DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, 
+                HYPRE_ParVector * par_u0, double t0, double dt, 
+                int ilower, int iupper, int * M_rowptr, int * M_colinds, 
+                double * M_data);
+
     // Routines to build space-time matrices when the spatial discretization
     // takes up one or more processors.
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
@@ -114,17 +128,25 @@ private:
     void DIRK(MPI_Comm comm, RK_butcher butch, HYPRE_ParVector * par_u, HYPRE_ParVector * par_u0, double t0, double delta_t, int ilower, int iupper, int * M_rowptr, int * M_colinds, double * M_data, int * L_rowptr, int * L_colinds, double * L_data, double * g_data);
 
     
+    void getSpatialDiscretization_helper(int *&T_rowptr, int *&T_colinds, double *&T_data, 
+                                            double *&B0, double *&X0, int &spatialDOFs, double t, 
+                                            int *&cols_per_row_T);
+
+
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
     // first 10 spatial DOFs, second processor next 10, and so on. 
     virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
-                                          int *&A_colinds, double *&A_data, double *&B,
-                                          double *&X, int &localMinRow, int &localMaxRow,
-                                          int &spatialDOFs, double t, double dt) = 0;
+                                          int* &A_colinds, double* &A_data, double* &B,
+                                          double* &X, int &localMinRow, int &localMaxRow,
+                                          int &spatialDOFs, double t) = 0;
     // Spatial discretization on one processor
-    virtual void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
-                                          double *&B, double *&X, int &spatialDOFs,
-                                          double t, double dt) = 0;
+    virtual void getSpatialDiscretization(int* &A_rowptr, int* &A_colinds, double* &A_data,
+                                          double* &B, double* &X, int &spatialDOFs,
+                                          double t) = 0;
+
+    // Get mass matrix for time integration; only for finite element discretizations.
+    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data) { };
 
     // TODO: Add support in functions for this; make optional? 
     // virtual void getRHS(const MPI_Comm &spatialComm, double *&B, double t) = 0;
@@ -137,7 +159,7 @@ public:
     virtual ~SpaceTimeMatrix();
 
     void BuildMatrix();
-    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); } // this said filename1?
+    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();

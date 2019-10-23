@@ -7,8 +7,9 @@ CXX      = mpic++
 FLAGS    = -g
 INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include
 CXXFLAGS = $(FLAGS) $(INC)
-LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis -L/System/Library/Frameworks/Accelerate.framework
-LDLIBS   = -framework Accelerate -lmfem -lHYPRE -lmetis -lcblas
+# LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis -L/System/Library/Frameworks/Accelerate.framework
+LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis
+LDLIBS   = -lmfem -lHYPRE -lmetis -lcblas
 
 # Files to compile
 SOURCE_FILES  = 
