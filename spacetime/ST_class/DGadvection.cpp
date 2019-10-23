@@ -126,11 +126,11 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
     if (m_dim == 2) {
         // m_mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
-        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+        std::string mesh_file = "../../meshes/beam-quad.mesh";
         m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
     }
     else {
-        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
+        std::string mesh_file = "../../meshes/inline-tet.mesh";
         m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
     }
     m_mesh->GetBoundingBox(mesh_min,mesh_max);
@@ -164,11 +164,11 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
     if (m_dim == 2) {
         // m_mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
-        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+        std::string mesh_file = "../../meshes/beam-quad.mesh";
         m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
     }
     else {
-        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
+        std::string mesh_file = "../../meshes/inline-tet.mesh";
         m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
     }
     m_mesh->GetBoundingBox(mesh_min,mesh_max);
@@ -201,11 +201,11 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
     if (m_dim == 2) {
         // m_mesh_file = "/g/g19/bs/quartz/AIR_tests/data/UnsQuad.0.mesh";
-        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+        std::string mesh_file = "../../meshes/beam-quad.mesh";
         m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
     }
     else {
-        std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/inline-tet.mesh";
+        std::string mesh_file = "../../meshes/inline-tet.mesh";
         m_mesh = new Mesh(mesh_file.c_str(), 1, 1);
     }
     m_mesh->GetBoundingBox(mesh_min,mesh_max);
@@ -237,7 +237,7 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     //     }
     //     m_is_refined = true;
     // }
-    std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+    std::string mesh_file = "../../meshes/beam-quad.mesh";
     Mesh mesh(mesh_file.c_str(), 1, 1);
     for (int lev = 0; lev<m_refLevels; lev++) {
         mesh.UniformRefinement();
@@ -484,7 +484,7 @@ void DGadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B)
     //     }
     //     m_is_refined = true;
     // }
-    std::string mesh_file = "/g/g19/bs/quartz/AIR_tests/data/beam-quad.mesh";
+    std::string mesh_file = "../../meshes/beam-quad.mesh";
     Mesh mesh(mesh_file.c_str(), 1, 1);
     for (int lev = 0; lev<m_refLevels; lev++) {
         mesh.UniformRefinement();

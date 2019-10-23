@@ -1,11 +1,13 @@
 #include <mpi.h>
 #include "HYPRE.h"
+#include <map>
 #include <string>
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
 #include "_hypre_parcsr_mv.h"
 #include "HYPRE_krylov.h"
 #define SPACETIMEMATRIX
+
 
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
@@ -34,15 +36,18 @@ struct AMG_parameters {
 class SpaceTimeMatrix
 {
 private:
-
+    
     int     m_globRank;
-    int     m_timeInd;
+    int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
+    int     m_DOFInd; /* Index of DOF that spatial comm group belongs to */
     int     m_spatialRank;
     int     m_timeDisc;
-    int     m_numTimeSteps;
+    int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
+    int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
     int     m_numProc;
-    int     m_ntPerProc;
-    int     m_Np_x;
+    int     m_ntPerProc; // TODO: this variable doesn't really make sense...
+    int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
+    int     m_Np_x;                 /* Number of processors that spatial discretization is put on */
     int     m_bsize;
     int     m_spCommSize;
     bool    m_useSpatialParallel;
@@ -52,6 +57,10 @@ private:
     double  m_t0;
     double  m_t1;
     double  m_dt;
+    int     m_s_butcher;            /* Number of stages in RK scheme */
+    double  m_A_butcher[10][10];    /* Coefficients in RK Butcher tableaux */
+    double  m_b_butcher[10];        /* Coefficients in RK Butcher tableaux */
+    double  m_c_butcher[10];        /* Coefficients in RK Butcher tableaux */
 
     MPI_Comm            m_globComm;
     MPI_Comm            m_spatialComm;
@@ -65,19 +74,23 @@ private:
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_solverOptions;
 
+    void GetButcherTableaux();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);
 
-    // Routines to build space-time matrices when the spatial discretization
-    // takes up one or more processors.
+    // Routine to build space-time matrices when the spatial discretization
+    // takes more than one processor.
+    void RK(int *&rowptr, int *&colinds, double *&data, double *&B,
+              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
 
-    // Routines to build space-time matrices when more than one time
-    // step are allocated per processor.
+    // Routine to build space-time matrices when spatial at least one DOF is allocated per processor.
+    void RK(int* &rowptr, int* &colinds, double* &data, double* &B, 
+              double* &X, int &onProcSize);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
@@ -121,6 +134,7 @@ public:
     void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
     void SaveRHS(std::string filename) { HYPRE_IJVectorPrint(m_bij, filename.c_str()); }
     void SaveX(std::string filename) { HYPRE_IJVectorPrint(m_xij, filename.c_str()); }
+    void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
 
     void SetAMG();
     void SetAIR();
