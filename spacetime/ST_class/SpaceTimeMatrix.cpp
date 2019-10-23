@@ -681,6 +681,13 @@ void SpaceTimeMatrix::RK(int* &rowptr, int* &colinds, double* &data,
     int nnzL = T_rowptr[spatialDOFs];   
     
     
+    // for (int i = 0; i < nnzL; i++) {
+    //     std::cout << "T_data[" << i << "] = " << T_data[i] << '\n';
+    // }
+    // 
+    // exit(1);
+    
+    
     // Get mass matrix
     int* M_rowptr;
     int* M_colinds;
@@ -689,10 +696,10 @@ void SpaceTimeMatrix::RK(int* &rowptr, int* &colinds, double* &data,
     int nnzM = M_rowptr[spatialDOFs];
     // TODO: Why is this not making sense  for DG??
     
-    std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
-    std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
-    std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
-    
+    // std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
+    // std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
+    // std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
+    // 
     
     /* ------ Get total NNZ on this processor. ------ */
     //  -Assumes NNZ of spatial discretization does not change with time

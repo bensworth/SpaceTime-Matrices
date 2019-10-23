@@ -17,9 +17,12 @@ Several test problems implemented, as follows:
     u_t + a(x,t)*u_x   = s3(x,t),       problemID == 3
 where the wave speeds and sources can be found in the main file...    
     
+-In higher dimensions, the finite-differences are done in a dimension by dimension fashion    
+    
+-The wavespeed is assumed to be an m-dimensional vector function whose m components are each functions of the m spatial variables and time
     
 NOTES:
-    -Only periodic boundary conditions are implemented. This means the wavespeed has to be periodic in space
+    -Only periodic boundary conditions are implemented. This means the wavespeed has to be periodic in space!
 */
 
 class FDadvection : public SpaceTimeMatrix
@@ -44,6 +47,16 @@ private:
                                   int *&L_colinds, double *&L_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize);
+                                  
+    void get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
+                                  int *&L_colinds, double *&L_data, double *&B,
+                                  double *&X, int &localMinRow, int &localMaxRow,
+                                  int &spatialDOFs, double t, int &bsize);
+                                  
+    void get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
+                                  int *&L_colinds, double *&L_data, double *&B,
+                                  double *&X, int &localMinRow, int &localMaxRow,
+                                  int &spatialDOFs, double t, int &bsize);                                  
 	
 	void getSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data,
                                   double *&B, double *&X, int &spatialDOFs, double t,
@@ -56,15 +69,16 @@ private:
 
 
 
-    void getLocalUpwindDiscretization(int &windDirection, double * &localWeights,
-                                        const std::function<double(int)> localWaveSpeed,
+    void getLocalUpwindDiscretization(double * &localWeights, int * &localInds,
+                                        std::function<double(int)> localWaveSpeed,
                                         double * const &plusWeights, int * const &plusInds, 
                                         double * const &minusWeights, int * const &minusInds,
                                         int nWeights);
 
                                         
-                                        
-    double MeshIndToPoint(int meshInd, int dim);
+                    
+    int LocalMeshIndToGlobalInd(int xInd, int yInd);
+    double LocalMeshIndToPoint(int meshInd, int dim);
     void get1DUpwindStencil(int * &inds, double * &weight, int dim);
     double InitCond(double x); // 1D initial condition
     double InitCond(double x, double y); // 2D initial condition

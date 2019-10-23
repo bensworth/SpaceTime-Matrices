@@ -158,8 +158,6 @@ int main(int argc, char *argv[])
     /* Finite-difference discretization of advection */
     else if (spatialDisc == 3) {
         
-        dim = 1;
-        
         // These limits apply for ERKp+Up schemes
         double CFLlim = 0.0;
         if (order == 1)  {
@@ -174,22 +172,30 @@ int main(int argc, char *argv[])
             CFLlim = 1.96583;
         }
         
+        
         // Time step so that we run at 85% of the CFL of the given ERK discretization
-        // Assume nx = 2^(refLevels + 2), and x \in [-1,1]
-        dt = 2.0 / pow(2.0, refLevels + 2) * CFLlim;
+        if (dim == 1) {
+            double dx = 2.0 / pow(2.0, refLevels + 2); // Assume nx = 2^(refLevels + 2), and x \in [-1,1] 
+            dt = dx * CFLlim;
+        } else if (dim == 2) {
+            double dx = 2.0 / pow(2.0, refLevels + 2); // Assume nx = 2^(refLevels + 2), and x \in [-1,1] 
+            double dy = dx;
+            dt = CFLlim/(1/dx + 1/dy);
+        }
+        
         double CFL_fraction = 0.85;
         dt *= CFL_fraction;
         
         // Manually set time to integrate to
-        // double T = 1.0;
+        double T = 0.25;
         // 
         // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        // nt = floor(T / dt);
-        // dt = T / (nt - 1);
+        nt = floor(T / dt);
+        dt = T / (nt - 1);
         
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
-                                dt, refLevels, order, FD_ProblemID);
+                                dt, dim, refLevels, order, FD_ProblemID);
 
         STmatrix.BuildMatrix();
         
