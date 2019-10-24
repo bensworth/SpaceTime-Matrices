@@ -19,6 +19,7 @@ from scipy.sparse import load_npz
 
 # Run me like << python plot.py <<path to file with solution information>>
 # File should contain a list of (at least) the following parameters:
+# pit
 # P
 # nt
 # dt
@@ -43,6 +44,7 @@ with open(filename) as f:
        params[key] = val
        
 # Type cast the parameters from strings into their original types
+params["pit"]             = int(params["pit"])
 params["P"]               = int(params["P"])
 params["nt"]              = int(params["nt"])
 params["s"]               = int(params["s"])
@@ -59,47 +61,74 @@ elif params["space_dim"] == 2:
     NX = params["nx"] ** 2
 
 
-### ----------------------------------------------------------------------------------- ###
-### --- NO SPATIAL PARALLELISM: Work out which processor uT lives on and extract it --- ###
-if not params["spatialParallel"]:
-    DOFsPerProc = int((params["s"] * params["nt"]) / params["P"]) # Number of temporal variables per proc
-    PuT         = int(np.floor( (params["s"] * (params["nt"]-1)) / DOFsPerProc )) # Index of proc that owns uT
-    PuT_DOF0Ind = PuT * DOFsPerProc # Global index of first variable on this proc
-    PuT_uTInd   = (params["s"] * (params["nt"]-1)) - PuT_DOF0Ind # Local index of uT on its proc
-    
-    # Filename for data output by processor output processor. Assumes format is <<filename>>.<<index of proc using 5 digits>>
-    Ufilename  = filename + "." + "0" * (5-len(str(PuT))) + str(PuT)
-
-    # Read all data from this proc
-    with open(Ufilename) as f:
-        dims = f.readline()
-    dims.split(" ")
-    dims = [int(x) for x in dims.split()] 
-    # Get data from lines > 0
-    uT_dense = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+#############################
+#  --- Parallel in time --- #
+#############################
+if (params["pit"] == 1):
+    ### ----------------------------------------------------------------------------------- ###
+    ### --- NO SPATIAL PARALLELISM: Work out which processor uT lives on and extract it --- ###
+    if not params["spatialParallel"]:
+        DOFsPerProc = int((params["s"] * params["nt"]) / params["P"]) # Number of temporal variables per proc
+        PuT         = int(np.floor( (params["s"] * (params["nt"]-1)) / DOFsPerProc )) # Index of proc that owns uT
+        PuT_DOF0Ind = PuT * DOFsPerProc # Global index of first variable on this proc
+        PuT_uTInd   = (params["s"] * (params["nt"]-1)) - PuT_DOF0Ind # Local index of uT on its proc
         
-    # Extract uT from other junk    
-    uT = np.zeros(NX)
-    uT[:] = uT_dense[PuT_uTInd*NX:(PuT_uTInd+1)*NX]
+        # Filename for data output by processor output processor. Assumes format is <<filename>>.<<index of proc using 5 digits>>
+        Ufilename  = filename + "." + "0" * (5-len(str(PuT))) + str(PuT)
+
+        # Read all data from this proc
+        with open(Ufilename) as f:
+            dims = f.readline()
+        dims.split(" ")
+        dims = [int(x) for x in dims.split()] 
+        # Get data from lines > 0
+        uT_dense = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+            
+        # Extract uT from other junk    
+        uT = np.zeros(NX)
+        uT[:] = uT_dense[PuT_uTInd*NX:(PuT_uTInd+1)*NX]
 
 
-### ---------------------------------------------------------------------------------------- ###
-### --- SPATIAL PARALLELISM: Work out which processors uT lives on extract it from them ---  ###
-# Note that ordering is preserved...
+    ### ---------------------------------------------------------------------------------------- ###
+    ### --- SPATIAL PARALLELISM: Work out which processors uT lives on extract it from them ---  ###
+    # Note that ordering is preserved...
+    else:
+        params["spatial_Np_x"]    = int(params["spatial_Np_x"])
+        
+        # Index of proc holding first component of uT
+        PuT0 = (params["nt"]-1) * params["s"] * params["spatial_Np_x"]     
+        
+        # Get names of all procs holding uT data
+        PuT = []
+        for P in range(PuT0, PuT0 + params["spatial_Np_x"]):
+            PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
+        
+        uT = np.zeros(NX)
+        
+        DOFsPerProc = int(NX/params["spatial_Np_x"])
+        
+        for count, Ufilename in enumerate(PuT):
+            #print(count, NX)
+            # Read all data from the proc
+            with open(Ufilename) as f:
+                dims = f.readline()
+            dims.split(" ")
+            dims = [int(x) for x in dims.split()] 
+            # Get data from lines > 0
+            uT[count*DOFsPerProc:(count+1)*DOFsPerProc] = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+
+
+###############################
+#  --- Sequential in time --- #
+###############################
 else:
-    params["spatial_Np_x"]    = int(params["spatial_Np_x"])
-    
-    # Index of proc holding first component of uT
-    PuT0 = (params["nt"]-1) * params["s"] * params["spatial_Np_x"]     
-    
-    # Get names of all procs holding uT data
+    # Get names of all procs holding data
     PuT = []
-    for P in range(PuT0, PuT0 + params["spatial_Np_x"]):
+    for P in range(0, params["P"]):
         PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
     
     uT = np.zeros(NX)
-    
-    DOFsPerProc = int(NX/params["spatial_Np_x"])
+    DOFsPerProc = int(NX/params["P"])
     
     for count, Ufilename in enumerate(PuT):
         #print(count, NX)
@@ -110,7 +139,7 @@ else:
         dims = [int(x) for x in dims.split()] 
         # Get data from lines > 0
         uT[count*DOFsPerProc:(count+1)*DOFsPerProc] = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
-    
+            
     
     
 

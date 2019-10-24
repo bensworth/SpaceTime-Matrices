@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <map>
+#include <vector>
 #include <algorithm>
 #include "SpaceTimeMatrix.hpp"
 #include <cmath> // OAK: I have to include this... There is some ambiguity with "abs". 
@@ -114,62 +115,145 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
     if (m_xij) HYPRE_IJVectorDestroy(m_xij);
 }
 
+// Assign memory and initialize all stage vectors to have zero values
+// They're distributed in memory the same way that that u is distributed
+void SpaceTimeMatrix::InitializeHypreStages(HYPRE_IJVector uij,
+                                            std::vector<HYPRE_ParVector> &k, 
+                                            std::vector<HYPRE_IJVector> &kij)
+{
+    int ilower;
+    int iupper;
+    HYPRE_IJVectorGetLocalRange(uij, &ilower, &iupper);
+    int onProcSize = iupper - ilower + 1; // Number of rows on proc
+    
+    // Set all entries to zero
+    int * rows      = new int[onProcSize];
+    double * values = new double[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        rows[i]   = ilower + i;
+        values[i] = 0.0;
+    }
+    
+    // Allocate space for the vectors
+    k.reserve(m_s_butcher);
+    kij.reserve(m_s_butcher);
+    
+    // Create all s stages
+    for (int w = 0; w < m_s_butcher; w++) {
+        HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &kij[w]);
+        HYPRE_IJVectorSetObjectType(kij[w], HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(kij[w]);
+        HYPRE_IJVectorSetValues(kij[w], onProcSize, rows, values);
+        HYPRE_IJVectorAssemble(kij[w]);
+        HYPRE_IJVectorGetObject(kij[w], (void **) &k[w]);
+    }
+
+    // Remove pointers that should have been copied by Hypre
+    delete[] rows;
+    delete[] values;
+}
+
+
+// Note: kij was declared on the stack so no need to free it
+void SpaceTimeMatrix::DestroyHypreStages(std::vector<HYPRE_IJVector> &kij) 
+{
+    for (int i = 0; i < m_s_butcher; i++)  {
+        HYPRE_IJVectorDestroy(kij[i]);
+    }
+}
+
 void SpaceTimeMatrix::ERKSolve() 
 {
+    double t = 0.0;    
     
-    // HYPRE_ParVector * u0;
-    // HYPRE_IJVector  * u0ij;
-    // getHypreU0(u0, u0ij);
-    
-    //std::cout << "Pre  u0" << '\n';
-    
-    HYPRE_ParVector u0;
-    HYPRE_IJVector  u0ij;
-    getHypreU0(u0, u0ij);
-    HYPRE_IJVectorPrint(u0ij, "data/u0.txt");
+    HYPRE_ParVector u;
+    HYPRE_IJVector  uij;
+    getHypreU0(u, uij);
+    //HYPRE_IJVectorPrint(uij, "data/u0.txt");
     
     HYPRE_ParCSRMatrix L;
-    HYPRE_IJMatrix Lij;
-    HYPRE_ParVector g;
-    HYPRE_IJVector  gij;
-    HYPRE_ParVector x;
-    HYPRE_IJVector  xij;
+    HYPRE_IJMatrix     Lij;
+    HYPRE_ParVector    g;
+    HYPRE_IJVector     gij;
+    HYPRE_ParVector    x;
+    HYPRE_IJVector     xij;
     
-    
-    
-    // std::cout << "Post  u0" << '\n';
-    // 
-    // 
-    // double  * temp =  new double[32];
-    // int  * tempinds =  new int[32];
-    // for (int i = 0; i < 32;  i++) {
-    //     tempinds[i] = i;
+    std::vector<HYPRE_ParVector> k;
+    std::vector<HYPRE_IJVector>  kij;
+    // for (int i = 0; i < m_s_butcher; i++) {
+    //     std::string message = "data/k" + std::to_string(i) + ".txt";
+    //     HYPRE_IJVectorPrint(kij[i], message.c_str());
     // }
-    // HYPRE_IJVectorGetValues(u0ij, 32,  tempinds, temp);
-    // 
-    // for (int i = 0; i < 32; i++) {
-    //     std::cout << "u0[i] =  " << temp[i] << '\n';
-    // }
+    //InitializeHypreStages(uij, k, kij);
+    //DestroyHypreStages(kij);
+
     
-    double t = 0.0;
-    getHypreSpatialDisc(L, Lij, g, gij, x, xij, t);
+    int step = 0;
+    for (step = 0; step < m_nt; step++) {
+    
+        // On First time step need to initialize stage vectors
+        if (step == 0) InitializeHypreStages(uij, k, kij);
+    
+        // Build ith stage vector
+        for (int i = 0; i < m_s_butcher; i++) {
+            // getSpatialDiscretization at t = t0 + c[i]*dt
+            if (step > 0){
+                DestroyHypreSpatialDisc(Lij, gij, xij);
+            }
+            getHypreSpatialDisc(L, Lij, g, gij, x, xij, t + m_dt * m_c_butcher[i]);
+    
+            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] // Initialize k to this value
+        //     //hypre_ParCSRMatrixMatvecOutOfPlace ( HYPRE_Complex alpha , hypre_ParCSRMatrix *A , hypre_ParVector *x , HYPRE_Complex beta , hypre_ParVector *b, hypre_ParVector *y );
+    	// 	//which computes y = alpha*A*x + beta*b
+        // 
+            for (int j = 0; j < i; j++) {
+                double temp = -m_dt * m_A_butcher[i][j];
+                if (temp !=  0.0) {
+                    hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, k[i]);  // k[i] <- k[i] - dt*A[i,j]*L[i]*k[j]  
+                    // hypre_ParCSRMatrixMatvec ( HYPRE_Complex alpha , hypre_ParCSRMatrix *A , hypre_ParVector *x , HYPRE_Complex beta , hypre_ParVector *y );
+        		          //which computes y = alpha*A*x + beta*y
+                }
+            }
+        }
+    
+        // Sum solution
+        for (int i = 0; i < m_s_butcher; i++)  {
+            double temp = m_dt * m_b_butcher[i];
+            if (temp != 0.0) {
+                HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
+                // HYPRE_ParVectorAxpy ( HYPRE_Complex alpha , HYPRE_ParVector x , HYPRE_ParVector y )
+                // seems like it does y += alpha*x???
+            }
+        }
+        t += m_dt;
+    }
     
     
-    HYPRE_IJMatrixPrint(Lij, "data/L.txt");
+    //std::string message = "data/FD_X" + std::to_string(step) + ".txt";
+    std::string message = "data/X_FD.txt";
     
-    HYPRE_IJVectorPrint(gij, "data/gInitial.txt");
+    HYPRE_IJVectorPrint(uij, message.c_str());
     
-    int success = hypre_ParCSRMatrixMatvec(1.0, L, u0, 1.0, g);
-		//which computes y = alpha*A*x + beta*y
-        
-    HYPRE_IJVectorPrint(gij, "data/gFinal.txt");    
     
+    if (step > 0) {
+        DestroyHypreStages(kij);
+        DestroyHypreSpatialDisc(Lij, gij, xij);
+    }
+    HYPRE_IJVectorDestroy(uij);
+}
+
+
+void SpaceTimeMatrix::DestroyHypreSpatialDisc(HYPRE_IJMatrix &Lij, HYPRE_IJVector &gij, HYPRE_IJVector &xij) 
+{
+    HYPRE_IJMatrixDestroy(Lij);
+    HYPRE_IJVectorDestroy(gij);
+    HYPRE_IJVectorDestroy(xij);
 }
 
 
 void SpaceTimeMatrix::getHypreU0(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij) 
 {
-    double* U;
+    double * U;
     int spatialDOFs;
     int ilower;
     int iupper;
@@ -317,6 +401,7 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
 {
     std::ofstream solinfo;
     solinfo.open(filename);
+    solinfo << "pit " << int(m_pit) << "\n";
     solinfo << "P " << m_numProc << "\n";
     solinfo << "nt " << m_nt << "\n";
     solinfo << "dt " << m_dt << "\n";

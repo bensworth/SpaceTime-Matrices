@@ -195,11 +195,11 @@ int main(int argc, char *argv[])
         dt *= CFL_fraction;
         
         // Manually set time to integrate to
-        double T = 0.25;
+        //double T = 0.25;
         // 
         // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        nt = floor(T / dt);
-        dt = T / (nt - 1);
+        //nt = floor(T / dt);
+        //dt = T / (nt - 1);
         
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
@@ -221,20 +221,20 @@ int main(int argc, char *argv[])
         //     STmatrix.SolveAMG(solve_tol, max_iter, print_level);
         // }
         // 
-        // if (save_sol) {
-        //     std::string file_name = "data/X_FD.txt";
-        //     STmatrix.SaveX(file_name);
-        //     // Save data to file enabling easier inspection of solution            
-        //     if (rank == 0) {
-        //         int nx = pow(2, refLevels+2);
-        //         std::map<std::string, std::string> space_info;
-        //         space_info["space_order"]     = std::to_string(order);
-        //         space_info["nx"]              = std::to_string(nx);
-        //         space_info["space_dim"]       = std::to_string(dim);
-        //         space_info["problemID"]       = std::to_string(FD_ProblemID);
-        //         STmatrix.SaveSolInfo(file_name, space_info);    
-        //     }
-        // }
+        if (save_sol) {
+            std::string file_name = "data/X_FD.txt";
+            //STmatrix.SaveX(file_name);
+            // Save data to file enabling easier inspection of solution            
+            if (rank == 0) {
+                int nx = pow(2, refLevels+2);
+                std::map<std::string, std::string> space_info;
+                space_info["space_order"]     = std::to_string(order);
+                space_info["nx"]              = std::to_string(nx);
+                space_info["space_dim"]       = std::to_string(dim);
+                space_info["problemID"]       = std::to_string(FD_ProblemID);
+                STmatrix.SaveSolInfo(file_name, space_info);    
+            }
+        }
         
         
     }                         

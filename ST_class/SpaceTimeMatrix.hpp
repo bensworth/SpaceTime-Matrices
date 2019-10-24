@@ -1,6 +1,7 @@
 #include <mpi.h>
 #include "HYPRE.h"
 #include <map>
+#include <vector>
 #include <string>
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
@@ -103,21 +104,6 @@ private:
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
 
-    
-    // Sequential RK time integrators
-    void DIRK();
-    void SDIRK(); // Just use for time 
-    void getHypreU0(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
-    //void getHypreU0(HYPRE_ParVector u0, HYPRE_IJVector u0ij);
-    //void getHypreSpatialDisc(double t);
-    
-    void getHypreSpatialDisc(HYPRE_ParCSRMatrix  &L,
-                                HYPRE_IJMatrix   &Lij,
-                                HYPRE_ParVector  &g,
-                                HYPRE_IJVector   &gij,
-                                HYPRE_ParVector  &x,
-                                HYPRE_IJVector   &xij,
-                                double t);
 
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
@@ -136,12 +122,38 @@ private:
 
     
     // TODO : these need to be implemented in CG and DG also...
-    virtual void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) = 0;
+    virtual void getInitialCondition(const MPI_Comm &spatialComm, double * &B, 
+                                        int &localMinRow, int &localMaxRow, 
+                                        int &spatialDOFs) = 0;
     virtual void getInitialCondition(double * &B, int &spatialDOFs) = 0;
     // TODO : I  don't think these make sense... Shouldn't we have as  above?
     // TODO: make optional? 
     virtual void addInitialCondition(const MPI_Comm &spatialComm, double *B) = 0;
     virtual void addInitialCondition(double *B) = 0;
+
+    /* ------ Sequential time integration routines ------ */
+    void DIRK();
+    void SDIRK(); // Just use for time 
+    void getHypreU0(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
+    
+    void InitializeHypreStages(HYPRE_IJVector uij, 
+                                std::vector<HYPRE_ParVector> &k, 
+                                std::vector<HYPRE_IJVector> &kij);
+    void DestroyHypreStages(std::vector<HYPRE_IJVector> &kij);
+    
+    void getHypreSpatialDisc(HYPRE_ParCSRMatrix  &L,
+                                HYPRE_IJMatrix   &Lij,
+                                HYPRE_ParVector  &g,
+                                HYPRE_IJVector   &gij,
+                                HYPRE_ParVector  &x,
+                                HYPRE_IJVector   &xij,
+                                double t);
+
+    void DestroyHypreSpatialDisc(HYPRE_IJMatrix &Lij, 
+                                    HYPRE_IJVector &gij, 
+                                    HYPRE_IJVector &xij) ;
+    
+    
 
 protected:
 
