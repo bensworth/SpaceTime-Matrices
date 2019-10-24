@@ -8,6 +8,8 @@
 #include "HYPRE_krylov.h"
 #define SPACETIMEMATRIX
 
+// TODO :
+// - Make spatial communicator a protected variable so that spatial discretization constructor can see it/access it...
 
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
@@ -36,6 +38,11 @@ struct AMG_parameters {
 class SpaceTimeMatrix
 {
 private:
+    bool    m_pit;              /* Parallel or sequential in time */
+    
+    bool    m_ERK;
+    bool    m_DIRK;
+    bool    m_SDIRK;
     
     int     m_globRank;
     int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
@@ -96,6 +103,22 @@ private:
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
 
+    
+    // Sequential RK time integrators
+    void DIRK();
+    void SDIRK(); // Just use for time 
+    void getHypreU0(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
+    //void getHypreU0(HYPRE_ParVector u0, HYPRE_IJVector u0ij);
+    //void getHypreSpatialDisc(double t);
+    
+    void getHypreSpatialDisc(HYPRE_ParCSRMatrix  &L,
+                                HYPRE_IJMatrix   &Lij,
+                                HYPRE_ParVector  &g,
+                                HYPRE_IJVector   &gij,
+                                HYPRE_ParVector  &x,
+                                HYPRE_IJVector   &xij,
+                                double t);
+
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
     // first 10 spatial DOFs, second processor next 10, and so on. 
@@ -111,12 +134,21 @@ private:
     // Get mass matrix for time integration; only for finite element discretizations.
     virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
 
+    
+    // TODO : these need to be implemented in CG and DG also...
+    virtual void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) = 0;
+    virtual void getInitialCondition(double * &B, int &spatialDOFs) = 0;
+    // TODO : I  don't think these make sense... Shouldn't we have as  above?
     // TODO: make optional? 
     virtual void addInitialCondition(const MPI_Comm &spatialComm, double *B) = 0;
     virtual void addInitialCondition(double *B) = 0;
 
-
 protected:
+
+    //int     m_spatialDOFs; // It seems like something  like this might be  needed...
+
+    bool    m_L_isTimedependent; /* Is spatial discretization time dependent? */
+    bool    m_g_isTimedependent; /* Is PDE source term time dependent? */
 
     int*    m_M_rowptr;
     int*    m_M_colinds;
@@ -126,7 +158,9 @@ protected:
 
 public:
 
-    SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt);
+    void ERKSolve(); // For explicit RUn 
+
+    SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt, bool pit);
     // SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, double dt, double t0, double t1);
     virtual ~SpaceTimeMatrix();
 
@@ -145,4 +179,8 @@ public:
     void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3,
                     bool binv_scale=true, int precondition=1, int AMGiters=10);
     void PrintMeshData();
+    
+    
+    /* Sequential time integration */
+    void RKSolve();
 };

@@ -25,6 +25,8 @@ private:
 	Vector m_omega;
     Mesh* m_mesh;
 
+    
+
 	void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
@@ -32,18 +34,22 @@ private:
 	void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
                                   double *&B, double *&X, int &spatialDOFs, double t,
                                   int &bsize);
-	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);    
+	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);  
     void addInitialCondition(const MPI_Comm &spatialComm, double *B);
     void addInitialCondition(double *B);
+
+    // TODO :  Need to implement these functions... 
+    void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    void getInitialCondition(double * &B, int &spatialDOFs);
 
 public:
 
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt);
+				double dt, bool pit);
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, int refLevels, int order);
+				double dt, bool pit, int refLevels, int order);
 	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, int refLevels, int order, bool lumped);
+				double dt, bool pit, int refLevels, int order, bool lumped);
     ~DGadvection();
 
 };

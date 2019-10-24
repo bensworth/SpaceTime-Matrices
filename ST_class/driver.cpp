@@ -22,6 +22,8 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &numProcess);
 
     // Parameters
+    int pit_temp     = 1; // TODO : OptionsParser cannot  seem to handle a bool here??? 
+    bool pit;
     bool isTimeDependent = true;
     int numTimeSteps = 2; // TODO: I think this should be removed...
     int nt           = 2;
@@ -47,6 +49,9 @@ int main(int argc, char *argv[])
     const char* temp_postrelax = "FA";
 
     OptionsParser args(argc, argv);
+    
+    args.AddOption(&pit_temp, "-pit", "--parallel-in-time",
+                   "1=Parallel in time, 0=Sequential in time");               
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
                    "Spatial discretization (1=CG diffusion, 2=DG advection, 3=FD advection");
     args.AddOption(&timeDisc, "-t", "--time-disc",
@@ -113,8 +118,11 @@ int main(int argc, char *argv[])
         return 1;
     }
     if (rank == 0) {
-        args.PrintOptions(std::cout);
+        //args.PrintOptions(std::cout); TODO : uncomment  me...
     }
+
+    // TODO : How can I originally have pit be a bool?
+    pit = bool(pit_temp);
 
     if (dt < 0) dt = 1.0/numTimeSteps;
 
@@ -122,7 +130,7 @@ int main(int argc, char *argv[])
     // get destroyed before MPI_Finalize() is called. 
     if (spatialDisc == 1) {
         CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, nt,
-                             dt, refLevels, order, lump_mass);
+                             dt, pit, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
         if (save_mat) {
             STmatrix.SaveMatrix("test.mm");
@@ -139,7 +147,7 @@ int main(int argc, char *argv[])
     }
     else if (spatialDisc == 2) {
         DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,
-                             dt, refLevels, order, lump_mass);
+                             dt, pit, refLevels, order, lump_mass);
         STmatrix.BuildMatrix();
         if (save_mat) {
             STmatrix.SaveMatrix("test.mm");
@@ -195,36 +203,38 @@ int main(int argc, char *argv[])
         
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
-                                dt, dim, refLevels, order, FD_ProblemID);
-
-        STmatrix.BuildMatrix();
+                                dt, pit, dim, refLevels, order, FD_ProblemID);
         
-        if (save_mat) {
-            STmatrix.SaveMatrix("data/A_FD.mm");
-        }
-        STmatrix.SetAMGParameters(AMG);
-        if (use_gmres) {
-            STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
-                                true, use_gmres, AMGiters);
-        }
-        else {
-            STmatrix.SolveAMG(solve_tol, max_iter, print_level);
-        }
+        STmatrix.ERKSolve();
         
-        if (save_sol) {
-            std::string file_name = "data/X_FD.txt";
-            STmatrix.SaveX(file_name);
-            // Save data to file enabling easier inspection of solution            
-            if (rank == 0) {
-                int nx = pow(2, refLevels+2);
-                std::map<std::string, std::string> space_info;
-                space_info["space_order"]     = std::to_string(order);
-                space_info["nx"]              = std::to_string(nx);
-                space_info["space_dim"]       = std::to_string(dim);
-                space_info["problemID"]       = std::to_string(FD_ProblemID);
-                STmatrix.SaveSolInfo(file_name, space_info);    
-            }
-        }
+        // STmatrix.BuildMatrix();
+        // 
+        // if (save_mat) {
+        //     STmatrix.SaveMatrix("data/A_FD.mm");
+        // }
+        // STmatrix.SetAMGParameters(AMG);
+        // if (use_gmres) {
+        //     STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
+        //                         true, use_gmres, AMGiters);
+        // }
+        // else {
+        //     STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+        // }
+        // 
+        // if (save_sol) {
+        //     std::string file_name = "data/X_FD.txt";
+        //     STmatrix.SaveX(file_name);
+        //     // Save data to file enabling easier inspection of solution            
+        //     if (rank == 0) {
+        //         int nx = pow(2, refLevels+2);
+        //         std::map<std::string, std::string> space_info;
+        //         space_info["space_order"]     = std::to_string(order);
+        //         space_info["nx"]              = std::to_string(nx);
+        //         space_info["space_dim"]       = std::to_string(dim);
+        //         space_info["problemID"]       = std::to_string(FD_ProblemID);
+        //         STmatrix.SaveSolInfo(file_name, space_info);    
+        //     }
+        // }
         
         
     }                         

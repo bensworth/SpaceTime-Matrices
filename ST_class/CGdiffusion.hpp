@@ -31,14 +31,19 @@ private:
     void addInitialCondition(const MPI_Comm &spatialComm, double *B) { };
     void addInitialCondition(double *B) { };
 
+
+    // TODO :  Need to implement these functions... 
+    void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    void getInitialCondition(double * &B, int &spatialDOFs);
+    
 public:
 
 	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt);
+				double dt, bool pit);
 	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, int refLevels, int order);
+				double dt, bool pit, int refLevels, int order);
 	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, int refLevels, int order, bool lumped);
+				double dt, bool pit, int refLevels, int order, bool lumped);
     ~CGdiffusion() { };
 
 };

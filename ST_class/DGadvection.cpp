@@ -9,6 +9,14 @@ using namespace mfem;
 Vector mesh_min;
 Vector mesh_max;
 
+// TODO :  Need to implement these functions... 
+void DGadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) 
+{    
+}
+void DGadvection::getInitialCondition(double * &B, int &spatialDOFs) 
+{    
+}
+
 double sigma_function(const Vector &x) {
     return 0.0;
     // int dim = x.Size();
@@ -97,8 +105,8 @@ double inflow_function(const Vector &x) {
 }
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt)
+                         double dt, bool pit): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit)
 {
     m_order = 1;
     m_refLevels = 1;
@@ -138,8 +146,8 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
+                         double dt, bool pit, int refLevels, int order): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
     m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
@@ -176,8 +184,8 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 
 
 DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, int refLevels, int order, bool lumped): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
+                         double dt, bool pit, int refLevels, int order, bool lumped): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
     m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}
 {
     m_dim = 2;

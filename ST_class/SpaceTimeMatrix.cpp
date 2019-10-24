@@ -17,76 +17,91 @@
 
 
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
-                                 int nt, double dt)
+                                 int nt, double dt, bool pit)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_nt{nt},
-      m_dt{dt}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_dt{dt}, m_pit{pit}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
-      m_bsize(1), m_hmin(-1), m_hmax(-1)
+      m_bsize(1), m_hmin(-1), m_hmax(-1), m_ERK(false), m_DIRK(false), m_SDIRK(false)
 {
-    
-    // Get RK Butcher tabelaux
-    GetButcherTableaux();
     
     // Get number of processes
     MPI_Comm_rank(m_globComm, &m_globRank);
     MPI_Comm_size(m_globComm, &m_numProc);
 
+
+    // Get RK Butcher tabelaux
+    GetButcherTableaux();
     // Set member variables
-    // if (m_globRank == 0) {
-    //     std::cout << "dt = " << m_dt << "\n";
-    //     std::cout << "nt = " << m_nt << "\n";
-    //     std::cout << "s = " << m_s_butcher << "\n";
-    //     std::cout << "P = " << m_numProc << "\n";
-    // }
-
     
-    // Check that number of time steps times number of stages divides the number MPI processes or vice versa.
-    /* ------ Temporal + spatial parallelism ------ */
-    if (m_numProc > (m_nt * m_s_butcher)) {
-        if (m_globRank == 0) {
-            std::cout << "Spatial + temporal parallelism mode!\n";    
-        }
-        
-        m_useSpatialParallel = true;
-        if (m_numProc % (m_nt * m_s_butcher) != 0) {
+    /* ---------------------------------------------- */
+    /* ------ Solving global space-time system ------ */
+    /* ---------------------------------------------- */
+    if (m_pit) {
+        // Check that number of time steps times number of stages divides the number MPI processes or vice versa.
+        /* ------ Temporal + spatial parallelism ------ */
+        if (m_numProc > (m_nt * m_s_butcher)) {
             if (m_globRank == 0) {
-                std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << "\n";
+                std::cout << "Spatial + temporal parallelism mode!\n";    
             }
-            MPI_Finalize();
-            return;
-        }
-        else {
-            m_Np_x = m_numProc / (m_nt * m_s_butcher); 
-        }
-         
-        // Set up communication group for spatial discretizations.
-        m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
-        m_DOFInd = m_globRank / m_Np_x;
-        MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
-        MPI_Comm_rank(m_spatialComm, &m_spatialRank);
-        MPI_Comm_size(m_spatialComm, &m_spCommSize);
-        
-        
-        // // TODO: delete  me
-        // if (m_globRank == 0) {
-        //     MPI_Finalize();
-        //     return;
-        // }
+            
+            m_useSpatialParallel = true;
+            if (m_numProc % (m_nt * m_s_butcher) != 0) {
+                if (m_globRank == 0) {
+                    std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << "\n";
+                }
+                MPI_Finalize();
+                return;
+            }
+            else {
+                m_Np_x = m_numProc / (m_nt * m_s_butcher); 
+            }
+             
+            // Set up communication group for spatial discretizations.
+            m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
+            m_DOFInd = m_globRank / m_Np_x;
+            MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
+            MPI_Comm_rank(m_spatialComm, &m_spatialRank);
+            MPI_Comm_size(m_spatialComm, &m_spCommSize);
 
-    }
-    /* ------ Temporal parallelism only ------ */
-    else {
-        m_useSpatialParallel = false;
-        if ( (m_nt * m_s_butcher) % m_numProc  != 0) {
-            if (m_globRank == 0) {
-                std::cout << "Error: number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << " does not divide number of processes " << m_numProc << "\n";
-            }
-            MPI_Finalize();
-            return;
+
         }
-        m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
-        m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation... 
+        /* ------ Temporal parallelism only ------ */
+        else {
+            m_useSpatialParallel = false;
+            if ( (m_nt * m_s_butcher) % m_numProc  != 0) {
+                if (m_globRank == 0) {
+                    std::cout << "Error: number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << " does not divide number of processes " << m_numProc << "\n";
+                }
+                MPI_Finalize();
+                return;
+            }
+            m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
+            m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
+        }
+    
+    
+    std::cout << "m_L_isTimedependent1 = "  << m_L_isTimedependent << '\n';
+    
+    /* ----------------------------------------- */
+    /* ------ Sequential time integration ------ */
+    /* ----------------------------------------- */
+    } else {
+        // TODO : Does anything need to be set up here?
+        
+        if (m_numProc > 1)  {
+            m_useSpatialParallel = true;
+        } else {
+            m_useSpatialParallel = false;
+        }
+        
+        // Maybe set solver type to ERK or DIRK??
+        if (m_ERK)  {
+            
+        }
+        
+        
     }
+        
 }
 
 
@@ -98,6 +113,190 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
     if (m_bij) HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
     if (m_xij) HYPRE_IJVectorDestroy(m_xij);
 }
+
+void SpaceTimeMatrix::ERKSolve() 
+{
+    
+    // HYPRE_ParVector * u0;
+    // HYPRE_IJVector  * u0ij;
+    // getHypreU0(u0, u0ij);
+    
+    //std::cout << "Pre  u0" << '\n';
+    
+    HYPRE_ParVector u0;
+    HYPRE_IJVector  u0ij;
+    getHypreU0(u0, u0ij);
+    HYPRE_IJVectorPrint(u0ij, "data/u0.txt");
+    
+    HYPRE_ParCSRMatrix L;
+    HYPRE_IJMatrix Lij;
+    HYPRE_ParVector g;
+    HYPRE_IJVector  gij;
+    HYPRE_ParVector x;
+    HYPRE_IJVector  xij;
+    
+    
+    
+    // std::cout << "Post  u0" << '\n';
+    // 
+    // 
+    // double  * temp =  new double[32];
+    // int  * tempinds =  new int[32];
+    // for (int i = 0; i < 32;  i++) {
+    //     tempinds[i] = i;
+    // }
+    // HYPRE_IJVectorGetValues(u0ij, 32,  tempinds, temp);
+    // 
+    // for (int i = 0; i < 32; i++) {
+    //     std::cout << "u0[i] =  " << temp[i] << '\n';
+    // }
+    
+    double t = 0.0;
+    getHypreSpatialDisc(L, Lij, g, gij, x, xij, t);
+    
+    
+    HYPRE_IJMatrixPrint(Lij, "data/L.txt");
+    
+    HYPRE_IJVectorPrint(gij, "data/gInitial.txt");
+    
+    int success = hypre_ParCSRMatrixMatvec(1.0, L, u0, 1.0, g);
+		//which computes y = alpha*A*x + beta*y
+        
+    HYPRE_IJVectorPrint(gij, "data/gFinal.txt");    
+    
+}
+
+
+void SpaceTimeMatrix::getHypreU0(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij) 
+{
+    double* U;
+    int spatialDOFs;
+    int ilower;
+    int iupper;
+    
+    // No parallelism: Spatial discretization on single processor
+    if (!m_useSpatialParallel) {
+        getInitialCondition(U, spatialDOFs);
+        ilower = 0; 
+        iupper = spatialDOFs - 1; 
+    } else {
+        getInitialCondition(m_globComm, U, ilower, iupper, spatialDOFs);
+        
+    }
+    
+    // Initialize matrix
+    int onProcSize = iupper - ilower + 1; // Number of rows of spatial disc I own
+     
+    // Set matrix coefficients
+    int * rows = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        rows[i] = ilower + i;
+    }
+
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &u0ij);
+    HYPRE_IJVectorSetObjectType(u0ij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(u0ij);
+    HYPRE_IJVectorSetValues(u0ij, onProcSize, rows, U);
+    HYPRE_IJVectorAssemble(u0ij);
+    HYPRE_IJVectorGetObject(u0ij, (void **) &u0);
+
+
+    // Remove pointers that should have been copied by Hypre
+    delete[] rows;
+    delete[] U;
+    
+    // double  * temp =  new double[32];
+    // int  * tempinds =  new int[32];
+    // for (int i = 0; i < 32;  i++) {
+    //     tempinds[i] = i;
+    // }
+    // HYPRE_IJVectorGetValues(u0ij, 32,  tempinds, temp);
+    // 
+    // for (int i = 0; i < 32; i++) {
+    //     std::cout << "u00[i] =  " << temp[i] << '\n';
+    // }
+}
+
+
+// Get components of the spatial discretization as HYPRE objects on the given communicator...
+void SpaceTimeMatrix::getHypreSpatialDisc(HYPRE_ParCSRMatrix &L,
+                                            HYPRE_IJMatrix   &Lij,
+                                            HYPRE_ParVector  &g,
+                                            HYPRE_IJVector   &gij,
+                                            HYPRE_ParVector  &x,
+                                            HYPRE_IJVector   &xij,
+                                            double t)  
+{
+    // Get spatial discretization
+    int      m_bsize;
+    int *    L_rowptr;
+    int *    L_colinds;
+    double * L_data;
+    double * G;
+    double * X;
+    int      spatialDOFs;
+    int      ilower;
+    int      iupper;
+
+    // No parallelism: Spatial discretization on single processor
+    if (!m_useSpatialParallel) {
+        getSpatialDiscretization(L_rowptr, L_colinds, L_data, G, X, spatialDOFs, t, m_bsize);
+        ilower = 0; 
+        iupper = spatialDOFs - 1; 
+    } else {
+        getSpatialDiscretization(m_globComm, L_rowptr, L_colinds, L_data, 
+                                    G, X, ilower, iupper, spatialDOFs, 
+                                    t, m_bsize);
+        //std::cout << "Rank =  " << m_globRank << "; ilower,iupper  = " << ilower << ","  << iupper << '\n';
+    }
+
+    // Initialize matrix
+    int onProcSize = iupper - ilower + 1; // Number of rows of spatial disc I own
+    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &Lij);
+    HYPRE_IJMatrixSetObjectType(Lij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(Lij);
+
+    // Set matrix coefficients
+    int * L_rows         = new int[onProcSize];
+    int * L_cols_per_row = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        L_rows[i] = ilower + i;
+        L_cols_per_row[i] = L_rowptr[i+1] - L_rowptr[i];
+    }
+    HYPRE_IJMatrixSetValues(Lij, onProcSize, L_cols_per_row, L_rows, L_colinds, L_data);
+
+    // Finalize construction
+    HYPRE_IJMatrixAssemble(Lij);
+    HYPRE_IJMatrixGetObject(Lij, (void **) &L);
+
+    // Create rhs and solution vectors
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &gij);
+    HYPRE_IJVectorSetObjectType(gij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(gij);
+    HYPRE_IJVectorSetValues(gij, onProcSize, L_rows, G);
+    HYPRE_IJVectorAssemble(gij);
+    HYPRE_IJVectorGetObject(gij, (void **) &g);
+
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &xij);
+    HYPRE_IJVectorSetObjectType(xij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(xij);
+    HYPRE_IJVectorSetValues(xij, onProcSize, L_rows, X);
+    HYPRE_IJVectorAssemble(xij);
+    HYPRE_IJVectorGetObject(xij, (void **) &x);
+
+    // Remove pointers that should have been copied by Hypre
+    delete[] L_rowptr;
+    delete[] L_colinds;
+    delete[] L_data;
+    delete[] G;
+    delete[] X;
+    delete[] L_rows;
+    delete[] L_cols_per_row;
+}
+
+
+
+
 
 
 void SpaceTimeMatrix::BuildMatrix()
@@ -143,26 +342,29 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
     if (m_timeDisc == 111) {
-        m_s_butcher = 1;
+        m_ERK             = true;
+        m_s_butcher       = 1;
         m_A_butcher[0][0] = 0.0;
-        m_b_butcher[0] = 1.0; 
-        m_c_butcher[0] = 0.0; 
+        m_b_butcher[0]    = 1.0; 
+        m_c_butcher[0]    = 0.0; 
     
     // 2nd-order Heun's method    
     } else if (m_timeDisc == 122) {
-        m_s_butcher = 2;
+        m_ERK             = true;
+        m_s_butcher       = 2;
         m_A_butcher[0][0] = 0.0;
         m_A_butcher[1][0] = 1.0;
         m_A_butcher[0][1] = 0.0;
         m_A_butcher[1][1] = 0.0;
-        m_b_butcher[0] = 0.5;
-        m_b_butcher[1] = 0.5;
-        m_c_butcher[0] = 0.0;
-        m_c_butcher[1] = 1.0;
+        m_b_butcher[0]    = 0.5;
+        m_b_butcher[1]    = 0.5;
+        m_c_butcher[0]    = 0.0;
+        m_c_butcher[1]    = 1.0;
         
     // 3rd-order optimal SSPERK
     } else if (m_timeDisc == 133) {
-        m_s_butcher = 3;
+        m_ERK             = true;
+        m_s_butcher       = 3;
         m_A_butcher[0][0] = 0.0; // 1st col
         m_A_butcher[1][0] = 1.0;
         m_A_butcher[2][0] = 1.0/4.0; 
@@ -172,16 +374,17 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         m_A_butcher[0][2] = 0.0;  // 3rd col
         m_A_butcher[1][2] = 0.0;
         m_A_butcher[2][2] = 0.0;
-        m_b_butcher[0] = 1.0/6.0;
-        m_b_butcher[1] = 1.0/6.0;
-        m_b_butcher[2] = 2.0/3.0;
-        m_c_butcher[0] = 0.0;
-        m_c_butcher[1] = 1.0;
-        m_c_butcher[2] = 1.0/2.0;
+        m_b_butcher[0]    = 1.0/6.0;
+        m_b_butcher[1]    = 1.0/6.0;
+        m_b_butcher[2]    = 2.0/3.0;
+        m_c_butcher[0]    = 0.0;
+        m_c_butcher[1]    = 1.0;
+        m_c_butcher[2]    = 1.0/2.0;
 
     // Classical 4th-order ERK
 } else if (m_timeDisc == 144){
-        m_s_butcher = 4;
+        m_ERK             = true;
+        m_s_butcher       = 4;
         m_A_butcher[0][0] = 0.0; // 1st col
         m_A_butcher[1][0] = 1.0/2.0;
         m_A_butcher[2][0] = 0.0;
@@ -211,23 +414,27 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- SDIRK tables --- */
     // Backward Euler, 1st-order
     } else if (m_timeDisc == 211) {
-        m_s_butcher = 1;
+        m_DIRK            = true;
+        m_SDIRK           = true;
+        m_s_butcher       = 1;
         m_A_butcher[0][0] = 1.0;
-        m_b_butcher[0] = 1.0; 
-        m_c_butcher[0] = 1.0; 
+        m_b_butcher[0]    = 1.0; 
+        m_c_butcher[0]    = 1.0; 
     
     // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
     } else if (m_timeDisc == 222) {
         double sqrt2 = 1.414213562373095;
-        m_s_butcher = 2;
+        m_DIRK            = true;
+        m_SDIRK           = true;
+        m_s_butcher       = 2;
         m_A_butcher[0][0] = 1.0 - sqrt2/2.0;
         m_A_butcher[1][0] = sqrt2 - 1.0;
         m_A_butcher[0][1] = 0.0;
         m_A_butcher[1][1] = 1 - sqrt2/2.0;
-        m_b_butcher[0] = 0.5;
-        m_b_butcher[1] = 0.5;
-        m_c_butcher[0] = 1 - sqrt2/2.0;
-        m_c_butcher[1] = sqrt2/2.0;
+        m_b_butcher[0]    = 0.5;
+        m_b_butcher[1]    = 0.5;
+        m_c_butcher[0]    = 1 - sqrt2/2.0;
+        m_c_butcher[1]    = sqrt2/2.0;
         
     // 3rd-order (3-stage) L-stable SDIRK (see Butcher's book, p.261--262)
     } else if (m_timeDisc == 233) {
@@ -236,7 +443,9 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         double beta    = 0.5*(1.0 - zeta); 
         double gamma   = -3.0/2.0*zeta*zeta + 4.0*zeta - 0.25;
         double epsilon =  3.0/2.0*zeta*zeta - 5.0*zeta + 1.25;
-        m_s_butcher = 3;
+        m_DIRK            = true;
+        m_SDIRK           = true;
+        m_s_butcher       = 3;
         m_A_butcher[0][0] = zeta; // 1st col
         m_A_butcher[1][0] = beta;
         m_A_butcher[2][0] = gamma; 
@@ -246,12 +455,12 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         m_A_butcher[0][2] = 0.0;  // 3rd col
         m_A_butcher[1][2] = 0.0;
         m_A_butcher[2][2] = zeta;
-        m_b_butcher[0] = gamma;
-        m_b_butcher[1] = epsilon;
-        m_b_butcher[2] = zeta;
-        m_c_butcher[0] = zeta;
-        m_c_butcher[1] = alpha;
-        m_c_butcher[2] = 1.0;
+        m_b_butcher[0]    = gamma;
+        m_b_butcher[1]    = epsilon;
+        m_b_butcher[2]    = zeta;
+        m_c_butcher[0]    = zeta;
+        m_c_butcher[1]    = alpha;
+        m_c_butcher[2]    = 1.0;
     
     } else {
         std::cout << "WARNING: invalid choice of time integration.\n";

@@ -107,18 +107,20 @@ double FDadvection::PDE_Source(double x, double y, double t)
 
 
 FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt)
+                         double dt, bool pit): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit)
 {
     
 }
 
 
 FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, int dim, int refLevels, int order, int problemID): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt),
+                         double dt, bool pit, int dim, int refLevels, int order, int problemID): 
+    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
     m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID}
 {
+    
+    
     
     // Can generalize this if you like to pass in distinct order and nDOFs in y-direction. This by default just makes them the same as in the x-direction
     
@@ -144,10 +146,16 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     
     if ((m_problemID == 1) || (m_problemID == 2)) {
         m_conservativeForm = true; 
+        m_L_isTimedependent = false;
+        m_g_isTimedependent = false;
     } else if (m_problemID == 3) {
         m_conservativeForm = false; 
+        m_L_isTimedependent = true;
+        m_g_isTimedependent = true;
     } else {
         m_conservativeForm = true;
+        m_L_isTimedependent = true;
+        m_g_isTimedependent = true;
     }
         
     // Need to initialize these to NULL so we can distinguish them from once they have been built
@@ -649,8 +657,57 @@ void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_d
 }
 
 
+// Put initial condition in vector B.
+void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) {
+
+    // Need to work out where my rows are.
+    int spatialRank;
+    int spatialCommSize;
+    MPI_Comm_rank(spatialComm, &spatialRank);    
+    MPI_Comm_size(spatialComm, &spatialCommSize);    
+        
+    int onProcSize = m_nx[0] / spatialCommSize; 
+    localMinRow = spatialRank * onProcSize;     // First row I own
+    localMaxRow = localMinRow + onProcSize - 1; // Last row I own  
+    spatialDOFs = m_nx[0];
+    B = new double[onProcSize];
+    
+    int rowcount = 0;
+    for (int row = localMinRow; row <= localMaxRow; row++) {
+        B[rowcount] = InitCond(LocalMeshIndToPoint(row, 0));
+        rowcount += 1;
+    }
+}
+
+
+void FDadvection::getInitialCondition(double * &B, int &spatialDOFs)
+{
+    if (m_dim == 1) {
+        spatialDOFs = m_nx[0];
+        B = new double[m_nx[0]];
+        int xDim = 0;
+        for (int xInd = 0; xInd < m_nx[0]; xInd++) {
+            B[xInd] = InitCond(LocalMeshIndToPoint(xInd, xDim));
+            //std::cout << "B[i]  = " << B[xInd] << "??  = " << InitCond(LocalMeshIndToPoint(xInd, xDim)) << '\n';
+        }
+    } else if (m_dim == 2) {
+        spatialDOFs = m_nx[0] * m_nx[1];
+        B = new double[m_nx[0] * m_nx[1]];
+        int xDim = 0;
+        int yDim = 1;
+        int ind = 0;
+        for (int yInd = 0; yInd < m_nx[1]; yInd++) {
+            for (int xInd = 0; xInd < m_nx[0]; xInd++) {
+                B[ind] = InitCond(LocalMeshIndToPoint(xInd, xDim), LocalMeshIndToPoint(yInd, yDim));
+                ind += 1;
+            }
+        }
+    }
+}
+
+
 // Add initial condition to vector B.
-void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B) {
+void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) {
 
     // Need to work out where my rows are.
     int spatialRank;
