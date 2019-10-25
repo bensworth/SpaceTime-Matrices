@@ -59,11 +59,12 @@ private:
     int     m_bsize;
     int     m_spCommSize;
     bool    m_useSpatialParallel;
-    bool    m_isTimeDependent;
-    bool    m_rhsTimeDependent;
+    
+    bool    m_isTimeDependent; //  TODO : Will need to be removed ...
+    
     bool    m_rebuildSolver;
-    double  m_t0;
-    double  m_t1;
+    double  m_t0; // TOOD :  do we use this?? delete??
+    double  m_t1; // TOOD :  do we use this?? delete??
     double  m_dt;
     int     m_s_butcher;            /* Number of stages in RK scheme */
     double  m_A_butcher[10][10];    /* Coefficients in RK Butcher tableaux */
@@ -134,14 +135,14 @@ private:
     /* ------ Sequential time integration routines ------ */
     void DIRK();
     void SDIRK(); // Just use for time 
-    void getHypreU0(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
+    void GetHypreInitialCondition(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
     
     void InitializeHypreStages(HYPRE_IJVector uij, 
                                 std::vector<HYPRE_ParVector> &k, 
                                 std::vector<HYPRE_IJVector> &kij);
     void DestroyHypreStages(std::vector<HYPRE_IJVector> &kij);
     
-    void getHypreSpatialDisc(HYPRE_ParCSRMatrix  &L,
+    void GetHypreSpatialDisc(HYPRE_ParCSRMatrix  &L,
                                 HYPRE_IJMatrix   &Lij,
                                 HYPRE_ParVector  &g,
                                 HYPRE_IJVector   &gij,
@@ -151,14 +152,11 @@ private:
 
     void DestroyHypreSpatialDisc(HYPRE_IJMatrix &Lij, 
                                     HYPRE_IJVector &gij, 
-                                    HYPRE_IJVector &xij) ;
+                                    HYPRE_IJVector &xij);
     
     
 
 protected:
-
-    //int     m_spatialDOFs; // It seems like something  like this might be  needed...
-
     bool    m_L_isTimedependent; /* Is spatial discretization time dependent? */
     bool    m_g_isTimedependent; /* Is PDE source term time dependent? */
 
@@ -170,7 +168,7 @@ protected:
 
 public:
 
-    void ERKSolve(); // For explicit RUn 
+    void ERKSolve();
 
     SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt, bool pit);
     // SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, double dt, double t0, double t1);

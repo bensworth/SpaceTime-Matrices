@@ -26,7 +26,8 @@ double FDadvection::InitCond(double x, double y)
         return pow(cos(PI * x), 4.0) * pow(sin(PI * y), 2.0);
         //return pow(cos(PI * x), 1.0);
     } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        return cos(PI * x) * cos(PI * y);
+        //return cos(PI * x) * cos(PI * y);
+        return pow(cos(PI * x), 4.0) * pow(sin(PI * y), 2.0);
     } else {
         return 0.0;
     }
@@ -83,6 +84,7 @@ double FDadvection::PDE_Source(double x, double t)
         return 0.0;
     } else if (m_problemID == 2) {
         return ( -exp(1 + cos(t)) * ( cos(PI*(t-x))*sin(t) + PI*sin(PI*(t-x)) ) + PI*sin(2*PI*(t-x)) )/pow(exp(1), 2.0);
+        //return 0.0;
     } else if (m_problemID == 3) {
         return ( -exp(1 + cos(t)) * ( cos(PI*(t-x))*sin(t) + PI*sin(PI*(t-x)) ) + 0.5*PI*sin(2*PI*(t-x)) )/pow(exp(1), 2.0);
     } else {

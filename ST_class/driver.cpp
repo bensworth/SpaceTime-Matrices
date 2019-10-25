@@ -205,25 +205,29 @@ int main(int argc, char *argv[])
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
                                 dt, pit, dim, refLevels, order, FD_ProblemID);
         
-        STmatrix.ERKSolve();
+        if (!pit) {
+            STmatrix.ERKSolve();
+        } else {
+            STmatrix.BuildMatrix();
+            
+            if (save_mat) {
+                STmatrix.SaveMatrix("data/A_FD.mm");
+            }
+            STmatrix.SetAMGParameters(AMG);
+            if (use_gmres) {
+                STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
+                                    true, use_gmres, AMGiters);
+            }
+            else {
+                STmatrix.SolveAMG(solve_tol, max_iter, print_level);
+            }
+        }
         
-        // STmatrix.BuildMatrix();
-        // 
-        // if (save_mat) {
-        //     STmatrix.SaveMatrix("data/A_FD.mm");
-        // }
-        // STmatrix.SetAMGParameters(AMG);
-        // if (use_gmres) {
-        //     STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
-        //                         true, use_gmres, AMGiters);
-        // }
-        // else {
-        //     STmatrix.SolveAMG(solve_tol, max_iter, print_level);
-        // }
-        // 
         if (save_sol) {
-            std::string file_name = "data/X_FD.txt";
-            //STmatrix.SaveX(file_name);
+            std::string file_name = "data/U_FD" + std::to_string(pit) + ".txt";
+
+            STmatrix.SaveX(file_name);
+
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
                 int nx = pow(2, refLevels+2);

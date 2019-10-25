@@ -34,7 +34,7 @@ from scipy.sparse import load_npz
 # else:
 #     raise ValueError("A filename must be passed through command line!")
 
-filename = "../ST_class/data/X_FD.txt"
+filename = "../ST_class/data/U_FD0.txt"
 
 # Read data in and store in dictionary
 params = {}
@@ -229,20 +229,30 @@ if params["space_dim"] == 2:
     cmap = plt.cm.get_cmap("coolwarm")
     
     fig = plt.figure(1)
-    ax = fig.gca(projection='3d') 
-    surf = ax.plot_surface(X, Y, uT, cmap = cmap)
+    # ax = fig.gca(projection='3d') 
+    # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
+    
+    
+    cmap = plt.cm.get_cmap("coolwarm")
+    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 200)
+    plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
+    plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
+    #plt.contourf(X, Y, uT)
+    
+    
+    
     #plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    plt.title("uNum", fontsize = fs)
+    plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
+    #plt.title("uNum", fontsize = fs)
     plt.xlabel("$x$", fontsize = fs)
     plt.ylabel("$y$", fontsize = fs)
     
-    
-    fig = plt.figure(2)
-    ax = fig.gca(projection='3d') 
-    surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
-    plt.title("uTexact", fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
-    plt.ylabel("$y$", fontsize = fs)
+    # fig = plt.figure(2)
+    # ax = fig.gca(projection='3d') 
+    # surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
+    # plt.title("uTexact", fontsize = fs)
+    # plt.xlabel("$x$", fontsize = fs)
+    # plt.ylabel("$y$", fontsize = fs)
     plt.show()    
     
     # plt.title("UW2-2D: u(x,y, t = {:.2f})".format(t[-1]), fontsize = 15)
