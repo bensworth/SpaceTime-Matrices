@@ -22,12 +22,9 @@ double FDadvection::InitCond(double x)
 double FDadvection::InitCond(double x, double y) 
 {        
     if (m_problemID == 1) {
-        //return pow(cos(PI * x), 4.0) * pow(cos(PI * y), 4.0);
         return pow(cos(PI * x), 4.0) * pow(sin(PI * y), 2.0);
-        //return pow(cos(PI * x), 1.0);
     } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        //return cos(PI * x) * cos(PI * y);
-        return pow(cos(PI * x), 4.0) * pow(sin(PI * y), 2.0);
+        return cos(PI * x) * cos(PI * y);
     } else {
         return 0.0;
     }
@@ -39,7 +36,7 @@ double FDadvection::WaveSpeed(double x, double t) {
     if (m_problemID == 1) {
         return 1.0;
     } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        return  cos(PI*(x-t)) * exp(-(1+cos(t)));
+        return  cos( PI*(x-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
     }  else  {
         return 0.0;
     }
@@ -49,18 +46,12 @@ double FDadvection::WaveSpeed(double x, double t) {
 // Wave speed for 2D problem; need to choose component as 1 or 2.
 double FDadvection::WaveSpeed(double x, double y, double t, int component) {
     if (m_problemID == 1) {
-        if (component == 1) {
-            return 1.0;
-        } else {
-            return 1.0;
-        }
+        return 1.0;
     } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        if (component == 1) {
-            //return  cos(PI*(x-t)) * sin(PI*(y-t)) * exp(-(1+cos(t)));
-            return cos(PI*x) * sin(PI*y);
+        if (component == 0) {
+            return cos( PI*(x-t) ) * cos(PI*y) * exp( -pow(sin(2*PI*t), 2.0) );
         } else {
-            //return  sin(PI*(x-t)) * cos(PI*(y-t)) * exp(-(1+cos(t)));
-            return -sin(PI*x) * cos(PI*y);
+            return sin(PI*x) * cos( PI*(y-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
         }
     } else {
         return 0.0;
@@ -73,7 +64,6 @@ double FDadvection::WaveSpeed(double x, double y, double t, int component) {
 double FDadvection::LocalMeshIndToPoint(int meshInd, int dim)
 {
     return m_boundary0[dim] + m_dx[dim] * meshInd;
-    //return -1.0 + xInd * m_dx; // Assuming x \in [-1,1]
 }
 
 
@@ -83,10 +73,11 @@ double FDadvection::PDE_Source(double x, double t)
     if (m_problemID == 1) {
         return 0.0;
     } else if (m_problemID == 2) {
-        return ( -exp(1 + cos(t)) * ( cos(PI*(t-x))*sin(t) + PI*sin(PI*(t-x)) ) + PI*sin(2*PI*(t-x)) )/pow(exp(1), 2.0);
-        //return 0.0;
+        return PI * exp( -2*pow(sin(PI*t), 2.0)*(cos(2*PI*t) + 2) ) * ( sin(2*PI*(t-x)) 
+                    - exp( pow(sin(2*PI*t), 2.0) )*(  sin(PI*(t-x)) + 2*sin(2*PI*t)*cos(PI*(t-x)) ) );
     } else if (m_problemID == 3) {
-        return ( -exp(1 + cos(t)) * ( cos(PI*(t-x))*sin(t) + PI*sin(PI*(t-x)) ) + 0.5*PI*sin(2*PI*(t-x)) )/pow(exp(1), 2.0);
+        return 0.5* PI * exp( -2*pow(sin(PI*t), 2.0)*(cos(2*PI*t) + 2) ) * ( sin(2*PI*(t-x)) 
+                    - 2*exp( pow(sin(2*PI*t), 2.0) )*(  sin(PI*(t-x)) + 2*sin(2*PI*t)*cos(PI*(t-x)) ) );
     } else {
         return 0.0;
     }
@@ -97,10 +88,18 @@ double FDadvection::PDE_Source(double x, double y, double t)
 {
     if (m_problemID == 1) {
         return 0.0;
-    // } else if (m_problemID == 2) {
-    //     return // TODO
-    // } else if (m_problemID == 3) {
-    //     //return // TODO
+    } else if (m_problemID == 2) {
+        return PI*exp(-3*pow(sin(2*PI*t), 2.0)) * 
+            (
+            cos(PI*(t-y))*( -exp(pow(sin(2*PI*t), 2.0)) * sin(PI*(t-x)) + cos(PI*y)*sin(2*PI*(t-x)) ) +
+            cos(PI*(t-x))*( -exp(pow(sin(2*PI*t), 2.0)) * (4*cos(PI*(t-y))*sin(4*PI*t) + sin(PI*(t-y))) + sin(PI*x)*sin(2*PI*(t-y)) )
+            );
+    } else if (m_problemID == 3) {
+        return 0.5*PI*exp(-3*pow(sin(2*PI*t), 2.0)) * 
+            (
+            cos(PI*(t-y))*( -2*exp(pow(sin(2*PI*t), 2.0)) * sin(PI*(t-x)) + cos(PI*y)*sin(2*PI*(t-x)) ) +
+            cos(PI*(t-x))*( -2*exp(pow(sin(2*PI*t), 2.0)) * (4*cos(PI*(t-y))*sin(4*PI*t) + sin(PI*(t-y))) + sin(PI*x)*sin(2*PI*(t-y)) )
+            );
     } else {
         return 0.0;
     }

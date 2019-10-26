@@ -160,7 +160,8 @@ if params["space_dim"] == 1:
             temp = np.mod(x + 1  - t, 2) - 1
             return np.cos(np.pi*temp) ** 4
         elif (params["problemID"] == 2) or (params["problemID"] == 3):    
-            return np.cos(np.pi*(x - t)) * np.exp(np.cos(t))/np.exp(1)
+            return np.cos(np.pi*(x - t)) * np.exp(np.cos(2*np.pi*t) - 1)
+            #return np.cos(np.pi*(x - t)) * np.exp(np.cos(t))/np.exp(1)
 
     uT_exact = np.zeros(nx)
     for i in range(0,nx):
@@ -206,44 +207,41 @@ if params["space_dim"] == 2:
             tempx = np.mod(x + 1  - t, 2) - 1
             tempy = np.mod(y + 1  - t, 2) - 1
             return u0(tempx, tempy)
+        elif  params["problemID"] == 2 or params["problemID"] == 3:
+            return np.cos(np.pi*(x-t)) * np.cos(np.pi*(y-t)) * np.exp( np.cos(4*np.pi*t) - 1 )
 
     uT_exact = np.zeros((nx, ny))
     for j in range(0,ny):
         for i in range(0,nx):
             #uT_exact[i,j] = uexact(x[i],y[j],T)
             uT_exact[j,i] = uexact(x[i],y[j],T)
-            
-
-    # print(uT)
-    # 
-    # print("\n\noooooh\n\n")
-    # 
-    # print(uT_exact)
 
     # Compare uT against the exact solution
-    print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    #print("(nt,nx) = ({},{}), |uNum - uExact| = {:.4e}".format(params["nt"], nx, np.sqrt(2/nx) * np.linalg.norm(uT_exact - uT, 2)))
-
+    #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
+    print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.max(np.abs(uT_exact - uT))))
 
     fs = 18
     cmap = plt.cm.get_cmap("coolwarm")
-    
-    fig = plt.figure(1)
     # ax = fig.gca(projection='3d') 
     # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
     
-    
-    cmap = plt.cm.get_cmap("coolwarm")
+    ### --- Numerical solution --- ###
+    fig = plt.figure(1)
     levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 200)
     plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
-    #plt.contourf(X, Y, uT)
     
-    
-    
-    #plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
     plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    #plt.title("uNum", fontsize = fs)
+    plt.xlabel("$x$", fontsize = fs)
+    plt.ylabel("$y$", fontsize = fs)
+    
+    ### --- Analytical solution --- ###
+    fig = plt.figure(2)
+    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 200)
+    plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
+    plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
+    
+    plt.title("$u(x,y,{})$".format(T), fontsize = fs)
     plt.xlabel("$x$", fontsize = fs)
     plt.ylabel("$y$", fontsize = fs)
     
