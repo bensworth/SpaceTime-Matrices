@@ -132,9 +132,13 @@ private:
     virtual void addInitialCondition(const MPI_Comm &spatialComm, double *B) = 0;
     virtual void addInitialCondition(double *B) = 0;
 
+    
     /* ------ Sequential time integration routines ------ */
-    void DIRK();
-    void SDIRK(); // Just use for time 
+    void ERKSolve();    /* General purpose ERK solver */
+    void DIRKSolve();   /* General purpose DIRK solver */
+    void SDIRKTimeIndependentSolve(); // TODO ?
+    void DIRKTimeIndependentSolve(); // TODO ?
+    
     void GetHypreInitialCondition(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
     
     void InitializeHypreStages(HYPRE_IJVector uij, 
@@ -148,8 +152,9 @@ private:
                                 HYPRE_IJVector   &gij,
                                 HYPRE_ParVector  &x,
                                 HYPRE_IJVector   &xij,
+                                int              &ilower,
+                                int              &iupper,
                                 double t);
-
     void DestroyHypreSpatialDisc(HYPRE_IJMatrix &Lij, 
                                     HYPRE_IJVector &gij, 
                                     HYPRE_IJVector &xij);
@@ -157,6 +162,7 @@ private:
     
 
 protected:
+    // TOOD : Make sure these variables are set in spatial discretization code...
     bool    m_L_isTimedependent; /* Is spatial discretization time dependent? */
     bool    m_g_isTimedependent; /* Is PDE source term time dependent? */
 
@@ -167,9 +173,6 @@ protected:
     double  m_hmax;
 
 public:
-
-    void ERKSolve();
-
     SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt, bool pit);
     // SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, double dt, double t0, double t1);
     virtual ~SpaceTimeMatrix();

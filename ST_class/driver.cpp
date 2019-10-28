@@ -206,13 +206,16 @@ int main(int argc, char *argv[])
                                 dt, pit, dim, refLevels, order, FD_ProblemID);
         
         if (!pit) {
-            STmatrix.ERKSolve();
+            //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!!
+            STmatrix.SetAIR();
+            STmatrix.RKSolve();
         } else {
             STmatrix.BuildMatrix();
             
             if (save_mat) {
                 STmatrix.SaveMatrix("data/A_FD.mm");
             }
+            //STmatrix.SetAIR(); // TODO : What does this actually do? It works for implicit, where as the other settings do not...
             STmatrix.SetAMGParameters(AMG);
             if (use_gmres) {
                 STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
