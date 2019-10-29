@@ -82,10 +82,6 @@ private:
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_solverOptions;
-    
-    // TODO : Why can't I access m_solver??
-    int     m_num_iters;
-    double  m_rel_res_norm;
 
     void GetButcherTableaux();
     void GetMatrix_ntLE1();

@@ -161,11 +161,6 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     int ilower, iupper, onProcSize;
     double temp;
     
-    // Linear solvers
-    HYPRE_Solver        m_solver;
-    HYPRE_Solver        m_gmres;
-    AMG_parameters      m_solverOptions;
-    
     HYPRE_ParVector u;
     HYPRE_IJVector  uij;
     GetHypreInitialCondition(u, uij); 
@@ -185,10 +180,13 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     int    * M_colinds;
     double * M_data;
     double * M_scaled_data;
-    int * M_rows;
-    int * M_cols_per_row;
+    int    * M_rows;
+    int    * M_cols_per_row;
+    int      spatialDOFs;
     
-    int spatialDOFs;
+    // For monitoring convergence of linear solver
+    int    num_iters;
+    double rel_res_norm;
     
     
     // Take nt-1 steps
@@ -208,12 +206,11 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             hypre_ParCSRMatrixMatvec(-1.0, L, u, 1.0, g); // g <- -L[i]*u + g 
             for (int j = 0; j < i; j++) {
                 temp = -m_dt * m_A_butcher[i][j];
-                if (temp !=  0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, g);  // g <- g - dt*A[i,j]*L[i]*k[j]  
+                if (temp != 0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, g);  // g <- g - dt*A[i,j]*L[i]*k[j]  
             }
             
             /* -------------- Solve linear system for ith stage vector, k[i] -------------- */
-            // Get components of mass matrix only after spatial discretization 
-            // has been assembled for the first time
+            // Get components of mass matrix only after spatial discretization has been assembled for the first time
             if ((step == 0) && (i == 0)) 
             {
                 getMassMatrix(M_rowptr, M_colinds, M_data);
@@ -227,11 +224,16 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 M_scaled_data = new double[M_rowptr[onProcSize]]; // Temp vector to use below...
             }
             
-            // TODO : what if  a_ii == 0, As in EDIRK??, Then just need to invert mass matrix...
-            // Maybe just add a check here and throw an error is there is a zero...
+            // TODO : Handle ESDIRK? Then just need to invert mass matrix..., for the moment, just throw an error 
+            if (m_A_butcher[i][i] == 0.0) {
+                std::cout << "WARNING: DIRK solver cannot handle Butcher matrix A with 0s on its diagonal!" << '\n';
+                MPI_Finalize();
+                return;
+            }
             
             // TODO : I'm scaling MASS and RHS vector by 1/dt*a_ii for the moment 
             // since I don't know an efficient way to scale values of L...
+            // really want to scale entries in L by dt * a_ii
             temp = 1/(m_dt * m_A_butcher[i][i]); 
             for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
                 M_scaled_data[dataInd] = temp  * M_data[dataInd]; // M <- M / (dt* a_ii)
@@ -239,7 +241,6 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             HYPRE_ParVectorScale(temp, g); // g <- g/(dt * a_ii)
             
             // Get DIRK matrix, L <- M + a_ii*dt*L
-            // TODO : really want to scale entries in L by dt * a_ii
             HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
             
             if ((printLevel > 0) && (m_globRank == 0)) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
@@ -247,34 +248,28 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             // Point member variables to local variables so linear solvers can access them
             // TODO : why won't it let me do this for A and b outside of this loop???
             m_A = L;
+            //HYPRE_ParVectorCopy(g, k[i]);  // k[i] <- g as initial guess? This doesn't seem too good...
+            //if (i > 0) m_x = k[i-1]; Use stage from previous node as initial guess? Not great...
             m_x = k[i]; // Initial guess at solution is current stage from previous time step
-            //if (i > 0) m_x = k[i-1]; Use stage from previous node as initial guess?
             m_b = g;
             
-            // Solve linear system (M + a_ii*dt)*k[i] = g
+            // Solve linear system (M + a_ii*dt)*k[i] = g and get convergence statistics
             if (precondition) {
                 SolveGMRES(solve_tol, max_iter, printLevel, true, precondition, AMGiters);
-            }
-            else {
+                HYPRE_GMRESGetNumIterations(m_gmres, &num_iters);
+                HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &rel_res_norm);
+            } else {
                 SolveAMG(solve_tol, max_iter, printLevel);
+                HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
+                HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
             }
-        
-            //SolveAMG(tol, 10, 2, false);
-            //SolveGMRES(tol, 10, 2, false, 1, 10);
-            
-            // Why don't I have access to m_solver here??
-            // int num_iters;
-            // double rel_res_norm;
-            // HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
-            // HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
-            // std::cout << "I took " << num_iters << " iterations to reach a rel norm of " << rel_res_norm << '\n';
                 
             // Ensure desired tolerance was reached, otherwise quit
             // TODO : Make tolerances/norms consistent... i.e., relative v.s. absolute...
-            if (m_rel_res_norm > solve_tol) {
+            if (rel_res_norm > solve_tol) {
                 std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
-                std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_rel_res_norm << " > desired tol = " << solve_tol << '\n';
-                std::cout << "Location: Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << solve_tol << "\n\n";
                 MPI_Finalize();
                 return;
             }
@@ -308,7 +303,6 @@ void SpaceTimeMatrix::ERKSolve()
 {
     double t = 0.0; // Initial time
     int ilower, iupper; // Dummy variables at the moment...
-    
     
     HYPRE_ParVector u;
     HYPRE_IJVector  uij;
@@ -358,10 +352,8 @@ void SpaceTimeMatrix::ERKSolve()
         DestroyHypreSpatialDisc(Lij, gij, xij);
     }
     
+    // Assign final solution to member variable for printing etc.
     m_xij = uij;
-    //std::string message = "data/X_FD.txt";
-    //HYPRE_IJVectorPrint(uij, message.c_str());
-    //HYPRE_IJVectorDestroy(uij);
 }
 
 
@@ -672,7 +664,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     
     // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
     } else if (m_timeDisc == 222) {
-        double sqrt2 = 1.414213562373095;
+        double sqrt2      = 1.414213562373095;
         m_DIRK            = true;
         m_SDIRK           = true;
         m_s_butcher       = 2;
@@ -687,29 +679,78 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 3rd-order (3-stage) L-stable SDIRK (see Butcher's book, p.261--262)
     } else if (m_timeDisc == 233) {
-        double zeta       = 0.43586652150845899942;
-        double alpha      = 0.5*(1.0 + zeta);
-        double beta       = 0.5*(1.0 - zeta); 
+        double zeta       =  0.43586652150845899942;
+        double alpha      =  0.5*(1.0 + zeta);
+        double beta       =  0.5*(1.0 - zeta); 
         double gamma      = -3.0/2.0*zeta*zeta + 4.0*zeta - 0.25;
         double epsilon    =  3.0/2.0*zeta*zeta - 5.0*zeta + 1.25;
-        m_DIRK            = true;
-        m_SDIRK           = true;
-        m_s_butcher       = 3;
-        m_A_butcher[0][0] = zeta; // 1st col
-        m_A_butcher[1][0] = beta;
-        m_A_butcher[2][0] = gamma; 
-        m_A_butcher[0][1] = 0.0; // 2nd col
-        m_A_butcher[1][1] = zeta;
-        m_A_butcher[2][1] = epsilon;
-        m_A_butcher[0][2] = 0.0;  // 3rd col
-        m_A_butcher[1][2] = 0.0;
-        m_A_butcher[2][2] = zeta;
-        m_b_butcher[0]    = gamma;
-        m_b_butcher[1]    = epsilon;
-        m_b_butcher[2]    = zeta;
-        m_c_butcher[0]    = zeta;
-        m_c_butcher[1]    = alpha;
-        m_c_butcher[2]    = 1.0;
+        m_DIRK            =  true;
+        m_SDIRK           =  true;
+        m_s_butcher       =  3;
+        m_A_butcher[0][0] =  zeta; // 1st col
+        m_A_butcher[1][0] =  beta;
+        m_A_butcher[2][0] =  gamma; 
+        m_A_butcher[0][1] =  0.0; // 2nd col
+        m_A_butcher[1][1] =  zeta;
+        m_A_butcher[2][1] =  epsilon;
+        m_A_butcher[0][2] =  0.0;  // 3rd col
+        m_A_butcher[1][2] =  0.0;
+        m_A_butcher[2][2] =  zeta;
+        m_b_butcher[0]    =  gamma;
+        m_b_butcher[1]    =  epsilon;
+        m_b_butcher[2]    =  zeta;
+        m_c_butcher[0]    =  zeta;
+        m_c_butcher[1]    =  alpha;
+        m_c_butcher[2]    =  1.0;
+        
+    // 4th-order (5-stage) L-stable SDIRK (see Wanner's & Hairer's, Solving ODEs II, 1996, eq. 6.16)
+    } else if (m_timeDisc == 244) {
+        m_DIRK            =  true;
+        m_SDIRK           =  true;
+        m_s_butcher       =  5;
+        // 1st col of A
+        m_A_butcher[0][0] =  1.0/4.0; 
+        m_A_butcher[1][0] =  1.0/2.0;
+        m_A_butcher[2][0] =  17.0/50.0; 
+        m_A_butcher[3][0] =  371.0/1360.0; 
+        m_A_butcher[4][0] =  25.0/24.0; 
+        // 2nd col of A
+        m_A_butcher[0][1] =  0.0; 
+        m_A_butcher[1][1] =  1.0/4.0;
+        m_A_butcher[2][1] = -1.0/25.0;
+        m_A_butcher[3][1] = -137.0/2720.0;
+        m_A_butcher[4][1] = -49.0/48.0;
+        // 3rd col of A
+        m_A_butcher[0][2] =  0.0;  
+        m_A_butcher[1][2] =  0.0;
+        m_A_butcher[2][2] =  1.0/4.0;
+        m_A_butcher[3][2] =  15.0/544.0;
+        m_A_butcher[4][2] =  125.0/16.0;
+        // 4th col of A
+        m_A_butcher[0][3] =  0.0;  
+        m_A_butcher[1][3] =  0.0;
+        m_A_butcher[2][3] =  0.0;
+        m_A_butcher[3][3] =  1.0/4.0;
+        m_A_butcher[4][3] = -85.0/12.0;
+        // 5th col of A
+        m_A_butcher[0][4] =  0.0;  
+        m_A_butcher[1][4] =  0.0;
+        m_A_butcher[2][4] =  0.0;
+        m_A_butcher[3][4] =  0.0;
+        m_A_butcher[4][4] =  1.0/4.0;
+        
+        // b 
+        m_b_butcher[0]    =  25.0/24.0;
+        m_b_butcher[1]    = -49.0/48.0;
+        m_b_butcher[2]    =  125.0/16.0;
+        m_b_butcher[3]    = -85.0/12.0;
+        m_b_butcher[4]    =  1.0/4.0;
+        // c
+        m_c_butcher[0]    =  1.0/4.0;
+        m_c_butcher[1]    =  3.0/4.0;
+        m_c_butcher[2]    =  11.0/20.0;
+        m_c_butcher[3]    =  1.0/2.0;
+        m_c_butcher[4]    =  1.0;
     
     } else {
         std::cout << "WARNING: invalid choice of time integration.\n";
@@ -1045,10 +1086,6 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel,
         HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x);
         HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
     }
-    
-    // TODO : This is a hack... Can't access m_solver outside of here...???
-    HYPRE_BoomerAMGGetNumIterations(m_solver, &m_num_iters);
-    HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &m_rel_res_norm);    
 }
 
 
@@ -1088,10 +1125,6 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel,
         HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x);
         HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
     }
-    
-    // TODO : This is a hack... Can't access m_gmres outside of here...???
-    HYPRE_GMRESGetNumIterations(m_gmres, &m_num_iters);
-    HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &m_rel_res_norm);
 }
 
 

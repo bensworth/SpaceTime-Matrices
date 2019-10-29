@@ -168,22 +168,32 @@ int main(int argc, char *argv[])
     /* Finite-difference discretization of advection */
     else if (spatialDisc == 3) {
         
-        // These limits apply for ERKp+Up schemes
-        double CFLlim = 0.0;
-        if (order == 1)  {
+        double CFL_fraction;
+        double CFLlim;
+        // Set CFL number 
+        if (timeDisc < 200) {
+            // These limits apply for ERKp+Up schemes
+            CFL_fraction = 0.85;
+            if (order == 1)  {
+                CFLlim = 1.0;
+            } else if (order == 2) {
+                CFLlim = 0.5;
+            } else if (order == 3) {
+                CFLlim = 1.62589;
+            } else if (order == 4) {
+                CFLlim = 1.04449;
+            } else if  (order == 5) {
+                CFLlim = 1.96583;
+            }
+        // Implicit schemes
+        } else {
             CFLlim = 1.0;
-        } else if (order == 2) {
-            CFLlim = 0.5;
-        } else if (order == 3) {
-            CFLlim = 1.62589;
-        } else if (order == 4) {
-            CFLlim = 1.04449;
-        } else if  (order == 5) {
-            CFLlim = 1.96583;
+            CFL_fraction = 1.0; // Use a CFL number of ...
         }
+            
         
         
-        // Time step so that we run at 85% of the CFL of the given ERK discretization
+        // Time step so that we run at CFL_fraction of the CFL limit 
         if (dim == 1) {
             double dx = 2.0 / pow(2.0, refLevels + 2); // Assume nx = 2^(refLevels + 2), and x \in [-1,1] 
             dt = dx * CFLlim;
@@ -193,15 +203,15 @@ int main(int argc, char *argv[])
             dt = CFLlim/(1/dx + 1/dy);
         }
         
-        double CFL_fraction = 0.85;
+        
         dt *= CFL_fraction;
         
-        // Manually set time to integrate to
-        //double T = 0.25;
+        // // Manually set time to integrate to
+        // double T = 2.0;
         // 
         // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        //nt = floor(T / dt);
-        //dt = T / (nt - 1);
+        // nt = floor(T / dt);
+        // dt = T / (nt - 1);
         
         
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 

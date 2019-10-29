@@ -233,7 +233,7 @@ if params["space_dim"] == 2:
     
     ### --- Numerical solution --- ###
     fig = plt.figure(1)
-    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 200)
+    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 100)
     plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
     
@@ -243,7 +243,7 @@ if params["space_dim"] == 2:
     
     ### --- Analytical solution --- ###
     fig = plt.figure(2)
-    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 200)
+    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 100)
     plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
     
