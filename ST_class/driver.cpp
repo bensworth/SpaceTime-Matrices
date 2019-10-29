@@ -70,6 +70,8 @@ int main(int argc, char *argv[])
                   "Hypre print level.");
     args.AddOption(&solve_tol, "-tol", "--solve-tol",
                   "Tolerance to solve linear system.");
+    args.AddOption(&max_iter, "-maxit", "--max-iterations",
+                  "Maximum number of linear solver iterations.");
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
     //args.AddOption(&numTimeSteps, "-nt", "--num-time-steps", // TOOD: I think this should be removed...
@@ -206,9 +208,16 @@ int main(int argc, char *argv[])
                                 dt, pit, dim, refLevels, order, FD_ProblemID);
         
         if (!pit) {
-            //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!!
+            //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
             STmatrix.SetAIR();
-            STmatrix.RKSolve();
+            // TODO : Not really sure what the best way is to give linear solver info...
+            if (use_gmres) {
+                STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres, AMGiters);
+            } else {
+                STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres);
+            }
+            
+
         } else {
             STmatrix.BuildMatrix();
             

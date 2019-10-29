@@ -82,6 +82,10 @@ private:
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_solverOptions;
+    
+    // TODO : Why can't I access m_solver??
+    int     m_num_iters;
+    double  m_rel_res_norm;
 
     void GetButcherTableaux();
     void GetMatrix_ntLE1();
@@ -135,7 +139,8 @@ private:
     
     /* ------ Sequential time integration routines ------ */
     void ERKSolve();    /* General purpose ERK solver */
-    void DIRKSolve();   /* General purpose DIRK solver */
+    void DIRKSolve(double solve_tol, int max_xiter, int printLevel,
+                        bool binv_scale, int precondition, int AMGiters);   /* General purpose DIRK solver */
     void SDIRKTimeIndependentSolve(); // TODO ?
     void DIRKTimeIndependentSolve(); // TODO ?
     
@@ -195,5 +200,7 @@ public:
     
     
     /* Sequential time integration */
-    void RKSolve();
+    void RKSolve(double tol=1e-8, int maxiter=250, int printLevel=3,
+                    bool binv_scale=true, int precondition=1, int AMGiters=10);
+    
 };

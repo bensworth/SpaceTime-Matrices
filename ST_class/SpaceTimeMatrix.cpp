@@ -128,7 +128,8 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 }
 
 
-void SpaceTimeMatrix::RKSolve()
+void SpaceTimeMatrix::RKSolve(double solve_tol, int max_iter, int printLevel,
+                                bool binv_scale, int precondition, int AMGiters)
 {
     if (m_ERK) {
         ERKSolve();
@@ -143,7 +144,7 @@ void SpaceTimeMatrix::RKSolve()
         // } else {
         //     DIRKSolve();
         // }
-        DIRKSolve();
+        DIRKSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
     }
 }
 
@@ -152,7 +153,8 @@ void SpaceTimeMatrix::RKSolve()
 
 // TODO : 
 // Is there any reason to have member variables point to the last matrix and RHS that were solved? It's kind of meaningless...
-void SpaceTimeMatrix::DIRKSolve() 
+void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
+                                bool binv_scale, int precondition, int AMGiters) 
 {
     
     double t = 0.0; // Initial time
@@ -192,8 +194,6 @@ void SpaceTimeMatrix::DIRKSolve()
     // Take nt-1 steps
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
-        if (m_globRank == 0) std::cout << "Time step " << step+1 << " of " << m_nt-1 << '\n';
-        
         // Initialize stage vectors on first time step
         if (step == 0) InitializeHypreStages(uij, k, kij);
     
@@ -238,32 +238,46 @@ void SpaceTimeMatrix::DIRKSolve()
             }
             HYPRE_ParVectorScale(temp, g); // g <- g/(dt * a_ii)
             
-            
             // Get DIRK matrix, L <- M + a_ii*dt*L
             // TODO : really want to scale entries in L by dt * a_ii
             HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+            
+            if ((printLevel > 0) && (m_globRank == 0)) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
             
             // Point member variables to local variables so linear solvers can access them
             // TODO : why won't it let me do this for A and b outside of this loop???
             m_A = L;
             m_x = k[i]; // Initial guess at solution is current stage from previous time step
-            m_b = g;
-            //m_Aij = Lij;
-            //m_bij = gij;
-            //m_xij = kij[i];            
-            
             //if (i > 0) m_x = k[i-1]; Use stage from previous node as initial guess?
-            
-            if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+            m_b = g;
             
             // Solve linear system (M + a_ii*dt)*k[i] = g
-            SolveAMG(1e-8, 10, 2, false);
-            //SolveGMRES(1e-8, 10, 2, false, 1, 10);
+            if (precondition) {
+                SolveGMRES(solve_tol, max_iter, printLevel, true, precondition, AMGiters);
+            }
+            else {
+                SolveAMG(solve_tol, max_iter, printLevel);
+            }
+        
+            //SolveAMG(tol, 10, 2, false);
+            //SolveGMRES(tol, 10, 2, false, 1, 10);
             
-            
-            
-            //std::string message = "data/X_FD" + std::to_string(step) + "_" + std::to_string(i) + ".txt";
-            //HYPRE_IJVectorPrint(kij[i], message.c_str());
+            // Why don't I have access to m_solver here??
+            // int num_iters;
+            // double rel_res_norm;
+            // HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
+            // HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
+            // std::cout << "I took " << num_iters << " iterations to reach a rel norm of " << rel_res_norm << '\n';
+                
+            // Ensure desired tolerance was reached, otherwise quit
+            // TODO : Make tolerances/norms consistent... i.e., relative v.s. absolute...
+            if (m_rel_res_norm > solve_tol) {
+                std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+                std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_rel_res_norm << " > desired tol = " << solve_tol << '\n';
+                std::cout << "Location: Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                MPI_Finalize();
+                return;
+            }
         }
         
         /* ------ Sum stages with RK weights to get solution ------ */
@@ -285,9 +299,6 @@ void SpaceTimeMatrix::DIRKSolve()
         DestroyHypreSpatialDisc(Lij, gij, xij);
     }
     
-    // Point member variable to NULL since they don't really have any significance
-    //m_Aij = NULL;
-    //m_bij = NULL;
     // Assign final solution to member variable for printing etc.
     m_xij = uij;
 }
@@ -532,7 +543,12 @@ void SpaceTimeMatrix::GetHypreSpatialDisc(HYPRE_ParCSRMatrix &L,
 
 void SpaceTimeMatrix::BuildMatrix()
 {
-    // TODO : add check not using time stepping...
+    // Check not using time stepping, since this doesn't make sense!
+    if (!m_pit) {
+        std::cout << "WARNING: BuildMatrix() only available when solving space-time system!" << '\n';
+        MPI_Finalize();
+        return;
+    }
     if (m_globRank == 0) std::cout << "Building matrix, " << m_useSpatialParallel << "\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
@@ -1029,6 +1045,10 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel,
         HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x);
         HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
     }
+    
+    // TODO : This is a hack... Can't access m_solver outside of here...???
+    HYPRE_BoomerAMGGetNumIterations(m_solver, &m_num_iters);
+    HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &m_rel_res_norm);    
 }
 
 
@@ -1068,6 +1088,10 @@ void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel,
         HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x);
         HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
     }
+    
+    // TODO : This is a hack... Can't access m_gmres outside of here...???
+    HYPRE_GMRESGetNumIterations(m_gmres, &m_num_iters);
+    HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &m_rel_res_norm);
 }
 
 

@@ -34,7 +34,13 @@ from scipy.sparse import load_npz
 # else:
 #     raise ValueError("A filename must be passed through command line!")
 
-filename = "../ST_class/data/U_FD0.txt"
+# Pass a 1 for PIT, or a 0 for sequential...
+if len(argv) > 1:
+    suff = argv[1]
+else:
+    suff = 0
+filename = "../ST_class/data/U_FD" + str(suff) + ".txt"
+print(filename)
 
 # Read data in and store in dictionary
 params = {}
