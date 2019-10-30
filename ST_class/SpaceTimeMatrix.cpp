@@ -102,6 +102,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             // For consistencies' sake, make the spatial communicator be the global communicator.
             m_spatialComm = m_globComm;
             m_spatialRank = m_globRank;
+            MPI_Comm_size(m_spatialComm, &m_Np_x);
         } else {
             if (m_globRank == 0) {
                 std::cout << "Time-stepping: No parallelism!\n";    
@@ -306,7 +307,9 @@ void SpaceTimeMatrix::ERKSolve()
     
     HYPRE_ParVector u;
     HYPRE_IJVector  uij;
+    std::cout << "ID=" << m_spatialRank << ":\tGetting IC...." << '\n';
     GetHypreInitialCondition(u, uij); 
+    std::cout << "ID=" << m_spatialRank <<  ":\tGot IC...." << '\n';
     
     HYPRE_ParCSRMatrix L;
     HYPRE_IJMatrix     Lij;
@@ -322,13 +325,17 @@ void SpaceTimeMatrix::ERKSolve()
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
         // Initialize stage vectors on first time step
+        std::cout << "ID=" << m_spatialRank << ":\tGetting K...." << '\n';
         if (step == 0) InitializeHypreStages(uij, k, kij);
+        std::cout << "ID=" << m_spatialRank << ":\tGot K...." << '\n';
     
         // Build ith stage vector, k[i]
         for (int i = 0; i < m_s_butcher; i++) {
             // Get spatial discretization at t + c[i]*dt
             if (step > 0) DestroyHypreSpatialDisc(Lij, gij, xij);
+            std::cout << "ID=" << m_spatialRank << ":\tGetting L...." << '\n';
             GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
+            std::cout << "ID=" << m_spatialRank << ":\tGot L...." << '\n';
     
             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] 
 

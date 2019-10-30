@@ -32,7 +32,7 @@ private:
     int m_refLevels;        // Have nx == 2^(refLevels + 2) spatial DOFs
     
     bool m_conservativeForm;            // TRUE == PDE in conservative form; FALSE == PDE in non-conservative form
-    int m_dim;                          // Number of spatial dimensions
+    int  m_dim;                         // Number of spatial dimensions
     std::vector<int> m_order;           // Order of discretization
     std::vector<int> m_nx;              // Number of DOFs
     std::vector<double> m_dx;           // Mesh spacing
@@ -49,6 +49,12 @@ private:
                                   int &spatialDOFs, double t, int &bsize);
                                   
     void get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
+                                  int *&L_colinds, double *&L_data, double *&B,
+                                  double *&X, int &localMinRow, int &localMaxRow,
+                                  int &spatialDOFs, double t, int &bsize);
+                                  
+    // TODO : remove ...
+    void get2DSpatialDiscretizationPar(const MPI_Comm &spatialComm, int *&L_rowptr,
                                   int *&L_colinds, double *&L_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize);
@@ -81,7 +87,7 @@ private:
                                         
                     
     int LocalMeshIndToGlobalInd(int xInd, int yInd);
-    double LocalMeshIndToPoint(int meshInd, int dim);
+    double MeshIndToPoint(int meshInd, int dim);
     void get1DUpwindStencil(int * &inds, double * &weight, int dim);
     double InitCond(double x); // 1D initial condition
     double InitCond(double x, double y); // 2D initial condition

@@ -34,6 +34,7 @@ from scipy.sparse import load_npz
 # else:
 #     raise ValueError("A filename must be passed through command line!")
 
+
 # Pass a 1 for PIT, or a 0 for sequential...
 if len(argv) > 1:
     suff = argv[1]
@@ -149,11 +150,13 @@ else:
     
     
 
-### --------------------------------------------- ###
-### --- PLOTTING: uT against exact soliution ---  ###
-### --------------------------------------------- ###
+### -------------------------------------------- ###
+### --- PLOTTING: uT against exact solution ---  ###
+### -------------------------------------------- ###
 
-###  1D
+### ----------------------------------- ###
+### --------------- 1D  --------------- ###
+### ----------------------------------- ###
 if params["space_dim"] == 1:
     nx = NX
     x = np.linspace(-1, 1, nx+1)
@@ -187,9 +190,9 @@ if params["space_dim"] == 1:
     plt.show()
     
     
-### --------------------------------------------------- ###
-### ----------------------- 2D  ----------------------- ###
-### --------------------------------------------------- ###
+### ----------------------------------- ###
+### --------------- 2D  --------------- ###
+### ----------------------------------- ###
 if params["space_dim"] == 2:
     nx = params["nx"]
     ny = nx
@@ -200,12 +203,44 @@ if params["space_dim"] == 2:
     [X, Y] = np.meshgrid(x, y)
     T = params["dt"]  * (params["nt"] - 1)
 
+    # If used spatial parallelism, DOFs are not ordered in row-wise lexicographic, but instead
+    # are blocked by proc, with procs in row-wise lexicographic order and DOFs on proc ordered
+    # in row-wise lexicographic order
+    if (params["spatialParallel"]):
+        params["spatial_Np_x"] = int(params["spatial_Np_x"])
+        perm = np.zeros(nx*ny, dtype = "int32")
+        npInX = int(np.sqrt(params["spatial_Np_x"])) # Assume square processor grid
+        npInY = npInX # Dito, same number as in x-direction
+        nxOnProc = int(nx / npInX) 
+        nyOnProc = int(ny / npInY)
+        onProc = nxOnProc * nyOnProc
+        count = 0
+        # Loop over DOFs in ascending order (i.e., ascending in their current order)
+        for py in range(0, npInY):
+            for px in range(0, npInX):
+                for yIndOnProc in range(0, nyOnProc):
+                    for xIndOnProc in range(0, nxOnProc):
+                        xIndGlobal      = px * nxOnProc + xIndOnProc # Global x-index for row we're in currently
+                        globalInd       = py * (nyOnProc * nx) + yIndOnProc * nx + xIndGlobal # Global index of current DOF in ordering we want
+                        perm[globalInd] = count
+                        count += 1
+        uT = uT[perm] # Permute solution array into correct ordering
+        
+        
+    # Map 1D array into 2D for plotting.
     uT = uT.reshape(ny, nx)
 
     def u0(x,y):
         #return np.cos(np.pi*x) ** 4 * np.cos(np.pi*y) ** 4
         return np.cos(np.pi*x) ** 4 * np.sin(np.pi*y) ** 2
-        #return np.cos(np.pi*x)
+        # if ((x >= 0) and (y >= 0)):
+        #     return 1.0
+        # if ((x < 0) and (y >= 0)):
+        #     return 2.0
+        # if ((x < 0) and (y < 0)):
+        #      return 3.0
+        # if ((x >= 0) and (y < 0)):
+        #      return 4.0
 
     # The exact solutions for the test problems
     def uexact(x, y ,t):
@@ -233,7 +268,7 @@ if params["space_dim"] == 2:
     
     ### --- Numerical solution --- ###
     fig = plt.figure(1)
-    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 100)
+    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 20)
     plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
     
@@ -243,7 +278,7 @@ if params["space_dim"] == 2:
     
     ### --- Analytical solution --- ###
     fig = plt.figure(2)
-    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 100)
+    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 20)
     plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
     
