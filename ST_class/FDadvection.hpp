@@ -53,12 +53,6 @@ private:
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize);
                                   
-    // TODO : remove ...
-    void get2DSpatialDiscretizationPar(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                  int *&L_colinds, double *&L_data, double *&B,
-                                  double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, int &bsize);
-                                  
     void get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                   int *&L_colinds, double *&L_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
@@ -86,7 +80,6 @@ private:
 
                                         
                     
-    int LocalMeshIndToGlobalInd(int xInd, int yInd);
     double MeshIndToPoint(int meshInd, int dim);
     void get1DUpwindStencil(int * &inds, double * &weight, int dim);
     double InitCond(double x); // 1D initial condition

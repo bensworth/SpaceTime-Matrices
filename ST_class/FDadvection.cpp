@@ -168,6 +168,20 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_M_rowptr  = NULL;
     m_M_colinds = NULL;
     m_M_data    = NULL;  
+    
+    
+    
+    // TODO : take out of getSpatialDiscretization and put here...
+    // /* --- Decide which variables etc current process owns --- */
+    // if (m_dim == 1) 
+    // {
+    // 
+    // } 
+    // else if (m_dim == 2)  
+    // {
+    // 
+    // }
+    
 }
 
 
@@ -176,6 +190,17 @@ FDadvection::~FDadvection()
     
 }
 
+
+// Simply call the parallel code with NULL spatial communicator
+// This saves doubling up on code that's almost identical
+void FDadvection::getSpatialDiscretization(int * &L_rowptr, int * &L_colinds,
+                                           double * &L_data, double * &B, double * &X,
+                                           int &spatialDOFs, double t, int &bsize)
+{
+    int dummy1;
+    int dummy2;
+    getSpatialDiscretization(NULL, L_rowptr, L_colinds, L_data, B, X, dummy1, dummy2, spatialDOFs, t, bsize);
+}
 
 // Get local CSR structure of FD spatial discretization matrix, L
 // Can be run serially by passing spatialComm == NULL 
@@ -190,25 +215,17 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_
                                       X, localMinRow, localMaxRow,
                                       spatialDOFs, t, bsize);
     } else if (m_dim == 2) {
-        if (spatialComm == NULL) {
-            std::cout << "No spatial parallelism..." << '\n';
-            get2DSpatialDiscretizationPar(spatialComm, L_rowptr,
-                                          L_colinds, L_data, B,
-                                          X, localMinRow, localMaxRow,
-                                          spatialDOFs, t, bsize);
-        } else {
-            std::cout << "Using spatial parallelism..." << '\n';
-            get2DSpatialDiscretizationPar(spatialComm, L_rowptr,
-                                          L_colinds, L_data, B,
-                                          X, localMinRow, localMaxRow,
-                                          spatialDOFs, t, bsize);
-        }
-        
+        get2DSpatialDiscretization(spatialComm, L_rowptr,
+                                      L_colinds, L_data, B,
+                                      X, localMinRow, localMaxRow,
+                                      spatialDOFs, t, bsize);
     }
 }
 
 
-void FDadvection::get2DSpatialDiscretizationPar(const MPI_Comm &spatialComm, int *&L_rowptr,
+// Get local CSR structure of FD spatial discretization matrix, L
+// Can be run serially by passing spatialComm == NULL 
+void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&B,
                                               double *&X, int &localMinRow, int &localMaxRow,
                                               int &spatialDOFs, double t, int &bsize)
@@ -343,9 +360,10 @@ void FDadvection::get2DSpatialDiscretizationPar(const MPI_Comm &spatialComm, int
         x          = MeshIndToPoint(xIndGlobal, xDim);    // x-value of current point
     
         // Get global index from any pair of x,y-indices (i.e., not those above). 
-        MeshIndsToGlobalInd = [=](int xIndGlobal, int yIndGlobal) { return (xIndGlobal/nxOnProc)*(onProcSize - nxOnProc) 
-                                                                            + (yIndGlobal/nyOnProc)*(onProcSize*npX - nyOnProc*nxOnProc) 
+        MeshIndsToGlobalInd = [=](int xIndGlobal, int yIndGlobal) { return (xIndGlobal/nxOnProc)*(onProcSize - nxOnProc)  
+                                                                            + (yIndGlobal/nyOnProc)*onProcSize*(npX - 1) 
                                                                             + xIndGlobal + yIndGlobal*nxOnProc; };
+
     
         // Compute x- and y-components of wavespeed given some dx or dy perturbation away from the current point
         xLocalWaveSpeed = [this, x, dx, y, t, xDim](int xOffset) { return WaveSpeed(x + dx * xOffset, y, t, xDim); };
@@ -432,224 +450,7 @@ void FDadvection::get2DSpatialDiscretizationPar(const MPI_Comm &spatialComm, int
         } 
     }
 } 
-
-
-void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                              int *&L_colinds, double *&L_data, double *&B,
-                                              double *&X, int &localMinRow, int &localMaxRow,
-                                              int &spatialDOFs, double t, int &bsize)
-{
-    // Unpack variables frequently used
-    // x-related variables
-    int nx          = m_nx[0];
-    double dx       = m_dx[0];
-    int xFD_Order   = m_order[0];
-    int xStencilNnz = xFD_Order + 1; // Width of the FD stencil
-    int xDim        = 0;
-    // y-related variables
-    int ny          = m_nx[1];
-    double dy       = m_dx[1];
-    int yFD_Order   = m_order[1];
-    int yStencilNnz = yFD_Order + 1; // Width of the FD stencil
-    int yDim        = 1;
-    
-    int spatialRank;
-    int spatialCommSize;
-    int onProcSize;
-    
-    // Spatial communicator is NULL: Code is serial, so entire discretization is put on single process
-    if (!spatialComm) {
-        spatialRank = 0;
-        spatialCommSize = 1;
-        onProcSize = nx * ny;
-    
-    // Spatial communicator exists so ensure proccessor distribution makes sense
-    } else {
-        // TODO....
-    }
-    
-    
-    /* ----------------------------------------------------------------------- */
-    /* ------ Initialize variables needed to compute CSR structure of L ------ */
-    /* ----------------------------------------------------------------------- */
-    onProcSize  = nx * ny / spatialCommSize;    // Number of rows on proc
-    localMinRow = spatialRank * onProcSize;     // First row I own
-    localMaxRow = localMinRow + onProcSize - 1; // Last row I own    
-    spatialDOFs = nx * ny;
-    
-    int L_nnz    = (xStencilNnz + yStencilNnz - 1) * onProcSize; // Nnz on proc. Discretization of x- and y-derivatives at point i,j will both use i,j in their stencils (hence the -1)
-    L_rowptr     = new int[onProcSize + 1];
-    L_colinds    = new int[L_nnz];
-    L_data       = new double[L_nnz];
-    int rowcount = 0;
-    int dataInd  = 0;
-    L_rowptr[0]  = 0;
-    X            = new double[onProcSize]; // Initial guesss at solution
-    B            = new double[onProcSize]; // Solution-independent source terms
-    
-    
-    /* ---------------------------------------------------------------- */
-    /* ------ Get components required to approximate derivatives ------ */
-    /* ---------------------------------------------------------------- */
-    // Get stencils for upwind discretizations, wind blowing left to right
-    int * xPlusInds;
-    int * yPlusInds;
-    double * xPlusWeights;
-    double * yPlusWeights;
-    get1DUpwindStencil(xPlusInds, xPlusWeights, xDim);
-    get1DUpwindStencil(yPlusInds, yPlusWeights, yDim);
-    
-    // Generate stencils for wind blowing right to left by reversing stencils
-    int * xMinusInds       = new int[xStencilNnz];
-    int * yMinusInds       = new int[yStencilNnz];
-    double * xMinusWeights = new double[xStencilNnz];
-    double * yMinusWeights = new double[yStencilNnz];
-    for (int i = 0; i < xStencilNnz; i++) {
-        xMinusInds[i]    = -xPlusInds[xFD_Order-i];
-        xMinusWeights[i] = -xPlusWeights[xFD_Order-i];
-    } 
-    for (int i = 0; i < yStencilNnz; i++) {
-        yMinusInds[i]    = -yPlusInds[yFD_Order-i];
-        yMinusWeights[i] = -yPlusWeights[yFD_Order-i];
-    } 
-    
-    // Placeholder for weights to discretize derivatives at point 
-    double * xLocalWeights = new double[xStencilNnz];
-    double * yLocalWeights = new double[yStencilNnz];
-    int * xLocalInds; // This will just point to an existing array, doesn't need memory allocated!
-    int * yLocalInds; // This will just point to an existing array, doesn't need memory allocated!
-    int xInd;
-    int yInd;
-    double x;
-    double y;
-    
-    
-    std::function<double(int)> xLocalWaveSpeed;
-    std::function<double(int)> yLocalWaveSpeed;    
-    
-    
-    
-    /* ------------------------------------------------------------------- */
-    /* ------ Get CSR structure of L for all rows on this processor ------ */
-    /* ------------------------------------------------------------------- */
-    for (int row = localMinRow; row <= localMaxRow; row++) {
-    
-        xInd = row % nx;                        // x-index of current point
-        yInd = row / ny;                        // y-index of current point
-        y = MeshIndToPoint(yInd, yDim);    // y-value of current point
-        x = MeshIndToPoint(xInd, xDim);    // x-value of current point
-    
-        // Get functions that compute x- and y-components of wavespeed given some dx or dy perturbation away from the current point
-        xLocalWaveSpeed = [this, x, dx, y, t, xDim](int xOffset) { return WaveSpeed(x + dx * xOffset, y, t, xDim); };
-        yLocalWaveSpeed = [this, x, y, dy, t, yDim](int yOffset) { return WaveSpeed(x, y + dy * yOffset, t, yDim); };
-    
-        // Get stencil for discretizing x-derivative at current point 
-        getLocalUpwindDiscretization(xLocalWeights, xLocalInds,
-                                        xLocalWaveSpeed, 
-                                        xPlusWeights, xPlusInds, 
-                                        xMinusWeights, xMinusInds, 
-                                        xStencilNnz);
-        // Get stencil for discretizing y-derivative at current point 
-        getLocalUpwindDiscretization(yLocalWeights, yLocalInds,
-                                        yLocalWaveSpeed, 
-                                        yPlusWeights, yPlusInds, 
-                                        yMinusWeights, yMinusInds, 
-                                        yStencilNnz);
-    
-        // std::cout << "row = " << row << ":" << '\n';
-        // for (int i = 0; i < yStencilNnz; i++) {
-        //     std::cout << "    localInds = " << yLocalInds[i];
-        // }
-        // std::cout << '\n';
-    
-        // Build so that column indices are in ascending order, this means looping 
-        // over y first until we hit the current point, then looping over x, then continuing to loop over y
-        // Actually, periodicity stuffs this up I think...
-        for (int yNzInd = 0; yNzInd < yStencilNnz; yNzInd++) {
-
-            //std::cout << "yind = " << yNzInd << "\tyLocalInds[yNzInd] = " << yLocalInds[yNzInd] << '\n';
-
-            // The two stencils will intersect somewhere at this y-point
-            if (yLocalInds[yNzInd] == 0) {
-    
-                for (int xNzInd = 0; xNzInd < xStencilNnz; xNzInd++) {
-                    //std::cout << "\t[yind, xind] = " << yNzInd << xNzInd << '\n';
-                    
-                    // Account for periodicity here. This always puts resulting x-index in range 0,nx-1
-                    L_colinds[dataInd] = LocalMeshIndToGlobalInd((xInd + xLocalInds[xNzInd] + nx) % nx, yInd); 
-                    L_data[dataInd]    = xLocalWeights[xNzInd];
-
-                    // The two stencils intersect at this point x-y-point, i.e. they share a 
-                    // column in L, so add y-derivative information to x-derivative information that exists there
-                    if (xLocalInds[xNzInd] == 0) {
-                        L_data[dataInd] += yLocalWeights[yNzInd]; 
-                    }
-                    dataInd += 1;
-                    //std::cout << "dataInd = " << dataInd << '\n';
-                }
-    
-            // There is no possible intersection between between x- and y-stencils
-            } else {
-                // Account for periodicity here. This always puts resulting y-index in range 0,ny-1
-                L_colinds[dataInd] = LocalMeshIndToGlobalInd(xInd, (yInd + yLocalInds[yNzInd] + ny) % ny);
-                L_data[dataInd]    = yLocalWeights[yNzInd];
-                dataInd += 1;
-                //std::cout << "dataInd = " << dataInd << '\n';
-            }
-        }    
-    
-    
-        // Set source term and guess at the solution
-        B[rowcount] = PDE_Source(x, y, t);
-        X[rowcount] = 1.0; // TODO : Set this to a random value?    
-    
-        L_rowptr[rowcount+1] = dataInd;
-        rowcount += 1;
-    }    
-    
-    // Check that sufficient data was allocated
-    if (dataInd > L_nnz) {
-        std::cout << "WARNING: FD spatial discretization matrix has more nonzeros than allocated.\n";
-    }
-    
-    // std::cout << "dataInd = " << dataInd << '\n';
-    // std::cout << "L_nnz = " << L_nnz << '\n';
-    // exit(1);
-    
-    // Clean up
-    delete[] xPlusInds;
-    delete[] xPlusWeights;
-    delete[] yPlusInds;
-    delete[] yPlusWeights;
-    delete[] xMinusInds;
-    delete[] xMinusWeights;
-    delete[] xLocalWeights;
-    delete[] yLocalWeights;
-    
-    
-    /* -------------------------------------------------------------------------------------- */
-    /* ------ MASS MATRIX: Assemble identity matrix if it has not been done previously ------ */
-    /* -------------------------------------------------------------------------------------- */
-    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        m_M_rowptr    = new int[onProcSize+1];
-        m_M_colinds   = new int[onProcSize];
-        m_M_data      = new double[onProcSize];
-        m_M_rowptr[0] = 0;
-        rowcount      = 0;
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            m_M_colinds[rowcount]  = row;
-            m_M_data[rowcount]     = 1.0;
-            m_M_rowptr[rowcount+1] = rowcount+1;
-            rowcount += 1;
-        } 
-    }
-}                              
-
-// Compute global index based on local x- and y-indices
-int FDadvection::LocalMeshIndToGlobalInd(int xInd, int yInd) 
-{
-    return m_nx[0] * yInd + xInd;
-}
+                             
 
 // Get local CSR structure of FD spatial discretization matrix, L
 // Can be run serially by passing spatialComm == NULL 
@@ -761,25 +562,7 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
             L_colinds[dataInd] = (localInds[count] + row + nx) % nx; // Account for periodicity here. This always puts in range 0,nx-1
             L_data[dataInd]    = localWeights[count];
             dataInd += 1;
-        }
-                     
-        // // DOFs in interior whose stencils can never hit boundary; assumes point in 
-        // // question is in approximation of derivative, but otherwise it can be fully upwind    
-        // if ((row > xStencilNnz - 2) && (row < nx - xStencilNnz + 1)) {
-        //     for (int count = 0; count < xStencilNnz; count++) {
-        //         L_colinds[dataInd] = localInds[count] + row;
-        //         L_data[dataInd]    = localWeights[count];
-        //         dataInd += 1;
-        //     }
-        // // DOFs close to boundary whose stencils potentially flow over boundary
-        // } else {
-        //     for (int count = 0; count < xStencilNnz; count++) {
-        //         L_colinds[dataInd] = (localInds[count] + row + nx) % nx; // Account for periodicity here. This always puts in range 0,nx-1
-        //         L_data[dataInd]    = localWeights[count];
-        //         dataInd += 1;
-        //     }
-        // }
-        
+        }        
     
         // Set source term and guess at the solution
         B[rowcount] = PDE_Source(MeshIndToPoint(row, xDim), t);
@@ -817,17 +600,7 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
 
 
 
-/* FD spatial discretization of advection */
-// Simply call the parallel code with NULL spatial communicator
-// This saves doubling up on code that's almost identical
-void FDadvection::getSpatialDiscretization(int * &L_rowptr, int * &L_colinds,
-                                           double * &L_data, double * &B, double * &X,
-                                           int &spatialDOFs, double t, int &bsize)
-{
-    int dummy1;
-    int dummy2;
-    getSpatialDiscretization(NULL, L_rowptr, L_colinds, L_data, B, X, dummy1, dummy2, spatialDOFs, t, bsize);
-}
+
 
 
 
