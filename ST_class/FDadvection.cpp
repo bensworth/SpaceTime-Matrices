@@ -436,24 +436,6 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     delete[] xMinusWeights;
     delete[] xLocalWeights;
     delete[] yLocalWeights;
-    
-    
-    /* -------------------------------------------------------------------------------------- */
-    /* ------ MASS MATRIX: Assemble identity matrix if it has not been done previously ------ */
-    /* -------------------------------------------------------------------------------------- */
-    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        m_M_rowptr    = new int[m_onProcSize+1];
-        m_M_colinds   = new int[m_onProcSize];
-        m_M_data      = new double[m_onProcSize];
-        m_M_rowptr[0] = 0;
-        rowcount      = 0;
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            m_M_colinds[rowcount]  = row;
-            m_M_data[rowcount]     = 1.0;
-            m_M_rowptr[rowcount+1] = rowcount+1;
-            rowcount += 1;
-        } 
-    }
 } 
                              
 
@@ -551,24 +533,6 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     delete[] minusInds;
     delete[] minusWeights;
     delete[] localWeights;
-    
-    
-    /* -------------------------------------------------------------------------------------- */
-    /* ------ MASS MATRIX: Assemble identity matrix if it has not been done previously ------ */
-    /* -------------------------------------------------------------------------------------- */
-    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        m_M_rowptr    = new int[m_onProcSize+1];
-        m_M_colinds   = new int[m_onProcSize];
-        m_M_data      = new double[m_onProcSize];
-        m_M_rowptr[0] = 0;
-        rowcount      = 0;
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            m_M_colinds[rowcount]  = row;
-            m_M_data[rowcount]     = 1.0;
-            m_M_rowptr[rowcount+1] = rowcount+1;
-            rowcount += 1;
-        } 
-    }
 }
 
 
@@ -623,21 +587,30 @@ void FDadvection::getLocalUpwindDiscretization(double * &localWeights, int * &lo
 
 
 
-// The mass matrix (the identity) is assembled when the spatial discretization is assembled
-// Note that it has to be done this way to account for spatial parallelism since this functions
-// definition does not make reference to the spatial comm group
+// The mass matrix just the identity
 void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
 {
-    // Check that mass matrix has been constructed
+    // Check if mass matrix has been constructed, if not then build it
     if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        std::cout << "WARNING: Mass matrix not integrated. Spatial discretization must be assembled once first\n";
-        return;
-    }
+        int localMinRow = m_spatialRank * m_onProcSize;   // First row on proc
+        int localMaxRow = localMinRow + m_onProcSize - 1; // Last row on proc
+        m_M_rowptr      = new int[m_onProcSize+1];
+        m_M_colinds     = new int[m_onProcSize];
+        m_M_data        = new double[m_onProcSize];
+        m_M_rowptr[0]   = 0;
+        int rowcount    = 0;
+        for (int row = localMinRow; row <= localMaxRow; row++) {
+            m_M_colinds[rowcount]  = row;
+            m_M_data[rowcount]     = 1.0;
+            m_M_rowptr[rowcount+1] = rowcount+1;
+            rowcount += 1;
+        }
+    } 
     
-    // Direct pointers to mass matrix data arrays
+    // Direct pointers to existing member mass matrix data arrays
     M_rowptr = m_M_rowptr;
     M_colinds = m_M_colinds; 
-    M_data = m_M_data;   
+    M_data = m_M_data; 
 }
 
 
