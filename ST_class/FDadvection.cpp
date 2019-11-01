@@ -5,9 +5,11 @@
 #include <iostream>
 
 // TODO: 
-// Parallel in 2D...
+// The mass-matrix should not be assembled in the getSpatialDiscretization 
+// code in the sense that there is no need for it to be done there. We can just 
+// assemble in in the getMassMatrix if it's not been assembled previously...
 
-// 
+ 
 double FDadvection::InitCond(double x) 
 {        
     if (m_problemID == 1) {
@@ -124,12 +126,9 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                          double dt, bool pit, int dim, int refLevels, int order, int problemID): 
     SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
     m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID}
-{
+{    
     
-    
-    
-    // Can generalize this if you like to pass in distinct order and nDOFs in y-direction. This by default just makes them the same as in the x-direction
-    
+    // Can generalize this if you like to pass in distinct order and nDOFs in y-direction. This by default just makes them the same as in the x-direction    
     double nx = pow(2, refLevels+2);
     double dx = 2.0 / nx; 
     double xboundary0 = -1.0; // Assume x \in [-1,1].
@@ -139,6 +138,7 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_dx.push_back(dx);
         m_boundary0.push_back(xboundary0);
         m_order.push_back(order);
+        m_spatialDOFs = m_nx[0];
     }
     
     // Just make domain in y-direction the same as in x-direction
@@ -147,13 +147,18 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_dx.push_back(dx);
         m_boundary0.push_back(xboundary0);
         m_order.push_back(order);
+        m_spatialDOFs = m_nx[0] * m_nx[1];
     }
     
-    
-    if ((m_problemID == 1) || (m_problemID == 2)) {
+    /* Set variables based on form of PDE */
+    if (m_problemID == 1) {
         m_conservativeForm  = true; 
         m_L_isTimedependent = false;
         m_g_isTimedependent = false;
+    } else if (m_problemID == 2) {
+        m_conservativeForm  = true; 
+        m_L_isTimedependent = true;
+        m_g_isTimedependent = true;
     } else if (m_problemID == 3) {
         m_conservativeForm  = false; 
         m_L_isTimedependent = true;
@@ -163,25 +168,67 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_L_isTimedependent = true;
         m_g_isTimedependent = true;
     }
+    
+    
+    /* -------------------------------------------------------- */
+    /* -------------- Set up spatial parallelism -------------- */
+    /* -------------------------------------------------------- */
+    /* Ensure spatial parallelism setup is permissible and 
+    decide which variables etc current process owns, etc */
+    if (m_dim == 1) {
+        /* --- Parallel --- */
+        if (m_spatialComm) {
+            m_npx.push_back(m_spatialCommSize);
+            m_nxOnProc.push_back(m_nx[0]/m_npx[0]); // Assumes n procs divides DOFs 
+            m_pGridInd.push_back(m_spatialRank);
+            
+        /* --- Sequential; hard-code in 1 proccess grid even though communicator==NULL --- */    
+        } else {
+            m_npx             = {1};        // 1 process on grid
+            m_nxOnProc.push_back(m_nx[0]);  // Assumes n procs divides DOFs 
+            m_pGridInd        = {0};        // Only proc in communicator
+            m_spatialRank     = 0;          // Only proc in communicator
+            m_spatialCommSize = 1;          // Only 1 proc in communicator
+        }
+        m_onProcSize = m_nxOnProc[0];
         
-    // Need to initialize these to NULL so we can distinguish them from once they have been built
-    m_M_rowptr  = NULL;
-    m_M_colinds = NULL;
-    m_M_data    = NULL;  
-    
-    
-    
-    // TODO : take out of getSpatialDiscretization and put here...
-    // /* --- Decide which variables etc current process owns --- */
-    // if (m_dim == 1) 
-    // {
-    // 
-    // } 
-    // else if (m_dim == 2)  
-    // {
-    // 
-    // }
-    
+    } else if (m_dim == 2) {
+        /* --- Parallel --- */
+        if (m_spatialComm) {
+            if ( (m_spatialDOFs % m_spatialCommSize) != 0 ) {
+                if (m_spatialRank == 0) {
+                    std::cout << "Error: Number of spatial DOFs (" << m_spatialDOFs << ") does not divide number of spatial processes (" << m_spatialCommSize << ")\n";
+                }
+                MPI_Finalize();
+                exit(1);
+            }
+            if ( m_spatialCommSize > m_spatialDOFs ) {
+                if (m_spatialRank == 0) {
+                    std::cout << "Error: Number of spatial DOFs (" << m_spatialDOFs << ") exceeds number of spatial processes (" << m_spatialCommSize << ")\n";
+                }
+                MPI_Finalize();
+                exit(1);
+            } 
+            
+            m_npx.push_back(sqrt(m_spatialCommSize)); // Assumes square proc grid
+            m_npx.push_back(sqrt(m_spatialCommSize));
+            m_nxOnProc.push_back(m_nx[0]/m_npx[0]); // Assumes n procs divides DOFs in each direction
+            m_nxOnProc.push_back(m_nx[1]/m_npx[1]);
+            m_pGridInd.push_back(m_spatialRank % m_npx[0]); // x grid-index
+            m_pGridInd.push_back(m_spatialRank / m_npx[0]); // y grid-index
+        
+        /* --- Sequential; hard-code in 1 proccess grid even though communicator==NULL --- */    
+        } else {        
+            m_npx             = {1, 1};     // Have a 1 x 1 proc grid
+            m_nxOnProc.push_back(m_nx[0]);  // All DOFs fit on single proc
+            m_nxOnProc.push_back(m_nx[1]);  
+            m_pGridInd        = {0, 0};            
+            m_spatialRank     = 0;              
+            m_spatialCommSize = 1; 
+        }
+        m_onProcSize = m_nxOnProc[0] * m_nxOnProc[1];
+    }
+    //std::cout << "I made it through constructor..." << '\n';
 }
 
 
@@ -244,61 +291,19 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     int yStencilNnz = yFD_Order + 1; // Width of the FD stencil
     int yDim        = 1;
     
-    int spatialRank     = 0;   // Rank of current proc
-    int spatialCommSize = 1;   // Number of procs in spatial communicator
-    int npX             = 1;   // Number of procs in x-direction
-    int npY             = 1;   // Number of procs in y-direction
-    int pxInd           = 0;   // x-index on proc grid
-    int pyInd           = 0;   // y-index on proc grid
-    int nxOnProc        = nx;  // Number of DOFs in x-direction on proc
-    int nyOnProc        = ny;  // Number of DOFs in y-direction on proc
-    
-    
-    // Spatial communicator exists so ensure proccessor distribution makes sense
-    if (spatialComm) {
-        MPI_Comm_rank(spatialComm, &spatialRank);    
-        MPI_Comm_size(spatialComm, &spatialCommSize);        
-        if ( (nx * ny % spatialCommSize) != 0 ) {
-            if (spatialRank == 0) {
-                std::cout << "Error: Number of spatial DOFs (" << nx << " x " << ny << " = " << nx * ny << ") does not divide number of spatial processes (" << spatialCommSize << ")\n";
-            }
-            MPI_Finalize();
-            exit(1);
-        }
-        if ( spatialCommSize > nx * ny ) {
-            if (spatialRank == 0) {
-                std::cout << "Error: Number of spatial DOFs (" << nx << " x " << ny << " = " << nx * ny << ") exceeds number of spatial processes (" << spatialCommSize << ")\n";
-            }
-            MPI_Finalize();
-            exit(1);
-        }
-        
-        // Reset variables based on spatial parallel setup
-        npX      = sqrt(spatialCommSize); // Assumes square proc grid
-        npY      = sqrt(spatialCommSize);
-        pxInd    = spatialRank % npX; 
-        pyInd    = spatialRank / npX; 
-        nxOnProc = nx / npX;
-        nyOnProc = ny / npY;
-        //std::cout << "ID=" << spatialRank << ":\tnpX=" << npX << "; npY=" << npY << "; pxInd=" << pxInd <<  "; pyInd=" << pyInd << "; nxOnProc=" << nxOnProc << "; nyOnProc=" << nyOnProc << '\n';
-    }
-    
-    
     /* ----------------------------------------------------------------------- */
     /* ------ Initialize variables needed to compute CSR structure of L ------ */
     /* ----------------------------------------------------------------------- */
-    int onProcSize = nxOnProc * nyOnProc;          // Number of rows on proc
-    spatialDOFs    = nx * ny;                      // Total number of DOFs in spatial disc
-    localMinRow    = spatialRank * onProcSize;     // First row I own
-    localMaxRow    = localMinRow + onProcSize - 1; // Last row I own    
-    
-    int L_nnz    = (xStencilNnz + yStencilNnz - 1) * onProcSize; // Nnz on proc. Discretization of x- and y-derivatives at point i,j will both use i,j in their stencils (hence the -1)
-    L_rowptr     = new int[onProcSize + 1];
+    spatialDOFs  = m_spatialDOFs;                      
+    localMinRow  = m_spatialRank * m_onProcSize;   // First row on proc
+    localMaxRow  = localMinRow + m_onProcSize - 1; // Last row on proc 
+    int L_nnz    = (xStencilNnz + yStencilNnz - 1) * m_onProcSize; // Nnz on proc. Discretization of x- and y-derivatives at point i,j will both use i,j in their stencils (hence the -1)
+    L_rowptr     = new int[m_onProcSize + 1];
     L_colinds    = new int[L_nnz];
     L_data       = new double[L_nnz];
     L_rowptr[0]  = 0;
-    X            = new double[onProcSize]; // Initial guesss at solution
-    B            = new double[onProcSize]; // Solution-independent source term
+    X            = new double[m_onProcSize]; // Initial guesss at solution
+    B            = new double[m_onProcSize]; // Solution-independent source term
     int rowcount = 0;
     int dataInd  = 0;
     
@@ -346,25 +351,25 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     std::function<double(int)>   yLocalWaveSpeed; 
     std::function<int(int, int)> MeshIndsToGlobalInd; 
     
+    
     /* ------------------------------------------------------------------- */
     /* ------ Get CSR structure of L for all rows on this processor ------ */
     /* ------------------------------------------------------------------- */
+    globalInd = m_spatialRank * m_onProcSize - 1; // Substract 1 here since we add it in loop straight away
     for (int row = localMinRow; row <= localMaxRow; row++) {
-        
-        globalInd  = spatialRank * onProcSize + rowcount; // Global index of current DOF
-        xIndOnProc = rowcount % nxOnProc;                 // x-index on proc
-        yIndOnProc = rowcount / nxOnProc;                 // y-index on proc
-        xIndGlobal = pxInd * nxOnProc + xIndOnProc;       // Global x-index
-        yIndGlobal = pyInd * nyOnProc + yIndOnProc;       // Global y-index
-        y          = MeshIndToPoint(yIndGlobal, yDim);    // y-value of current point
-        x          = MeshIndToPoint(xIndGlobal, xDim);    // x-value of current point
+        globalInd  += 1;                                            // Global index of current DOF
+        xIndOnProc = rowcount % m_nxOnProc[0];                      // x-index on proc
+        yIndOnProc = rowcount / m_nxOnProc[0];                      // y-index on proc
+        xIndGlobal = m_pGridInd[0] * m_nxOnProc[0] + xIndOnProc;    // Global x-index
+        yIndGlobal = m_pGridInd[1] * m_nxOnProc[1] + yIndOnProc;    // Global y-index
+        y          = MeshIndToPoint(yIndGlobal, yDim);              // y-value of current point
+        x          = MeshIndToPoint(xIndGlobal, xDim);              // x-value of current point
     
         // Get global index from any pair of x,y-indices (i.e., not those above). 
-        MeshIndsToGlobalInd = [=](int xIndGlobal, int yIndGlobal) { return (xIndGlobal/nxOnProc)*(onProcSize - nxOnProc)  
-                                                                            + (yIndGlobal/nyOnProc)*onProcSize*(npX - 1) 
-                                                                            + xIndGlobal + yIndGlobal*nxOnProc; };
+        MeshIndsToGlobalInd = [=](int xIndGlobal, int yIndGlobal) { return (xIndGlobal/m_nxOnProc[0])*(m_onProcSize - m_nxOnProc[0])  
+                                                                            + (yIndGlobal/m_nxOnProc[1])*m_onProcSize*(m_npx[0] - 1) 
+                                                                            + xIndGlobal + yIndGlobal*m_nxOnProc[0]; };
 
-    
         // Compute x- and y-components of wavespeed given some dx or dy perturbation away from the current point
         xLocalWaveSpeed = [this, x, dx, y, t, xDim](int xOffset) { return WaveSpeed(x + dx * xOffset, y, t, xDim); };
         yLocalWaveSpeed = [this, x, y, dy, t, yDim](int yOffset) { return WaveSpeed(x, y + dy * yOffset, t, yDim); };
@@ -437,9 +442,9 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     /* ------ MASS MATRIX: Assemble identity matrix if it has not been done previously ------ */
     /* -------------------------------------------------------------------------------------- */
     if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        m_M_rowptr    = new int[onProcSize+1];
-        m_M_colinds   = new int[onProcSize];
-        m_M_data      = new double[onProcSize];
+        m_M_rowptr    = new int[m_onProcSize+1];
+        m_M_colinds   = new int[m_onProcSize];
+        m_M_data      = new double[m_onProcSize];
         m_M_rowptr[0] = 0;
         rowcount      = 0;
         for (int row = localMinRow; row <= localMaxRow; row++) {
@@ -466,54 +471,23 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     int xStencilNnz = xFD_Order + 1; // Width of the FD stencil
     int xDim        = 0;
     
-    int spatialRank;
-    int spatialCommSize;
-    int onProcSize;
-    
-    // Spatial communicator is NULL: Code is serial, so entire discretization is put on single process
-    if (!spatialComm) {
-        spatialRank = 0;
-        spatialCommSize = 1;
-        onProcSize = nx;
-        
-    // Spatial communicator exists so ensure proccessor distribution makes sense
-    } else {
-        MPI_Comm_rank(spatialComm, &spatialRank);    
-        MPI_Comm_size(spatialComm, &spatialCommSize);        
-        if ( (nx % spatialCommSize) != 0 ) {
-            if (spatialRank == 0) {
-                std::cout << "Error: Number of spatial DOFs (" << nx << ") does not divide number of spatial processes (" << spatialCommSize << ")\n";
-            }
-            MPI_Finalize();
-            exit(1);
-        }
-        if ( spatialCommSize > nx ) {
-            if (spatialRank == 0) {
-                std::cout << "Error: Number of spatial DOFs (" << nx << ") exceeds number of spatial processes (" << spatialCommSize << ")\n";
-            }
-            MPI_Finalize();
-            exit(1);
-        }
-    }
-    
     
     /* ----------------------------------------------------------------------- */
     /* ------ Initialize variables needed to compute CSR structure of L ------ */
     /* ----------------------------------------------------------------------- */
-    onProcSize  = nx / spatialCommSize;         // Number of rows on proc
-    localMinRow = spatialRank * onProcSize;     // First row I own
-    localMaxRow = localMinRow + onProcSize - 1; // Last row I own    
-    spatialDOFs = nx;
+    localMinRow = m_spatialRank * m_onProcSize;   // First row on proc
+    localMaxRow = localMinRow + m_onProcSize - 1; // Last row on proc
+    spatialDOFs = m_spatialDOFs;
     
-    int L_nnz    = xStencilNnz * onProcSize;  // Nnz on proc
-    L_rowptr     = new int[onProcSize + 1];
+    int L_nnz    = xStencilNnz * m_onProcSize;  // Nnz on proc
+    L_rowptr     = new int[m_onProcSize + 1];
     L_colinds    = new int[L_nnz];
     L_data       = new double[L_nnz];
     int rowcount = 0;
     int dataInd  = 0;
     L_rowptr[0]  = 0;
-    X            = new double[onProcSize]; // Initial guesss at solution
-    B            = new double[onProcSize]; // Solution-independent source terms
+    X            = new double[m_onProcSize]; // Initial guesss at solution
+    B            = new double[m_onProcSize]; // Solution-independent source terms
     
     
     /* ---------------------------------------------------------------- */
@@ -539,13 +513,12 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     double x;
     
     std::function<double(int)> localWaveSpeed;    
-         
+    
          
     /* ------------------------------------------------------------------- */
     /* ------ Get CSR structure of L for all rows on this processor ------ */
     /* ------------------------------------------------------------------- */
     for (int row = localMinRow; row <= localMaxRow; row++) {
-    
         x = MeshIndToPoint(row, xDim); // Mesh point we're discretizing at 
               
         // Get function, which given an integer offset, computes wavespeed(x + dx * offset, t)
@@ -584,9 +557,9 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     /* ------ MASS MATRIX: Assemble identity matrix if it has not been done previously ------ */
     /* -------------------------------------------------------------------------------------- */
     if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        m_M_rowptr    = new int[onProcSize+1];
-        m_M_colinds   = new int[onProcSize];
-        m_M_data      = new double[onProcSize];
+        m_M_rowptr    = new int[m_onProcSize+1];
+        m_M_colinds   = new int[m_onProcSize];
+        m_M_data      = new double[m_onProcSize];
         m_M_rowptr[0] = 0;
         rowcount      = 0;
         for (int row = localMinRow; row <= localMaxRow; row++) {
@@ -597,10 +570,6 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
         } 
     }
 }
-
-
-
-
 
 
 
@@ -673,129 +642,48 @@ void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_d
 
 
 // Put initial condition in vector B.
-void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) {
-
-    // Need to work out where my rows are.
-    int spatialRank;
-    int spatialCommSize;
-    MPI_Comm_rank(spatialComm, &spatialRank);    
-    MPI_Comm_size(spatialComm, &spatialCommSize);    
-        
-    if (m_dim == 1) {
-        int onProcSize = m_nx[0] / spatialCommSize; 
-        localMinRow = spatialRank * onProcSize;     // First row I own
-        localMaxRow = localMinRow + onProcSize - 1; // Last row I own  
-        spatialDOFs = m_nx[0];
-        B = new double[onProcSize];
-        
-        int rowcount = 0;
+void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B, 
+                                        int &localMinRow, int &localMaxRow, 
+                                        int &spatialDOFs) 
+{
+    spatialDOFs  = m_spatialDOFs;
+    localMinRow  = m_spatialRank * m_onProcSize;   // First row on proc
+    localMaxRow  = localMinRow + m_onProcSize - 1; // Last row on proc
+    int rowcount = 0;
+    B = new double[m_onProcSize]; 
+    
+    if (m_dim == 1) {        
         for (int row = localMinRow; row <= localMaxRow; row++) {
             B[rowcount] = InitCond(MeshIndToPoint(row, 0));
             rowcount += 1;
         }
     } else if (m_dim == 2) {
-        // Unpack variables frequently used
-        // x-related variables
-        int nx          = m_nx[0];
-        double dx       = m_dx[0];
-        int xFD_Order   = m_order[0];
-        int xStencilNnz = xFD_Order + 1; // Width of the FD stencil
-        int xDim        = 0;
-        // y-related variables
-        int ny          = m_nx[1];
-        double dy       = m_dx[1];
-        int yFD_Order   = m_order[1];
-        int yStencilNnz = yFD_Order + 1; // Width of the FD stencil
-        int yDim        = 1;
-        
-        int spatialRank;
-        int spatialCommSize;
-        int onProcSize;
-        
-        int npX = 1; // Number of procs in x-direction
-        int npY = 1; // Number of procs in y-direction
-        int pxInd = 0; // x-index on proc grid
-        int pyInd = 0; // y-index on proc grid
-        int nxOnProc = nx; // On proc
-        int nyOnProc = ny; // On proc
-        
-        // Spatial communicator is NULL: Code is serial, so entire discretization is put on single process
-        if (!spatialComm) {
-            spatialRank = 0;
-            spatialCommSize = 1;
-        
-        // Spatial communicator exists so ensure proccessor distribution makes sense
-        // TODO : allow for non-square proc grid...
-        } else { 
-            MPI_Comm_rank(spatialComm, &spatialRank);    
-            MPI_Comm_size(spatialComm, &spatialCommSize);         
-            npX = sqrt(spatialCommSize);
-            npY = sqrt(spatialCommSize);
-            pxInd = spatialRank % npX; 
-            pyInd = spatialRank / npX; 
-            nxOnProc = nx / npX;
-            nyOnProc = ny / npY;
-            std::cout << "ID=" << spatialRank << ":\tnpX=" << npX << "; npY=" << npY << "; pxInd=" << pxInd <<  "; pyInd=" << pyInd << "; nxOnProc=" << nxOnProc << "; nyOnProc=" << nyOnProc << '\n';
-        }
-        
-        
-        /* ----------------------------------------------------------------------- */
-        /* ------ Initialize variables needed to compute CSR structure of L ------ */
-        /* ----------------------------------------------------------------------- */
-        onProcSize  = nxOnProc * nyOnProc;    // Number of rows on proc
-        localMinRow = spatialRank * onProcSize;     // First row I own
-        localMaxRow = localMinRow + onProcSize - 1; // Last row I own    
-        spatialDOFs = nx * ny;
-
-        int rowcount = 0;
-        B            = new double[onProcSize]; // Solution-independent source terms
-        
-        int xInd;
-        int yInd;
-        double x;
-        double y;
-        int onProcXInd; // Local x-index on proc w.r.t. to 1st DOF on proc
-        int onProcYInd; // Local y-index on proc w.r.t. to 1st DOF on proc
-        
-        /* ------------------------------------------------------------------- */
-        /* ------ Get CSR structure of L for all rows on this processor ------ */
-        /* ------------------------------------------------------------------- */
+        int xInd, yInd;      
         for (int row = localMinRow; row <= localMaxRow; row++) {
-            onProcXInd = rowcount % nxOnProc;
-            onProcYInd = rowcount / nxOnProc;
-            xInd = pxInd * nxOnProc + onProcXInd; // Global x-index
-            yInd = pyInd * nyOnProc + onProcYInd; // Global y-index
-            y = MeshIndToPoint(yInd, yDim);    // y-value of current point
-            x = MeshIndToPoint(xInd, xDim);    // x-value of current point
-            B[rowcount] = InitCond(x, y);
+            xInd = m_pGridInd[0] * m_nxOnProc[0] + rowcount % m_nxOnProc[0]; // x-index of current point
+            yInd = m_pGridInd[1] * m_nxOnProc[1] + rowcount / m_nxOnProc[0]; // y-index of current point
+            B[rowcount] = InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
             rowcount += 1;
-            if (spatialRank == 3) std::cout << "(x,y)=(" << xInd << "," << yInd << ") \n";
         }
-    } 
-        
+    }     
 }
 
 
 void FDadvection::getInitialCondition(double * &B, int &spatialDOFs)
 {
+    spatialDOFs = m_spatialDOFs;
+    B = new double[m_spatialDOFs];
+    
     if (m_dim == 1) {
-        spatialDOFs = m_nx[0];
-        B = new double[m_nx[0]];
-        int xDim = 0;
         for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-            B[xInd] = InitCond(MeshIndToPoint(xInd, xDim));
-            //std::cout << "B[i]  = " << B[xInd] << "??  = " << InitCond(MeshIndToPoint(xInd, xDim)) << '\n';
+            B[xInd] = InitCond(MeshIndToPoint(xInd, 0));
         }
     } else if (m_dim == 2) {
-        spatialDOFs = m_nx[0] * m_nx[1];
-        B = new double[m_nx[0] * m_nx[1]];
-        int xDim = 0;
-        int yDim = 1;
-        int ind = 0;
+        int rowInd = 0;
         for (int yInd = 0; yInd < m_nx[1]; yInd++) {
             for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-                B[ind] = InitCond(MeshIndToPoint(xInd, xDim), MeshIndToPoint(yInd, yDim));
-                ind += 1;
+                B[rowInd] = InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
+                rowInd += 1;
             }
         }
     }
@@ -803,17 +691,18 @@ void FDadvection::getInitialCondition(double * &B, int &spatialDOFs)
 
 
 // Add initial condition to vector B.
+// TODO : Add code to do 2D
 void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) {
 
+    if (m_dim > 1) {
+        std::cout << "WARNING: ONLY 1D ADD IC IMPLEMENTED" << '\n';
+        MPI_Finalize();
+        return;
+    }
+
     // Need to work out where my rows are.
-    int spatialRank;
-    int spatialCommSize;
-    MPI_Comm_rank(spatialComm, &spatialRank);    
-    MPI_Comm_size(spatialComm, &spatialCommSize);    
-        
-    int onProcSize = m_nx[0] / spatialCommSize; 
-    int localMinRow = spatialRank * onProcSize; 
-    int localMaxRow = localMinRow + onProcSize - 1; 
+    int localMinRow = m_spatialRank * m_onProcSize; 
+    int localMaxRow = localMinRow + m_onProcSize - 1; 
     
     int rowcount = 0;
     for (int row = localMinRow; row <= localMaxRow; row++) {
@@ -824,21 +713,19 @@ void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) {
 
 
 // Add initial condition to vector B.
+// TODO: Incorporate this into the code above by passing NULL communicator??
 void FDadvection::addInitialCondition(double *B)
 {
     if (m_dim == 1) {
-        int xDim = 0;
         for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-            B[xInd] += InitCond(MeshIndToPoint(xInd, xDim));
+            B[xInd] += InitCond(MeshIndToPoint(xInd, 0));
         }
     } else if (m_dim == 2) {
-        int xDim = 0;
-        int yDim = 1;
-        int ind = 0;
+        int rowInd = 0;
         for (int yInd = 0; yInd < m_nx[1]; yInd++) {
             for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-                B[ind] += InitCond(MeshIndToPoint(xInd, xDim), MeshIndToPoint(yInd, yDim));
-                ind += 1;
+                B[rowInd] += InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 0));
+                rowInd += 1;
             }
         }
     }

@@ -48,7 +48,7 @@ private:
     int     m_globRank;
     int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
     int     m_DOFInd; /* Index of DOF that spatial comm group belongs to */
-    int     m_spatialRank;
+    //int     m_spatialRank; // TODO : remove, now a protected variable
     int     m_timeDisc;
     int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
     int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
@@ -57,7 +57,7 @@ private:
     int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
     int     m_Np_x;                 /* Number of processors that spatial discretization is put on */
     int     m_bsize;
-    int     m_spCommSize;
+    int     m_spCommSize; // TODO : remove... now protected
     bool    m_useSpatialParallel;
     
     bool    m_isTimeDependent; //  TODO : Will need to be removed ...
@@ -72,7 +72,7 @@ private:
     double  m_c_butcher[10];        /* Coefficients in RK Butcher tableaux */
 
     MPI_Comm            m_globComm;
-    MPI_Comm            m_spatialComm;
+    //MPI_Comm            m_spatialComm;
     HYPRE_Solver        m_solver;
     HYPRE_Solver        m_gmres;
     HYPRE_ParCSRMatrix  m_A;
@@ -163,15 +163,19 @@ private:
     
 
 protected:
+    MPI_Comm m_spatialComm;     /* Spatial communicator; the spatial discretization code has access to this */
+    int      m_spatialCommSize; /* Num processes in spatial communicator */
+    int      m_spatialRank;     /* Process rank in spatial communicator */
+    
     // TOOD : Make sure these variables are set in spatial discretization code...
-    bool    m_L_isTimedependent; /* Is spatial discretization time dependent? */
-    bool    m_g_isTimedependent; /* Is PDE source term time dependent? */
+    bool     m_L_isTimedependent; /* Is spatial discretization time dependent? */
+    bool     m_g_isTimedependent; /* Is PDE source term time dependent? */
 
-    int*    m_M_rowptr;
-    int*    m_M_colinds;
-    double* m_M_data;
-    double  m_hmin;
-    double  m_hmax;
+    int*     m_M_rowptr;
+    int*     m_M_colinds;
+    double*  m_M_data;
+    double   m_hmin;
+    double   m_hmax;
 
 public:
     SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt, bool pit);

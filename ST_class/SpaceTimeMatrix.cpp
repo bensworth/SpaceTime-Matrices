@@ -23,7 +23,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
       m_dt{dt}, m_pit{pit}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_bsize(1), m_hmin(-1), m_hmax(-1), m_ERK(false), m_DIRK(false), m_SDIRK(false),
-      m_L_isTimedependent(true), m_g_isTimedependent(true)
+      m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true)
 {
     
     m_isTimeDependent = true; // TODO : this will need to be removed later... when L and G are treated separately
@@ -57,7 +57,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                 return;
             }
             else {
-                m_Np_x = m_numProc / (m_nt * m_s_butcher); 
+                m_spatialCommSize = m_numProc / (m_nt * m_s_butcher);
+                m_Np_x = m_numProc / (m_nt * m_s_butcher); // TODO : remove. 
             }
              
             // Set up communication group for spatial discretizations.
@@ -72,7 +73,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
         /* ------ Temporal parallelism only ------ */
         else {
             if (m_globRank == 0) {
-                std::cout << "Space-time system: Temporal parallelism only!\n";    
+                if (m_numProc > 1) std::cout << "Space-time system: Temporal parallelism only!\n";    
+                else std::cout << "Space-time system: No parallelism!\n";    
             }
             
             m_useSpatialParallel = false;
@@ -99,15 +101,15 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             
             m_useSpatialParallel = true;
             
-            // For consistencies' sake, make the spatial communicator be the global communicator.
-            m_spatialComm = m_globComm;
-            m_spatialRank = m_globRank;
-            MPI_Comm_size(m_spatialComm, &m_Np_x);
+            // Update spatial communicator variable to be those of global communicator.
+            m_spatialComm     = m_globComm;
+            m_spatialRank     = m_globRank;
+            m_spatialCommSize = m_numProc;
+            m_Np_x = m_spatialCommSize; // TODO delete...
         } else {
             if (m_globRank == 0) {
                 std::cout << "Time-stepping: No parallelism!\n";    
             }
-            
             m_useSpatialParallel = false;
         }
         
@@ -307,7 +309,9 @@ void SpaceTimeMatrix::ERKSolve()
     
     HYPRE_ParVector u;
     HYPRE_IJVector  uij;
+    //std::cout << "G:\tto get IC" << '\n';
     GetHypreInitialCondition(u, uij); 
+    //std::cout << "G:\tIC" << '\n';
     
     HYPRE_ParCSRMatrix L;
     HYPRE_IJMatrix     Lij;
@@ -329,7 +333,9 @@ void SpaceTimeMatrix::ERKSolve()
         for (int i = 0; i < m_s_butcher; i++) {
             // Get spatial discretization at t + c[i]*dt
             if (step > 0) DestroyHypreSpatialDisc(Lij, gij, xij);
+            //std::cout << "G:\tto get Spatial disc." << '\n';
             GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
+            //std::cout << "G:\tSpatial disc." << '\n';
     
             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] 
 

@@ -28,43 +28,45 @@ NOTES:
 class FDadvection : public SpaceTimeMatrix
 {
 private:
-    int m_problemID;        // ID for test problems
-    int m_refLevels;        // Have nx == 2^(refLevels + 2) spatial DOFs
     
-    bool m_conservativeForm;            // TRUE == PDE in conservative form; FALSE == PDE in non-conservative form
-    int  m_dim;                         // Number of spatial dimensions
-    std::vector<int> m_order;           // Order of discretization
-    std::vector<int> m_nx;              // Number of DOFs
-    std::vector<double> m_dx;           // Mesh spacing
-    std::vector<double> m_boundary0;    // Lower boundary of domain
-
-    // TODO... This class shouldn't really provide any mass matrix support at all...
-    int * m_M_rowptr;
-    int * m_M_colinds; 
-    double * m_M_data;
+    bool m_conservativeForm;            /* TRUE == PDE in conservative form; FALSE == PDE in non-conservative form */
+    int m_dim;                          /* Number of spatial dimensions */
+    int m_problemID;                    /* ID for test problems */
+    int m_refLevels;                    /* Have nx == 2^(refLevels + 2) spatial DOFs */
+    int m_onProcSize;                   /* Number of DOFs on proc */
+    int m_spatialDOFs;                  /* Total number of DOFs in spatial disc */
+    std::vector<int>    m_order;        /* Order of discretization in each direction */
+    std::vector<int>    m_nx;           /* Number of DOFs in each direction */
+    std::vector<double> m_dx;           /* Mesh spacing in each direction */
+    std::vector<double> m_boundary0;    /* Lower boundary of domain in each direction */
+    std::vector<int>    m_npx;          /* Number of procs in each direction */
+    std::vector<int>    m_pGridInd;     /* Grid indices of proc */
+    std::vector<int>    m_nxOnProc;     /* Number of DOFs in each direction on proc */
+    
 
     void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                   int *&L_colinds, double *&L_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize);
                                   
+    void getSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data,
+                                  double *&B, double *&X, int &spatialDOFs, double t,
+                                  int &bsize);                              
+                                  
+    void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);                                  
+                                  
     void get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                  int *&L_colinds, double *&L_data, double *&B,
-                                  double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, int &bsize);
+                                    int *&L_colinds, double *&L_data, double *&B,
+                                    double *&X, int &localMinRow, int &localMaxRow,
+                                    int &spatialDOFs, double t, int &bsize);
                                   
     void get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                  int *&L_colinds, double *&L_data, double *&B,
-                                  double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, int &bsize);                                  
-	
-	void getSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data,
-                                  double *&B, double *&X, int &spatialDOFs, double t,
-                                  int &bsize);
-                                  
-	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);    
+                                    int *&L_colinds, double *&L_data, double *&B,
+                                    double *&X, int &localMinRow, int &localMaxRow,
+                                    int &spatialDOFs, double t, int &bsize);                                  
     
-    void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, 
+                                int &localMaxRow, int &spatialDOFs);
     void getInitialCondition(double * &B, int &spatialDOFs);
     
     void addInitialCondition(const MPI_Comm &spatialComm, double *B);
@@ -78,20 +80,20 @@ private:
                                         double * const &minusWeights, int * const &minusInds,
                                         int nWeights);
 
-                                        
-                    
     double MeshIndToPoint(int meshInd, int dim);
     void get1DUpwindStencil(int * &inds, double * &weight, int dim);
-    double InitCond(double x); // 1D initial condition
-    double InitCond(double x, double y); // 2D initial condition
-    double WaveSpeed(double x, double t); // 1D wave speed
-    double WaveSpeed(double x, double y, double t, int component); // 2D wave speed
-    double PDE_Source(double x, double t); // 1D source
-    double PDE_Source(double x, double y, double t); // 2D source
+    
+    double InitCond(double x);                          /* 1D initial condition */
+    double InitCond(double x, double y);                /* 2D initial condition */
+    double WaveSpeed(double x, double t);               /* 1D wave speed */
+    double WaveSpeed(double x, double y, double t,      /* 2D wave speed */
+                        int component);  
+    double PDE_Source(double x, double t);              /* 1D source */
+    double PDE_Source(double x, double y, double t);    /* 2D source */
 
 public:
 
-    // Constructors
+    /* Constructors */
 	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				double dt, bool pit);
 	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
