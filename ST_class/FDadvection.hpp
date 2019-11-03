@@ -35,6 +35,7 @@ private:
     int m_refLevels;                    /* Have nx == 2^(refLevels + 2) spatial DOFs */
     int m_onProcSize;                   /* Number of DOFs on proc */
     int m_spatialDOFs;                  /* Total number of DOFs in spatial disc */
+    int m_localMinRow;                  /* Global index of first DOF on proc */
     std::vector<int>    m_order;        /* Order of discretization in each direction */
     std::vector<int>    m_nx;           /* Number of DOFs in each direction */
     std::vector<double> m_dx;           /* Mesh spacing in each direction */
@@ -42,7 +43,7 @@ private:
     std::vector<int>    m_npx;          /* Number of procs in each direction */
     std::vector<int>    m_pGridInd;     /* Grid indices of proc */
     std::vector<int>    m_nxOnProc;     /* Number of DOFs in each direction on proc */
-    
+    std::vector<int>    m_nxOnProcInt;  /* Number of DOFs in each direction on procs in interior of proc domain */
 
     void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                   int *&L_colinds, double *&L_data, double *&B,

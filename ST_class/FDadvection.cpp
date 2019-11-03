@@ -176,11 +176,20 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     /* Ensure spatial parallelism setup is permissible and 
     decide which variables etc current process owns, etc */
     if (m_dim == 1) {
+        
         /* --- Parallel --- */
         if (m_spatialComm) {
-            m_npx.push_back(m_spatialCommSize);
-            m_nxOnProc.push_back(m_nx[0]/m_npx[0]); // Assumes n procs divides DOFs 
             m_pGridInd.push_back(m_spatialRank);
+            m_npx.push_back(m_spatialCommSize);
+            m_nxOnProcInt.push_back(m_nx[0]/m_npx[0]);
+            
+            // Procs in interior have an even number of DOFS
+            if (m_spatialRank < m_npx[0]-1)  {
+                m_nxOnProc.push_back(m_nxOnProcInt[0]); 
+            // Last proc in domain takes the remainder of DOFs
+            } else {
+                m_nxOnProc.push_back(m_nx[0] - (m_npx[0]-1)*m_nxOnProcInt[0]);
+            }
             
         /* --- Sequential; hard-code in 1 proccess grid even though communicator==NULL --- */    
         } else {
@@ -189,8 +198,10 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
             m_pGridInd        = {0};        // Only proc in communicator
             m_spatialRank     = 0;          // Only proc in communicator
             m_spatialCommSize = 1;          // Only 1 proc in communicator
+            m_nxOnProcInt.push_back(m_nx[0]/m_npx[0]);
         }
-        m_onProcSize = m_nxOnProc[0];
+        m_localMinRow = m_pGridInd[0] * m_nxOnProcInt[0]; // Index of first DOF on proc
+        m_onProcSize  = m_nxOnProc[0];
         
     } else if (m_dim == 2) {
         /* --- Parallel --- */
@@ -228,7 +239,7 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         }
         m_onProcSize = m_nxOnProc[0] * m_nxOnProc[1];
     }
-    //std::cout << "I made it through constructor..." << '\n';
+    std::cout << "I made it through constructor..." << '\n';
 }
 
 
@@ -446,6 +457,7 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
                                               double *&X, int &localMinRow, int &localMaxRow,
                                               int &spatialDOFs, double t, int &bsize) 
 {
+    
     // Unpack variables frequently used
     int nx          = m_nx[0];
     double dx       = m_dx[0];
@@ -457,8 +469,8 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     /* ----------------------------------------------------------------------- */
     /* ------ Initialize variables needed to compute CSR structure of L ------ */
     /* ----------------------------------------------------------------------- */
-    localMinRow = m_spatialRank * m_onProcSize;   // First row on proc
-    localMaxRow = localMinRow + m_onProcSize - 1; // Last row on proc
+    localMinRow = m_localMinRow;                    // First row on proc
+    localMaxRow = m_localMinRow + m_onProcSize - 1; // Last row on proc
     spatialDOFs = m_spatialDOFs;
     
     int L_nnz    = xStencilNnz * m_onProcSize;  // Nnz on proc
@@ -592,8 +604,8 @@ void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_d
 {
     // Check if mass matrix has been constructed, if not then build it
     if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        int localMinRow = m_spatialRank * m_onProcSize;   // First row on proc
-        int localMaxRow = localMinRow + m_onProcSize - 1; // Last row on proc
+        int localMinRow = m_localMinRow;                    // First row on proc
+        int localMaxRow = m_localMinRow + m_onProcSize - 1; // Last row on proc
         m_M_rowptr      = new int[m_onProcSize+1];
         m_M_colinds     = new int[m_onProcSize];
         m_M_data        = new double[m_onProcSize];
@@ -620,8 +632,8 @@ void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B,
                                         int &spatialDOFs) 
 {
     spatialDOFs  = m_spatialDOFs;
-    localMinRow  = m_spatialRank * m_onProcSize;   // First row on proc
-    localMaxRow  = localMinRow + m_onProcSize - 1; // Last row on proc
+    localMinRow  = m_localMinRow;                    // First row on proc
+    localMaxRow  = m_localMinRow + m_onProcSize - 1; // Last row on proc
     int rowcount = 0;
     B = new double[m_onProcSize]; 
     
@@ -674,8 +686,8 @@ void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) {
     }
 
     // Need to work out where my rows are.
-    int localMinRow = m_spatialRank * m_onProcSize; 
-    int localMaxRow = localMinRow + m_onProcSize - 1; 
+    int localMinRow = m_localMinRow; 
+    int localMaxRow = m_localMinRow + m_onProcSize - 1; 
     
     int rowcount = 0;
     for (int row = localMinRow; row <= localMaxRow; row++) {

@@ -112,8 +112,7 @@ if (params["pit"] == 1):
         
         uT = np.zeros(NX)
         
-        DOFsPerProc = int(NX/params["spatial_Np_x"])
-        
+        ind = 0
         for count, Ufilename in enumerate(PuT):
             #print(count, NX)
             # Read all data from the proc
@@ -122,7 +121,10 @@ if (params["pit"] == 1):
             dims.split(" ")
             dims = [int(x) for x in dims.split()] 
             # Get data from lines > 0
-            uT[count*DOFsPerProc:(count+1)*DOFsPerProc] = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+            temp = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+            DOFsOnProc = temp.shape[0]
+            uT[ind:(count+1)*DOFsOnProc] = temp
+            ind = (count+1)*DOFsOnProc
 
 
 ###############################
@@ -137,6 +139,7 @@ else:
     uT = np.zeros(NX)
     DOFsPerProc = int(NX/params["P"])
     
+    ind = 0
     for count, Ufilename in enumerate(PuT):
         #print(count, NX)
         # Read all data from the proc
@@ -145,7 +148,10 @@ else:
         dims.split(" ")
         dims = [int(x) for x in dims.split()] 
         # Get data from lines > 0
-        uT[count*DOFsPerProc:(count+1)*DOFsPerProc] = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+        temp = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+        DOFsOnProc = temp.shape[0]
+        uT[ind:(count+1)*DOFsOnProc] = temp
+        ind = (count+1)*DOFsOnProc
             
     
     
