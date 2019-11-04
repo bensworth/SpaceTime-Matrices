@@ -479,8 +479,6 @@ void SpaceTimeMatrix::GetHypreSpatialDisc(HYPRE_ParCSRMatrix &L,
     double * G;
     double * X;
     int      spatialDOFs;
-    // int      ilower;
-    // int      iupper;
 
     // No parallelism: Spatial discretization on single processor
     if (!m_useSpatialParallel) {

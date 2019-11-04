@@ -70,7 +70,7 @@ double FDadvection::WaveSpeed(double x, double y, double t, int component) {
 // Map grid index to grid point in specified dimension
 double FDadvection::MeshIndToPoint(int meshInd, int dim)
 {
-    return m_boundary0[dim] + m_dx[dim] * meshInd;
+    return m_boundary0[dim] + meshInd * m_dx[dim];
 }
 
 
@@ -130,27 +130,26 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_px{px}
 {    
     
-    std::cout << "ID=" << m_spatialRank << " entered constructor..." << '\n';
-    
     /* Check specified proc distribution is consistent with the number of procs passed by base class */
     if (!m_px.empty()) {
         // Doesn't make sense to prescribe proc grid if not using spatial parallelism
         if (!m_spatialComm) {
-            std::cout << "WARNING: Trying to prescribe spatial processor grid layout while not using spatial parallelism!" << '\n';
-            m_px = {};
+            if (m_spatialRank == 0) std::cout << "WARNING: Trying to prescribe spatial processor grid layout while not using spatial parallelism!" << '\n';
         // Ensure the product of number of procs in each direction matches the number of procs assigned in space in the base class
         } else {
             int num_procs = 1;
             for (const int &element: m_px)
                 num_procs *= element;
             if (num_procs != m_spatialCommSize) {
-                std::cout << "WARNING: Prescribed spatial processor grid does not contain same number of procs as specified in base class!" << '\n';
+                std::string proc_grid_dims = "";
+                for (const int &element: m_px)
+                    proc_grid_dims += std::to_string(element) + "x";
+                proc_grid_dims.pop_back();
+                if (m_spatialRank == 0) std::cout << "WARNING: Prescribed spatial processor grid (P=" << proc_grid_dims << ") having " << num_procs << " processors does not contain same number of procs as specified in base class (" << m_spatialCommSize << ")! \n";
                 MPI_Finalize();
                 return;
             }
         }
-        
-        
     }
     
     // Can generalize this if you like to pass in distinct order and nDOFs in y-direction. This by default just makes them the same as in the x-direction    
@@ -165,16 +164,24 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
         m_boundary0.push_back(xboundary0);
         m_order.push_back(order);
         m_spatialDOFs = m_nx[0];
+        
+        // These will be updated below if using spatial parallelism.
+        m_onProcSize  = m_spatialDOFs; 
+        m_localMinRow = 0;
     }
     
     // Just make domain in y-direction the same as in x-direction
     if (dim == 2) {
+        //m_nx.push_back(nx + 7);
         m_nx.push_back(nx);
-        //m_nx.push_back(4);
-        m_dx.push_back(dx);
+        m_dx.push_back(2.0/m_nx[1]);
         m_boundary0.push_back(xboundary0);
         m_order.push_back(order);
         m_spatialDOFs = m_nx[0] * m_nx[1];
+        
+        // These will be updated below if using spatial parallelism.
+        m_onProcSize  = m_spatialDOFs; 
+        m_localMinRow = 0;
     }
     
     /* Set variables based on form of PDE */
@@ -217,18 +224,10 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
             } else {
                 m_nxOnProc.push_back(m_nx[0] - (m_px[0]-1)*m_nxOnProcInt[0]);
             }
-            
-        /* --- Sequential; hard-code in 1 proccess grid even though communicator==NULL --- */    
-        } else {
-            m_px             = {1};        // 1 process on grid
-            m_nxOnProc.push_back(m_nx[0]);  // Assumes n procs divides DOFs 
-            m_pGridInd        = {0};        // Only proc in communicator
-            m_spatialRank     = 0;          // Only proc in communicator
-            m_spatialCommSize = 1;          // Only 1 proc in communicator
-            m_nxOnProcInt.push_back(m_nx[0]/m_px[0]);
+            m_localMinRow = m_pGridInd[0] * m_nxOnProcInt[0]; // Index of first DOF on proc
+            m_onProcSize  = m_nxOnProc[0];
         }
-        m_localMinRow = m_pGridInd[0] * m_nxOnProcInt[0]; // Index of first DOF on proc
-        m_onProcSize  = m_nxOnProc[0];
+        
         
     } else if (m_dim == 2) {
         /* --- Parallel --- */
@@ -245,11 +244,9 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                 /* Setup default square process grid */
                 } else {
                     m_px.push_back(temp); // In x-direction have sqrt of number of total procs
-                    m_px.push_back(temp); // In y-direction: dito
+                    m_px.push_back(temp); // In y-direction: ditto
                 }
             }
-            
-            //std::cout << "ID=" << m_spatialRank << "\tC1" << '\n';
             
             // Get indices on proc grid
             m_pGridInd.push_back(m_spatialRank % m_px[0]); // x grid-index
@@ -264,8 +261,6 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
             m_nxOnProcBnd.push_back(m_nx[0] - (m_px[0]-1)*m_nxOnProcInt[0]);
             m_nxOnProcBnd.push_back(m_nx[1] - (m_px[1]-1)*m_nxOnProcInt[1]);
             
-            //std::cout << "ID=" << m_spatialRank << "\tC2" << '\n';
-            
             // All procs in interior have same number of DOFS
             if (m_pGridInd[0] < m_px[0] - 1) {
                 m_nxOnProc.push_back( m_nxOnProcInt[0] );
@@ -273,15 +268,14 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
             } else {
                 m_nxOnProc.push_back( m_nxOnProcBnd[0] );
             }
-            // Dito for y-direction
+            // ditto for y-direction
             if (m_pGridInd[1] < m_px[1] - 1) {
                 m_nxOnProc.push_back( m_nxOnProcInt[1] );
             // Proc on NORTH boundary takes remainder of DOFs
             } else {
                 m_nxOnProc.push_back( m_nxOnProcBnd[1] );
             }
-            
-            //std::cout << "ID=" << m_spatialRank << "\tC3" << '\n';
+            m_onProcSize = m_nxOnProc[0] * m_nxOnProc[1]; // DOFs on proc
             
             // Compute global index of first DOF on proc
             // Any proc other than on the NORTH boundary
@@ -293,72 +287,44 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
                 m_localMinRow = m_nx[0] * m_nxOnProcInt[1] * m_pGridInd[1]; // Number of DOFs on entire grid upto NORTH boundary
                 m_localMinRow += m_pGridInd[0] * m_nxOnProcInt[0] * m_nxOnProcBnd[1]; // Number of DOFs in last row taken up by procs before us
             }
-            //std::cout << "ID=" << m_spatialRank << "\tlocalMinRow=" << m_localMinRow << '\n';
-            //std::cout << "ID=" << m_spatialRank << "\tC4" << '\n';
                         
             // Communicate size information to my four nearest neighbours
             // Assumes we do not have to communicate further than our nearest neighbouring procs...
-            // Get indices of nearest neighbour processes
+            // Note: we could work this information out just using the grid setup but it's more fun to retrieve it from other procs
+            // Global proc indices of my nearest neighbours; the processor grid is assumed periodic here to enforce periodic BCs
             int pNInd = m_pGridInd[0] + ((m_pGridInd[1]+1) % m_px[1]) * m_px[0];
             int pSInd = m_pGridInd[0] + ((m_pGridInd[1]-1 + m_px[1]) % m_px[1]) * m_px[0];
             int pEInd = (m_pGridInd[0] + 1) % m_px[0] + m_pGridInd[1] * m_px[0];
             int pWInd = (m_pGridInd[0] - 1 + m_px[0]) % m_px[0] + m_pGridInd[1] * m_px[0];
-            //std::cout << "ID=" << m_spatialRank << ":\t(N,S,E,W)=(" << pNInd << "," << pSInd << "," << pEInd << "," << pWInd << ")" << '\n';
             
             // Send out index of first DOF I own to my nearest neighbours
             MPI_Send(&m_localMinRow, 1, MPI_INT, pNInd, 0, m_spatialComm);
             MPI_Send(&m_localMinRow, 1, MPI_INT, pSInd, 0, m_spatialComm);
             MPI_Send(&m_localMinRow, 1, MPI_INT, pEInd, 0, m_spatialComm);
             MPI_Send(&m_localMinRow, 1, MPI_INT, pWInd, 0, m_spatialComm);
-            // Recieve index of first DOF owned by my nearest neighbours
-            MPI_Recv(&m_NLocalMinRow, 1, MPI_INT, pNInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            MPI_Recv(&m_SLocalMinRow, 1, MPI_INT, pSInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            MPI_Recv(&m_ELocalMinRow, 1, MPI_INT, pEInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            MPI_Recv(&m_WLocalMinRow, 1, MPI_INT, pWInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            //std::cout << "ID=" << m_spatialRank << ":\t(N,E,S,W)_{k0}=(" << nLocalMinRow << "," << eLocalMinRow << "," << sLocalMinRow << "," << wLocalMinRow << ")" << '\n';
             
-            // Initialize these vectors to have correct dimensions
-            m_NNxOnProc = {0, 0};
-            m_SNxOnProc = {0, 0};
-            m_ENxOnProc = {0, 0};
-            m_WNxOnProc = {0, 0};
+            // Recieve index of first DOF owned by my nearest neighbours
+            m_neighboursLocalMinRow.reserve(4); // Neighbours are ordered as NORTH, SOUTH, EAST, WEST
+            MPI_Recv(&m_neighboursLocalMinRow[0], 1, MPI_INT, pNInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            MPI_Recv(&m_neighboursLocalMinRow[1], 1, MPI_INT, pSInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            MPI_Recv(&m_neighboursLocalMinRow[2], 1, MPI_INT, pEInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            MPI_Recv(&m_neighboursLocalMinRow[3], 1, MPI_INT, pWInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            
             // Send out dimensions of DOFs I own to nearest neighbours
             MPI_Send(&m_nxOnProc[0], 2, MPI_INT, pNInd, 0, m_spatialComm);
             MPI_Send(&m_nxOnProc[0], 2, MPI_INT, pSInd, 0, m_spatialComm);
             MPI_Send(&m_nxOnProc[0], 2, MPI_INT, pEInd, 0, m_spatialComm);
             MPI_Send(&m_nxOnProc[0], 2, MPI_INT, pWInd, 0, m_spatialComm);
+            
             // Receive dimensions of DOFs that my nearest neighbours own
-            MPI_Recv(&m_NNxOnProc[0], 2, MPI_INT, pNInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            MPI_Recv(&m_SNxOnProc[0], 2, MPI_INT, pSInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            MPI_Recv(&m_ENxOnProc[0], 2, MPI_INT, pEInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            MPI_Recv(&m_WNxOnProc[0], 2, MPI_INT, pWInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-            //std::cout << "\tID=" << m_spatialRank << ":\t" << m_nxOnProc[0] << "," << m_nxOnProc[1] << '\n';
-            //std::cout << "\tID=" << m_spatialRank << ":\t(N,E,S,W)_{k0}=(" << m_nNxOnProc[0] << "," << m_nNxOnProc[1] << "," << m_sNxOnProc[0] << "," << m_sNxOnProc[1] << "," << m_eNxOnProc[0] << "," << m_eNxOnProc[1] << "," << m_wNxOnProc[0] << "," << m_wNxOnProc[1] << ")" << '\n';
-            
-        /* --- Sequential; hard-code in 1 proccess grid even though communicator==NULL --- */    
-        } else {        
-            m_px             = {1, 1};     // Have a 1 x 1 proc grid
-            m_nxOnProc.push_back(m_nx[0]);  // All DOFs fit on single proc
-            m_nxOnProc.push_back(m_nx[1]);  
-            m_nxOnProcInt     = m_nxOnProc;
-            m_pGridInd        = {0, 0};            
-            m_spatialRank     = 0;              
-            m_spatialCommSize = 1; 
-            m_localMinRow     = 0;
-            
-            /* Hard-code values based on having only a single process */
-            m_NLocalMinRow = 0;
-            m_SLocalMinRow = 0;
-            m_ELocalMinRow = 0;
-            m_WLocalMinRow = 0;
-            m_NNxOnProc = m_nxOnProc;
-            m_SNxOnProc = m_nxOnProc;
-            m_ENxOnProc = m_nxOnProc;
-            m_WNxOnProc = m_nxOnProc;
-        }
-        m_onProcSize = m_nxOnProc[0] * m_nxOnProc[1]; // DOFs on proc
+            m_neighboursNxOnProc.reserve(8); // Just stack the nx and ny on top of one another in pairs in same vector
+            MPI_Recv(&m_neighboursNxOnProc[0], 2, MPI_INT, pNInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            MPI_Recv(&m_neighboursNxOnProc[2], 2, MPI_INT, pSInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            MPI_Recv(&m_neighboursNxOnProc[4], 2, MPI_INT, pEInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+            MPI_Recv(&m_neighboursNxOnProc[6], 2, MPI_INT, pWInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
+        } 
     }
-    std::cout << "I made it through constructor..." << '\n';
+    //std::cout << "I made it through constructor..." << '\n';
 }
 
 
@@ -368,19 +334,28 @@ FDadvection::~FDadvection()
 }
 
 
-// Simply call the parallel code with NULL spatial communicator
-// This saves doubling up on code that's almost identical
+// Get local CSR structure of FD spatial discretization matrix, L
 void FDadvection::getSpatialDiscretization(int * &L_rowptr, int * &L_colinds,
                                            double * &L_data, double * &B, double * &X,
                                            int &spatialDOFs, double t, int &bsize)
 {
-    int dummy1;
-    int dummy2;
-    getSpatialDiscretization(NULL, L_rowptr, L_colinds, L_data, B, X, dummy1, dummy2, spatialDOFs, t, bsize);
+    
+    if (m_dim == 1) {
+        // Simply call the same routine as if using spatial parallelism
+        int dummy1, dummy2;
+        get1DSpatialDiscretization(NULL, L_rowptr,
+                                      L_colinds, L_data, B,
+                                      X, dummy1, dummy2,
+                                      spatialDOFs, t, bsize);
+    } else if (m_dim == 2) {
+        get2DSpatialDiscretization(L_rowptr,
+                                      L_colinds, L_data, B,
+                                      X,
+                                      spatialDOFs, t, bsize);
+    }
 }
 
 // Get local CSR structure of FD spatial discretization matrix, L
-// Can be run serially by passing spatialComm == NULL 
 void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&B,
                                               double *&X, int &localMinRow, int &localMaxRow,
@@ -401,7 +376,6 @@ void FDadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_
 
 
 // Get local CSR structure of FD spatial discretization matrix, L
-// Can be run serially by passing spatialComm == NULL 
 void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&B,
                                               double *&X, int &localMinRow, int &localMaxRow,
@@ -425,8 +399,8 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     /* ------ Initialize variables needed to compute CSR structure of L ------ */
     /* ----------------------------------------------------------------------- */
     spatialDOFs  = m_spatialDOFs;                      
-    localMinRow  = m_localMinRow;   // First row on proc
-    localMaxRow  = localMinRow + m_onProcSize - 1; // Last row on proc 
+    localMinRow  = m_localMinRow;                   // First row on proc
+    localMaxRow  = localMinRow + m_onProcSize - 1;  // Last row on proc 
     int L_nnz    = (xStencilNnz + yStencilNnz - 1) * m_onProcSize; // Nnz on proc. Discretization of x- and y-derivatives at point i,j will both use i,j in their stencils (hence the -1)
     L_rowptr     = new int[m_onProcSize + 1];
     L_colinds    = new int[L_nnz];
@@ -482,10 +456,10 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     std::function<int(int, int, int)> MeshIndsOnProcToGlobalInd = [this, localMinRow](int row, int xIndOnProc, int yIndOnProc) { return localMinRow + xIndOnProc + yIndOnProc*m_nxOnProc[0]; };
     
     // Given connection that overflows in some direction onto a neighbouring process, return global index of that connection. OverFlow variables are positive integers.
-    std::function<int(int, int)> MeshIndsOnNorthProcToGlobalInd = [this](int xIndOnProc, int yOverFlow)  { return m_NLocalMinRow + xIndOnProc + (yOverFlow-1)*m_NNxOnProc[0]; };
-    std::function<int(int, int)> MeshIndsOnSouthProcToGlobalInd = [this](int xIndOnProc, int yOverFlow)  { return m_SLocalMinRow + xIndOnProc + (m_SNxOnProc[1]-yOverFlow)*m_SNxOnProc[0]; };
-    std::function<int(int, int)> MeshIndsOnEastProcToGlobalInd  = [this](int xOverFlow,  int yIndOnProc) { return m_ELocalMinRow + xOverFlow-1  + yIndOnProc*m_ENxOnProc[0]; };
-    std::function<int(int, int)> MeshIndsOnWestProcToGlobalInd  = [this](int xOverFlow,  int yIndOnProc) { return m_WLocalMinRow + m_WNxOnProc[0]-1 - (xOverFlow-1) + yIndOnProc*m_WNxOnProc[0]; };
+    std::function<int(int, int)> MeshIndsOnNorthProcToGlobalInd = [this](int xIndOnProc, int yOverFlow)  { return m_neighboursLocalMinRow[0] + xIndOnProc + (yOverFlow-1)*m_neighboursNxOnProc[0]; };
+    std::function<int(int, int)> MeshIndsOnSouthProcToGlobalInd = [this](int xIndOnProc, int yOverFlow)  { return m_neighboursLocalMinRow[1] + xIndOnProc + (m_neighboursNxOnProc[3]-yOverFlow)*m_neighboursNxOnProc[2]; };
+    std::function<int(int, int)> MeshIndsOnEastProcToGlobalInd  = [this](int xOverFlow,  int yIndOnProc) { return m_neighboursLocalMinRow[2] + xOverFlow-1  + yIndOnProc*m_neighboursNxOnProc[4]; };
+    std::function<int(int, int)> MeshIndsOnWestProcToGlobalInd  = [this](int xOverFlow,  int yIndOnProc) { return m_neighboursLocalMinRow[3] + m_neighboursNxOnProc[6]-1 - (xOverFlow-1) + yIndOnProc*m_neighboursNxOnProc[6]; };
     
     
     /* ------------------------------------------------------------------- */
@@ -587,14 +561,173 @@ void FDadvection::get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
 } 
                              
 
+/* Serial implementation of 2D spatial discretization. Is essentially the same as the
+parallel version, but the indexing is made simpler */
+void FDadvection::get2DSpatialDiscretization(int *&L_rowptr,
+                                              int *&L_colinds, double *&L_data, double *&B,
+                                              double *&X,
+                                              int &spatialDOFs, double t, int &bsize)
+{
+    // Unpack variables frequently used
+    // x-related variables
+    int nx          = m_nx[0];
+    double dx       = m_dx[0];
+    int xFD_Order   = m_order[0];
+    int xStencilNnz = xFD_Order + 1; // Width of the FD stencil
+    int xDim        = 0;
+    // y-related variables
+    int ny          = m_nx[1];
+    double dy       = m_dx[1];
+    int yFD_Order   = m_order[1];
+    int yStencilNnz = yFD_Order + 1; // Width of the FD stencil
+    int yDim        = 1;
+
+
+    /* ----------------------------------------------------------------------- */
+    /* ------ Initialize variables needed to compute CSR structure of L ------ */
+    /* ----------------------------------------------------------------------- */
+    spatialDOFs     =  m_spatialDOFs;
+    int localMinRow = 0;
+    int localMaxRow = m_spatialDOFs - 1;
+    int L_nnz       = (xStencilNnz + yStencilNnz - 1) * m_onProcSize; // Nnz on proc. Discretization of x- and y-derivatives at point i,j will both use i,j in their stencils (hence the -1)
+    L_rowptr        = new int[m_onProcSize + 1];
+    L_colinds       = new int[L_nnz];
+    L_data          = new double[L_nnz];
+    int rowcount    = 0;
+    int dataInd     = 0;
+    L_rowptr[0]     = 0;
+    X               = new double[m_onProcSize]; // Initial guesss at solution
+    B               = new double[m_onProcSize]; // Solution-independent source terms
+
+
+    /* ---------------------------------------------------------------- */
+    /* ------ Get components required to approximate derivatives ------ */
+    /* ---------------------------------------------------------------- */
+    // Get stencils for upwind discretizations, wind blowing left to right
+    int * xPlusInds;
+    int * yPlusInds;
+    double * xPlusWeights;
+    double * yPlusWeights;
+    get1DUpwindStencil(xPlusInds, xPlusWeights, xDim);
+    get1DUpwindStencil(yPlusInds, yPlusWeights, yDim);
+
+    // Generate stencils for wind blowing right to left by reversing stencils
+    int * xMinusInds       = new int[xStencilNnz];
+    int * yMinusInds       = new int[yStencilNnz];
+    double * xMinusWeights = new double[xStencilNnz];
+    double * yMinusWeights = new double[yStencilNnz];
+    for (int i = 0; i < xStencilNnz; i++) {
+        xMinusInds[i]    = -xPlusInds[xFD_Order-i];
+        xMinusWeights[i] = -xPlusWeights[xFD_Order-i];
+    } 
+    for (int i = 0; i < yStencilNnz; i++) {
+        yMinusInds[i]    = -yPlusInds[yFD_Order-i];
+        yMinusWeights[i] = -yPlusWeights[yFD_Order-i];
+    } 
+
+    // Placeholder for weights to discretize derivatives at point 
+    double * xLocalWeights = new double[xStencilNnz];
+    double * yLocalWeights = new double[yStencilNnz];
+    int * xLocalInds; // This will just point to an existing array, doesn't need memory allocated!
+    int * yLocalInds; // This will just point to an existing array, doesn't need memory allocated!
+    int xInd;
+    int yInd;
+    double x;
+    double y;
+
+
+    std::function<double(int)> xLocalWaveSpeed;
+    std::function<double(int)> yLocalWaveSpeed;    
+
+    /* ------------------------------------------------------------------- */
+    /* ------ Get CSR structure of L for all rows on this processor ------ */
+    /* ------------------------------------------------------------------- */
+    for (int row = localMinRow; row <= localMaxRow; row++) {
+        xInd = row % nx;                   // x-index of current point
+        yInd = row / nx;                   // y-index of current point
+        x    = MeshIndToPoint(xInd, xDim); // x-value of current point
+        y    = MeshIndToPoint(yInd, yDim); // y-value of current point
+
+        // Get functions that compute x- and y-components of wavespeed given some dx or dy perturbation away from the current point
+        xLocalWaveSpeed = [this, x, dx, y, t, xDim](int xOffset) { return WaveSpeed(x + dx * xOffset, y, t, xDim); };
+        yLocalWaveSpeed = [this, x, y, dy, t, yDim](int yOffset) { return WaveSpeed(x, y + dy * yOffset, t, yDim); };
+
+        // Get stencil for discretizing x-derivative at current point 
+        getLocalUpwindDiscretization(xLocalWeights, xLocalInds,
+                                        xLocalWaveSpeed, 
+                                        xPlusWeights, xPlusInds, 
+                                        xMinusWeights, xMinusInds, 
+                                        xStencilNnz);
+        // Get stencil for discretizing y-derivative at current point 
+        getLocalUpwindDiscretization(yLocalWeights, yLocalInds,
+                                        yLocalWaveSpeed, 
+                                        yPlusWeights, yPlusInds, 
+                                        yMinusWeights, yMinusInds, 
+                                        yStencilNnz);
+
+        // Build so that column indices are in ascending order, this means looping 
+        // over y first until we hit the current point, then looping over x, then continuing to loop over y
+        // Actually, periodicity stuffs this up I think...
+        for (int yNzInd = 0; yNzInd < yStencilNnz; yNzInd++) {
+            
+            // The two stencils will intersect somewhere at this y-point
+            if (yLocalInds[yNzInd] == 0) {
+
+                for (int xNzInd = 0; xNzInd < xStencilNnz; xNzInd++) {
+                    // Account for periodicity here. This always puts resulting x-index in range 0,nx-1
+                    L_colinds[dataInd] = ((xInd + xLocalInds[xNzInd] + nx) % nx) + yInd*nx; 
+                    L_data[dataInd]    = xLocalWeights[xNzInd];
+
+                    // The two stencils intersect at this point x-y-point, i.e. they share a 
+                    // column in L, so add y-derivative information to x-derivative information that exists there
+                    if (xLocalInds[xNzInd] == 0) {
+                        L_data[dataInd] += yLocalWeights[yNzInd]; 
+                    }
+                    dataInd += 1;
+                }
+
+            // There is no possible intersection between between x- and y-stencils
+            } else {
+                // Account for periodicity here. This always puts resulting y-index in range 0,ny-1
+                L_colinds[dataInd] = xInd + ((yInd + yLocalInds[yNzInd] + ny) % ny)*nx;
+                L_data[dataInd]    = yLocalWeights[yNzInd];
+                dataInd += 1;
+            }
+        }    
+        
+        // Set source term and guess at the solution
+        B[rowcount] = PDE_Source(x, y, t);
+        X[rowcount] = 1.0; // TODO : Set this to a random value?    
+
+        L_rowptr[rowcount+1] = dataInd;
+        rowcount += 1;
+    } 
+    
+    // Check that sufficient data was allocated
+    if (dataInd > L_nnz) {
+        std::cout << "WARNING: FD spatial discretization matrix has more nonzeros than allocated.\n";
+    }
+    
+    // Clean up
+    delete[] xPlusInds;
+    delete[] xPlusWeights;
+    delete[] yPlusInds;
+    delete[] yPlusWeights;
+    delete[] xMinusInds;
+    delete[] xMinusWeights;
+    delete[] xLocalWeights;
+    delete[] yLocalWeights;    
+    
+        
+    
+}
+
 // Get local CSR structure of FD spatial discretization matrix, L
-// Can be run serially by passing spatialComm == NULL 
 void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&B,
                                               double *&X, int &localMinRow, int &localMaxRow,
                                               int &spatialDOFs, double t, int &bsize) 
 {
-    
     // Unpack variables frequently used
     int nx          = m_nx[0];
     double dx       = m_dx[0];
@@ -606,10 +739,9 @@ void FDadvection::get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&
     /* ----------------------------------------------------------------------- */
     /* ------ Initialize variables needed to compute CSR structure of L ------ */
     /* ----------------------------------------------------------------------- */
-    localMinRow = m_localMinRow;                    // First row on proc
-    localMaxRow = m_localMinRow + m_onProcSize - 1; // Last row on proc
-    spatialDOFs = m_spatialDOFs;
-    
+    localMinRow  = m_localMinRow;                    // First row on proc
+    localMaxRow  = m_localMinRow + m_onProcSize - 1; // Last row on proc
+    spatialDOFs  = m_spatialDOFs;
     int L_nnz    = xStencilNnz * m_onProcSize;  // Nnz on proc
     L_rowptr     = new int[m_onProcSize + 1];
     L_colinds    = new int[L_nnz];
@@ -813,29 +945,30 @@ void FDadvection::getInitialCondition(double * &B, int &spatialDOFs)
 
 
 // Add initial condition to vector B.
-// TODO : Add code to do 2D
-void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) {
-
-    if (m_dim > 1) {
-        std::cout << "WARNING: ONLY 1D ADD IC IMPLEMENTED" << '\n';
-        MPI_Finalize();
-        return;
-    }
-
-    // Need to work out where my rows are.
-    int localMinRow = m_localMinRow; 
-    int localMaxRow = m_localMinRow + m_onProcSize - 1; 
-    
-    int rowcount = 0;
-    for (int row = localMinRow; row <= localMaxRow; row++) {
-        B[rowcount] += InitCond(MeshIndToPoint(row, 0));
-        rowcount += 1;
+void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) 
+{
+    int localMinRow = m_localMinRow;                    // First row on processor
+    int localMaxRow = m_localMinRow + m_onProcSize - 1; // Last row on processor
+    int rowInd      = 0;
+    if (m_dim == 1) {
+        for (int row = localMinRow; row <= localMaxRow; row++) {
+            B[rowInd] += InitCond(MeshIndToPoint(row, 0));
+            rowInd += 1;
+        }
+    } else if (m_dim == 2) {
+        int xIndGlobal;
+        int yIndGlobal;
+        for (int row = localMinRow; row <= localMaxRow; row++) {
+            xIndGlobal = m_pGridInd[0] * m_nxOnProcInt[0] + rowInd % m_nxOnProc[0]; // Global x-index
+            yIndGlobal = m_pGridInd[1] * m_nxOnProcInt[1] + rowInd / m_nxOnProc[0]; // Global y-index
+            B[rowInd] += InitCond(MeshIndToPoint(xIndGlobal, 0), MeshIndToPoint(yIndGlobal, 1));
+            rowInd += 1;
+        }
     }
 }
 
 
 // Add initial condition to vector B.
-// TODO: Incorporate this into the code above by passing NULL communicator??
 void FDadvection::addInitialCondition(double *B)
 {
     if (m_dim == 1) {
@@ -846,7 +979,7 @@ void FDadvection::addInitialCondition(double *B)
         int rowInd = 0;
         for (int yInd = 0; yInd < m_nx[1]; yInd++) {
             for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-                B[rowInd] += InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 0));
+                B[rowInd] += InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
                 rowInd += 1;
             }
         }

@@ -41,7 +41,7 @@ if len(argv) > 1:
 else:
     suff = 0
 filename = "../ST_class/data/U_FD" + str(suff) + ".txt"
-print(filename)
+print("Reading data from: " + filename)
 
 # Read data in and store in dictionary
 params = {}
@@ -66,6 +66,7 @@ if params["space_dim"] == 1:
     NX = params["nx"] 
 elif params["space_dim"] == 2:
     NX = params["nx"] ** 2
+    #NX = params["nx"] * (params["nx"] + 7)
 
 
 #############################
@@ -100,7 +101,7 @@ if (params["pit"] == 1):
     ### --- SPATIAL PARALLELISM: Work out which processors uT lives on extract it from them ---  ###
     # Note that ordering is preserved...
     else:
-        params["spatial_Np_x"]    = int(params["spatial_Np_x"])
+        params["spatial_Np_x"] = int(params["spatial_Np_x"])
         
         # Index of proc holding first component of uT
         PuT0 = (params["nt"]-1) * params["s"] * params["spatial_Np_x"]     
@@ -111,7 +112,6 @@ if (params["pit"] == 1):
             PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
         
         uT = np.zeros(NX)
-        
         ind = 0
         for count, Ufilename in enumerate(PuT):
             #print(count, NX)
@@ -123,8 +123,8 @@ if (params["pit"] == 1):
             # Get data from lines > 0
             temp = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
             DOFsOnProc = temp.shape[0]
-            uT[ind:(count+1)*DOFsOnProc] = temp
-            ind = (count+1)*DOFsOnProc
+            uT[ind:ind+DOFsOnProc] = temp
+            ind += DOFsOnProc
 
 
 ###############################
@@ -140,7 +140,6 @@ else:
     
     ind = 0
     for count, Ufilename in enumerate(PuT):
-        #print(count, NX)
         # Read all data from the proc
         with open(Ufilename) as f:
             dims = f.readline()
@@ -151,7 +150,6 @@ else:
         DOFsOnProc = temp.shape[0]
         uT[ind:ind+DOFsOnProc] = temp
         ind += DOFsOnProc
-        print(count)
             
     
     
@@ -201,7 +199,7 @@ if params["space_dim"] == 1:
 ### ----------------------------------- ###
 if params["space_dim"] == 2:
     nx = params["nx"]
-    ny = nx
+    ny = params["nx"]
     x = np.linspace(-1, 1, nx+1)
     y = np.linspace(-1, 1, ny+1)
     x = x[:-1] # nx points in [-1, 1)
@@ -216,7 +214,7 @@ if params["space_dim"] == 2:
         params["spatial_Np_x"] = int(params["spatial_Np_x"])
         perm = np.zeros(nx*ny, dtype = "int32")
         # Extract dimensions of processor grid if they were given
-        if (params["npx0"]):
+        if ("npx0" in params):
             npInX = int(params["npx0"])
             npInY = int(params["npx1"])
         # Otherwise assume square processor grid
@@ -245,7 +243,6 @@ if params["space_dim"] == 2:
                     for xIndOnProc in range(0, nxOnProc):
                         xIndGlobal = px * nxOnProcInt + xIndOnProc # Global x-index for row we're in currently
                         globalInd  = py * (nyOnProcInt * nx) + yIndOnProc * nx + xIndGlobal # Global index of current DOF in ordering we want
-                        
                         perm[globalInd] = count
                         count += 1
         uT = uT[perm] # Permute solution array into correct ordering
@@ -275,7 +272,7 @@ if params["space_dim"] == 2:
         elif  params["problemID"] == 2 or params["problemID"] == 3:
             return np.cos(np.pi*(x-t)) * np.cos(np.pi*(y-t)) * np.exp( np.cos(4*np.pi*t) - 1 )
 
-    uT_exact = np.zeros((nx, ny))
+    uT_exact = np.zeros((ny, nx))
     for j in range(0,ny):
         for i in range(0,nx):
             #uT_exact[i,j] = uexact(x[i],y[j],T)
