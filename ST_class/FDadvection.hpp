@@ -23,6 +23,9 @@ where the wave speeds and sources can be found in the main file...
     
 NOTES:
     -Only periodic boundary conditions are implemented. This means the wavespeed has to be periodic in space!
+    
+    -In 2D: If a non-square number of processors is to be used the user 
+        must(!) specify the number of processors in each of the x- and y-directions
 */
 
 class FDadvection : public SpaceTimeMatrix
@@ -40,10 +43,24 @@ private:
     std::vector<int>    m_nx;           /* Number of DOFs in each direction */
     std::vector<double> m_dx;           /* Mesh spacing in each direction */
     std::vector<double> m_boundary0;    /* Lower boundary of domain in each direction */
-    std::vector<int>    m_npx;          /* Number of procs in each direction */
+    std::vector<int>    m_px;           /* Number of procs in each direction */
     std::vector<int>    m_pGridInd;     /* Grid indices of proc */
     std::vector<int>    m_nxOnProc;     /* Number of DOFs in each direction on proc */
     std::vector<int>    m_nxOnProcInt;  /* Number of DOFs in each direction on procs in interior of proc domain */
+    std::vector<int>    m_nxOnProcBnd;  /* Number of DOFs in each direction on procs on boundary of proc domain */
+
+
+
+
+    int m_NLocalMinRow;
+    int m_SLocalMinRow;
+    int m_ELocalMinRow;
+    int m_WLocalMinRow;
+    std::vector<int> m_NNxOnProc;
+    std::vector<int> m_SNxOnProc;
+    std::vector<int> m_ENxOnProc;
+    std::vector<int> m_WNxOnProc;
+
 
     void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                   int *&L_colinds, double *&L_data, double *&B,
@@ -98,7 +115,8 @@ public:
 	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 				double dt, bool pit);
 	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit, int dim, int refLevels, int order, int problemID);
+				double dt, bool pit, int dim, int refLevels, int order, 
+                int problemID, std::vector<int> px = {});
     ~FDadvection();
 
 };

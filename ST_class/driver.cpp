@@ -40,8 +40,12 @@ int main(int argc, char *argv[])
     int max_iter     = 250;
     double dt        = -1;
     int lump_mass    = true;
-    int FD_ProblemID = 1;
     int AMGiters = 1;
+
+    // Finite-difference specific parameters
+    int FD_ProblemID = 1;
+    int px = -1;
+    int py = -1;
 
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
@@ -64,8 +68,6 @@ int main(int argc, char *argv[])
                   "Number levels mesh refinement.");
     args.AddOption(&lump_mass, "-lump", "--lump-mass",
                   "Lump mass matrix to be diagonal.");
-    args.AddOption(&FD_ProblemID, "-FD_ID", "--FD-prob-ID",
-                  "Finite difference problem ID.");
     args.AddOption(&print_level, "-p", "--print-level",
                   "Hypre print level.");
     args.AddOption(&solve_tol, "-tol", "--solve-tol",
@@ -74,6 +76,13 @@ int main(int argc, char *argv[])
                   "Maximum number of linear solver iterations.");
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
+    
+    args.AddOption(&FD_ProblemID, "-FD_ID", "--FD-prob-ID",
+                  "Finite difference problem ID.");  
+    args.AddOption(&px, "-px", "--procx",
+                  "Number of procs in x-direction.");
+    args.AddOption(&py, "-py", "--procy",
+                  "Number of procs in y-direction.");
     //args.AddOption(&numTimeSteps, "-nt", "--num-time-steps", // TOOD: I think this should be removed...
     //              "Number of time steps.");
     args.AddOption(&nt, "-nt", "--num-time-steps", "Number of time steps.");
@@ -214,11 +223,22 @@ int main(int argc, char *argv[])
         // dt = T / (nt - 1);
         
         
+        /* --- Get SPACETIMEMATRIX object --- */
+        std::vector<int> n_px = {};
+        if (px != -1) {
+            if (dim >= 1) {
+                n_px.push_back(px);
+            }
+            if (dim >= 2) {
+                n_px.push_back(py);
+            }
+        }
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
-                                dt, pit, dim, refLevels, order, FD_ProblemID);
+                                dt, pit, dim, refLevels, order, 
+                                FD_ProblemID, n_px);
         
         if (!pit) {
-            //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
+            STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
             STmatrix.SetAIR();
             // TODO : Not really sure what the best way is to give linear solver info...
             if (use_gmres) {
@@ -226,7 +246,6 @@ int main(int argc, char *argv[])
             } else {
                 STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres);
             }
-            
 
         } else {
             STmatrix.BuildMatrix();
@@ -258,6 +277,10 @@ int main(int argc, char *argv[])
                 space_info["nx"]              = std::to_string(nx);
                 space_info["space_dim"]       = std::to_string(dim);
                 space_info["problemID"]       = std::to_string(FD_ProblemID);
+                for(int d = 0; d < n_px.size(); d++) {
+                    space_info[std::string("npx") + std::to_string(d)] = std::to_string(n_px[d]);
+                }
+                
                 STmatrix.SaveSolInfo(file_name, space_info);    
             }
         }

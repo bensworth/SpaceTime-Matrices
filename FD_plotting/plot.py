@@ -137,7 +137,6 @@ else:
         PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
     
     uT = np.zeros(NX)
-    DOFsPerProc = int(NX/params["P"])
     
     ind = 0
     for count, Ufilename in enumerate(PuT):
@@ -150,8 +149,9 @@ else:
         # Get data from lines > 0
         temp = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
         DOFsOnProc = temp.shape[0]
-        uT[ind:(count+1)*DOFsOnProc] = temp
-        ind = (count+1)*DOFsOnProc
+        uT[ind:ind+DOFsOnProc] = temp
+        ind += DOFsOnProc
+        print(count)
             
     
     
@@ -215,19 +215,37 @@ if params["space_dim"] == 2:
     if (params["spatialParallel"]):
         params["spatial_Np_x"] = int(params["spatial_Np_x"])
         perm = np.zeros(nx*ny, dtype = "int32")
-        npInX = int(np.sqrt(params["spatial_Np_x"])) # Assume square processor grid
-        npInY = npInX # Dito, same number as in x-direction
-        nxOnProc = int(nx / npInX) 
-        nyOnProc = int(ny / npInY)
-        onProc = nxOnProc * nyOnProc
+        # Extract dimensions of processor grid if they were given
+        if (params["npx0"]):
+            npInX = int(params["npx0"])
+            npInY = int(params["npx1"])
+        # Otherwise assume square processor grid
+        else:
+            npInX = int(np.sqrt(params["spatial_Np_x"])) 
+            npInY = npInX 
         count = 0
+        
+        nxOnProcInt = int(nx / npInX)
+        nyOnProcInt = int(ny / npInY)
+        nxOnProcBnd = nx - (npInX-1)*int(nx / npInX) 
+        nyOnProcBnd = ny - (npInY-1)*int(ny / npInY) 
+        
         # Loop over DOFs in ascending order (i.e., ascending in their current order)
         for py in range(0, npInY):
+            if (py < npInY-1):
+                nyOnProc = nyOnProcInt
+            else:
+                nyOnProc = nyOnProcBnd
             for px in range(0, npInX):
+                if (px < npInX - 1):
+                    nxOnProc = nxOnProcInt 
+                else:
+                    nxOnProc = nxOnProcBnd
                 for yIndOnProc in range(0, nyOnProc):
                     for xIndOnProc in range(0, nxOnProc):
-                        xIndGlobal      = px * nxOnProc + xIndOnProc # Global x-index for row we're in currently
-                        globalInd       = py * (nyOnProc * nx) + yIndOnProc * nx + xIndGlobal # Global index of current DOF in ordering we want
+                        xIndGlobal = px * nxOnProcInt + xIndOnProc # Global x-index for row we're in currently
+                        globalInd  = py * (nyOnProcInt * nx) + yIndOnProc * nx + xIndGlobal # Global index of current DOF in ordering we want
+                        
                         perm[globalInd] = count
                         count += 1
         uT = uT[perm] # Permute solution array into correct ordering

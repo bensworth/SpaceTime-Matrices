@@ -346,11 +346,13 @@ void SpaceTimeMatrix::ERKSolve()
         }
     
         // Sum solution
+        //std::cout << "G:\tto get Sum soln." << '\n';
         for (int i = 0; i < m_s_butcher; i++)  {
             double temp = m_dt * m_b_butcher[i];
             if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
         }
         t += m_dt; // Increment time
+        //std::cout << "G:\tSum soln." << '\n';
     }
     
     // Clean up left over variables
