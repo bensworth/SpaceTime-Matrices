@@ -58,7 +58,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             }
             else {
                 m_spatialCommSize = m_numProc / (m_nt * m_s_butcher);
-                m_Np_x = m_numProc / (m_nt * m_s_butcher); // TODO : remove. 
+                m_Np_x = m_spatialCommSize; // TODO : remove. 
             }
              
             // Set up communication group for spatial discretizations.
@@ -570,8 +570,8 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
     solinfo << "dt " << m_dt << "\n";
     solinfo << "s " << m_s_butcher << "\n";
     solinfo << "timeDisc " << m_timeDisc << "\n";
-    solinfo << "spatialParallel " << m_useSpatialParallel << "\n";
-    if (m_useSpatialParallel) solinfo << "spatial_Np_x " << m_Np_x << "\n";
+    solinfo << "spatialParallel " << int(m_useSpatialParallel) << "\n";
+    if (m_useSpatialParallel) solinfo << "np_xTotal " << m_spatialCommSize << "\n";
     
     std::map<std::string, std::string>::iterator it;
     for (it=additionalInfo.begin(); it!=additionalInfo.end(); it++) {

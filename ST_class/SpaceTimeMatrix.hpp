@@ -39,40 +39,31 @@ struct AMG_parameters {
 class SpaceTimeMatrix
 {
 private:
-    bool    m_pit;              /* Parallel or sequential in time */
+    bool    m_pit;                  /* Parallel (true) or sequential (false) in time */
+    double  m_dt;                   /* Time step (constant) */
+    int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
+
+    int     m_DOFInd;               /* Index of DOF that spatial comm group belongs to */
+    int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
     
+    int     m_globRank;             /* Rank in global communicator */
+    int     m_numProc;              /* Total number of procs; TODO : Change to "m_globCommSize" */
+    
+    bool    m_useSpatialParallel;   /*  */
+    bool    m_rebuildSolver;
+    
+    int     m_timeDisc;             /* ID of Runge-Kutta scheme */
     bool    m_ERK;
     bool    m_DIRK;
     bool    m_SDIRK;
     
-    int     m_globRank;
-    int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
-    int     m_DOFInd; /* Index of DOF that spatial comm group belongs to */
-    //int     m_spatialRank; // TODO : remove, now a protected variable
-    int     m_timeDisc;
-    int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
-    int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
-    int     m_numProc;
-    int     m_ntPerProc; // TODO: this variable doesn't really make sense...
-    int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
-    int     m_Np_x;                 /* Number of processors that spatial discretization is put on */
-    int     m_bsize;
-    int     m_spCommSize; // TODO : remove... now protected
-    bool    m_useSpatialParallel;
-    
-    bool    m_isTimeDependent; //  TODO : Will need to be removed ...
-    
-    bool    m_rebuildSolver;
-    double  m_t0; // TOOD :  do we use this?? delete??
-    double  m_t1; // TOOD :  do we use this?? delete??
-    double  m_dt;
+    /* Runge-Kutta Butcher tableaux variables */
     int     m_s_butcher;            /* Number of stages in RK scheme */
     double  m_A_butcher[10][10];    /* Coefficients in RK Butcher tableaux */
     double  m_b_butcher[10];        /* Coefficients in RK Butcher tableaux */
     double  m_c_butcher[10];        /* Coefficients in RK Butcher tableaux */
 
     MPI_Comm            m_globComm;
-    //MPI_Comm            m_spatialComm;
     HYPRE_Solver        m_solver;
     HYPRE_Solver        m_gmres;
     HYPRE_ParCSRMatrix  m_A;
@@ -82,6 +73,19 @@ private:
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_solverOptions;
+
+    
+    int     m_bsize;                /* DG specific variable... */
+
+    // TODO : variables to remove    
+    int     m_Np_x;     /* TODO : Remove. Replace with protected variable "m_spatialCommSize" */
+    int     m_ntPerProc; // TODO: this variable doesn't really make sense...
+    int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
+    bool    m_isTimeDependent; //  TODO : Will need to be removed ...
+    int     m_spCommSize; // TODO : remove... now protected
+    double  m_t0; // TOOD :  do we use this?? delete??
+    double  m_t1; // TOOD :  do we use this?? delete??
+    int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
 
     void GetButcherTableaux();
     void GetMatrix_ntLE1();

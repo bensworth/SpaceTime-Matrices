@@ -201,7 +201,6 @@ int main(int argc, char *argv[])
         }
             
         
-        
         // Time step so that we run at CFL_fraction of the CFL limit 
         if (dim == 1) {
             double dx = 2.0 / pow(2.0, refLevels + 2); // Assume nx = 2^(refLevels + 2), and x \in [-1,1] 
@@ -238,7 +237,7 @@ int main(int argc, char *argv[])
                                 FD_ProblemID, n_px);
         
         if (!pit) {
-            STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
+            //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
             STmatrix.SetAIR();
             // TODO : Not really sure what the best way is to give linear solver info...
             if (use_gmres) {
@@ -246,10 +245,10 @@ int main(int argc, char *argv[])
             } else {
                 STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres);
             }
-
+        
         } else {
             STmatrix.BuildMatrix();
-            
+        
             if (save_mat) {
                 STmatrix.SaveMatrix("data/A_FD.mm");
             }
@@ -266,9 +265,7 @@ int main(int argc, char *argv[])
         
         if (save_sol) {
             std::string file_name = "data/U_FD" + std::to_string(pit) + ".txt";
-
             STmatrix.SaveX(file_name);
-
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
                 int nx = pow(2, refLevels+2);
@@ -278,9 +275,8 @@ int main(int argc, char *argv[])
                 space_info["space_dim"]       = std::to_string(dim);
                 space_info["problemID"]       = std::to_string(FD_ProblemID);
                 for(int d = 0; d < n_px.size(); d++) {
-                    space_info[std::string("npx") + std::to_string(d)] = std::to_string(n_px[d]);
+                    space_info[std::string("np_x") + std::to_string(d)] = std::to_string(n_px[d]);
                 }
-                
                 STmatrix.SaveSolInfo(file_name, space_info);    
             }
         }

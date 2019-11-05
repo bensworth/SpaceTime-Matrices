@@ -101,14 +101,14 @@ if (params["pit"] == 1):
     ### --- SPATIAL PARALLELISM: Work out which processors uT lives on extract it from them ---  ###
     # Note that ordering is preserved...
     else:
-        params["spatial_Np_x"] = int(params["spatial_Np_x"])
+        params["np_xTotal"] = int(params["np_xTotal"])
         
         # Index of proc holding first component of uT
-        PuT0 = (params["nt"]-1) * params["s"] * params["spatial_Np_x"]     
+        PuT0 = (params["nt"]-1) * params["s"] * params["np_xTotal"]     
         
         # Get names of all procs holding uT data
         PuT = []
-        for P in range(PuT0, PuT0 + params["spatial_Np_x"]):
+        for P in range(PuT0, PuT0 + params["np_xTotal"]):
             PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
         
         uT = np.zeros(NX)
@@ -211,15 +211,15 @@ if params["space_dim"] == 2:
     # are blocked by proc, with procs in row-wise lexicographic order and DOFs on proc ordered
     # in row-wise lexicographic order
     if (params["spatialParallel"]):
-        params["spatial_Np_x"] = int(params["spatial_Np_x"])
+        params["np_xTotal"] = int(params["np_xTotal"])
         perm = np.zeros(nx*ny, dtype = "int32")
         # Extract dimensions of processor grid if they were given
         if ("npx0" in params):
-            npInX = int(params["npx0"])
-            npInY = int(params["npx1"])
+            npInX = int(params["np_x0"])
+            npInY = int(params["np_x1"])
         # Otherwise assume square processor grid
         else:
-            npInX = int(np.sqrt(params["spatial_Np_x"])) 
+            npInX = int(np.sqrt(params["np_xTotal"])) 
             npInY = npInX 
         count = 0
         
@@ -303,7 +303,7 @@ if params["space_dim"] == 2:
     plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
     
-    plt.title("$u(x,y,{})$".format(T), fontsize = fs)
+    plt.title("$u(x,y,{:.2f})$".format(T), fontsize = fs)
     plt.xlabel("$x$", fontsize = fs)
     plt.ylabel("$y$", fontsize = fs)
     
