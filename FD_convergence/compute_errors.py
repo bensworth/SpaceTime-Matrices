@@ -1,3 +1,11 @@
+# ---------------------------------- #
+# -------------- README ------------ #
+# ---------------------------------- #
+# This is more or less the same script as used to plot the solutions 
+# of FD discretizations, except here we don't plot them, we just 
+# compute their errors against the exact solution and save them to disc
+
+
 import numpy as np
 
 import matplotlib.pylab as plt
@@ -10,38 +18,14 @@ from sys import argv
 import pdb
 from numpy.linalg import norm
 from scipy.sparse import load_npz
-
-# Plot solution to 1D  test  problems  for advection
-
-# Sit there here to enable latex-style font in plots...
-# plt.rcParams['font.family'] = 'serif'
-# plt.rcParams['text.usetex'] = True
-
-# Run me like << python plot.py <<path to file with solution information>>
-# File should contain a list of (at least) the following parameters:
-# pit
-# P
-# nt
-# dt
-# s
-# problemID
-# space_dim
-# spaceParallel
-# nx
-
-# if len(argv) > 1:
-#     filename = argv[1]
-# else:
-#     raise ValueError("A filename must be passed through command line!")
+import os.path
 
 
-# Pass a 1 for PIT, or a 0 for sequential...
 if len(argv) > 1:
-    suff = argv[1]
+    filename = argv[1]
+    print("Reading data from: " + filename)
 else:
-    suff = 0
-filename = "../ST_class/data/U_FD" + str(suff) + ".txt"
-print("Reading data from: " + filename)
+    raise ValueError("You need to pass me the name of a file to read data from...")
 
 # Read data in and store in dictionary
 params = {}
@@ -63,10 +47,46 @@ params["spatialParallel"] = int(params["spatialParallel"])
 
 # Total number of DOFS in space
 if params["space_dim"] == 1:
-    NX = params["nx"] 
+    NX = params["nx"]
+    params["dx"] = 2/params["nx"] 
 elif params["space_dim"] == 2:
     NX = params["nx"] ** 2
+    params["dx"] = 2/params["nx"] 
+    params["dy"] = 2/params["nx"] 
     #NX = params["nx"] * (params["nx"] + 7)
+
+# Create filename for outout of data
+filenameOut = "RK" + params["timeDisc"] + "_U" + params["space_order"] + "_id" + str(params["problemID"]) + "_d" + str(params["space_dim"]) + "_pit" + str(params["pit"]) +  ".npy"
+print("Saving data into" + filenameOut)
+
+# If output filename exists, open it, otherwise create it
+if os.path.isfile(filenameOut):
+    globalList = list(np.load(filenameOut))
+else:
+    globalList = list([])
+
+# Pass me error vector/matrix and I'll compute its norm and then save it to disc...
+def save_error(e):
+    e = e.flatten()
+    if params["space_dim"] == 1:
+        e1   = np.linalg.norm(e, 1) * (2/nx)
+        e2   = np.linalg.norm(e, 2) * np.sqrt(2/nx)
+    elif params["space_dim"] == 2: # Assume dy == dx
+        e1   = np.linalg.norm(e, 1) * (2/nx) * (2/nx)
+        e2   = np.linalg.norm(e, 2) * np.sqrt(2/nx) * np.sqrt(2/nx)
+    einf = np.linalg.norm(e, np.inf)
+    
+    # Add errors to params dict
+    params["e1"] = e1
+    params["e2"] = e2
+    params["einf"] = einf
+    print("nx={}, nt={}:\t e1={:.2e}, e2={:.2e}, einf={:.2e}\n".format(params["nx"], params["nt"], e1, e2, einf))
+    # Append params to existing list
+    globalList.append(params)
+    # Save list
+    np.save(filenameOut, globalList)
+
+
 
 
 #############################
@@ -182,16 +202,20 @@ if params["space_dim"] == 1:
 
     # Compare uT against the exact solution
     #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    print("(nt,nx) = ({},{}), |uNum - uExact| = {:.4e}".format(params["nt"], nx, np.sqrt(2/nx) * np.linalg.norm(uT_exact - uT, 2)))
-
-    plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
-    plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
+    #print("(nt,nx) = ({},{}), |uNum - uExact| = {:.4e}".format(params["nt"], nx, np.sqrt(2/nx) * np.linalg.norm(uT_exact - uT, 2)))
     
-    fs = 18
-    plt.legend(fontsize = fs)
-    plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
-    plt.show()
+    # Compute errors and save them
+    e = uT_exact-uT
+    save_error(e)
+
+    # plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
+    # plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
+    # 
+    # fs = 18
+    # plt.legend(fontsize = fs)
+    # plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
+    # plt.xlabel("$x$", fontsize = fs)
+    # plt.show()
     
     
 ### ----------------------------------- ###
@@ -280,40 +304,44 @@ if params["space_dim"] == 2:
 
     # Compare uT against the exact solution
     #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.max(np.abs(uT_exact - uT))))
+    #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.max(np.abs(uT_exact - uT))))
+    
+    # Compute errors and save them
+    e = uT_exact-uT
+    save_error(e)
 
-    fs = 18
-    cmap = plt.cm.get_cmap("coolwarm")
-    # ax = fig.gca(projection='3d') 
-    # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
-    
-    ### --- Numerical solution --- ###
-    fig = plt.figure(1)
-    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 20)
-    plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
-    plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
-    
-    plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
-    plt.ylabel("$y$", fontsize = fs)
-    
-    ### --- Analytical solution --- ###
-    fig = plt.figure(2)
-    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 20)
-    plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
-    plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
-    
-    plt.title("$u(x,y,{:.2f})$".format(T), fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
-    plt.ylabel("$y$", fontsize = fs)
-    
-    # fig = plt.figure(2)
-    # ax = fig.gca(projection='3d') 
-    # surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
-    # plt.title("uTexact", fontsize = fs)
+    # fs = 18
+    # cmap = plt.cm.get_cmap("coolwarm")
+    # # ax = fig.gca(projection='3d') 
+    # # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
+    # 
+    # ### --- Numerical solution --- ###
+    # fig = plt.figure(1)
+    # levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 20)
+    # plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
+    # plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
+    # 
+    # plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
     # plt.xlabel("$x$", fontsize = fs)
     # plt.ylabel("$y$", fontsize = fs)
-    plt.show()    
+    # 
+    # ### --- Analytical solution --- ###
+    # fig = plt.figure(2)
+    # levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 20)
+    # plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
+    # plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
+    # 
+    # plt.title("$u(x,y,{:.2f})$".format(T), fontsize = fs)
+    # plt.xlabel("$x$", fontsize = fs)
+    # plt.ylabel("$y$", fontsize = fs)
+    # 
+    # # fig = plt.figure(2)
+    # # ax = fig.gca(projection='3d') 
+    # # surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
+    # # plt.title("uTexact", fontsize = fs)
+    # # plt.xlabel("$x$", fontsize = fs)
+    # # plt.ylabel("$y$", fontsize = fs)
+    # plt.show()    
     
     # plt.title("UW2-2D: u(x,y, t = {:.2f})".format(t[-1]), fontsize = 15)
     # plt.xlabel("x", fontsize = 15)

@@ -587,6 +587,12 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
 // 3rd digit == order of method
 void SpaceTimeMatrix::GetButcherTableaux() {
 
+    m_s_butcher = m_timeDisc / 10 % 10; //  Extract number of stages; assumes number has 3 digits    
+    // Resize Butcher arrays
+    m_A_butcher.resize(m_s_butcher, std::vector<double>(m_s_butcher, 0.0));
+    m_b_butcher.resize(m_s_butcher);
+    m_c_butcher.resize(m_s_butcher);
+
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
     if (m_timeDisc == 111) {
@@ -630,7 +636,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         m_c_butcher[2]    = 1.0/2.0;
 
     // Classical 4th-order ERK
-} else if (m_timeDisc == 144){
+    } else if (m_timeDisc == 144){
         m_ERK             = true;
         m_s_butcher       = 4;
         m_A_butcher[0][0] = 0.0; // 1st col
@@ -711,7 +717,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         m_c_butcher[2]    =  1.0;
         
     // 4th-order (5-stage) L-stable SDIRK (see Wanner's & Hairer's, Solving ODEs II, 1996, eq. 6.16)
-    } else if (m_timeDisc == 244) {
+    } else if (m_timeDisc == 254) {
         m_DIRK            =  true;
         m_SDIRK           =  true;
         m_s_butcher       =  5;

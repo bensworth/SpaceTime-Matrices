@@ -49,7 +49,7 @@ private:
     int     m_globRank;             /* Rank in global communicator */
     int     m_numProc;              /* Total number of procs; TODO : Change to "m_globCommSize" */
     
-    bool    m_useSpatialParallel;   /*  */
+    
     bool    m_rebuildSolver;
     
     int     m_timeDisc;             /* ID of Runge-Kutta scheme */
@@ -58,10 +58,11 @@ private:
     bool    m_SDIRK;
     
     /* Runge-Kutta Butcher tableaux variables */
-    int     m_s_butcher;            /* Number of stages in RK scheme */
-    double  m_A_butcher[10][10];    /* Coefficients in RK Butcher tableaux */
-    double  m_b_butcher[10];        /* Coefficients in RK Butcher tableaux */
-    double  m_c_butcher[10];        /* Coefficients in RK Butcher tableaux */
+    int                              m_s_butcher; /* Number of stages in RK scheme */
+    std::vector<std::vector<double>> m_A_butcher; /* Coefficients in RK Butcher tableaux */
+    std::vector<double>              m_b_butcher; /* Coefficients in RK Butcher tableaux */
+    std::vector<double>              m_c_butcher; /* Coefficients in RK Butcher tableaux */
+
 
     MPI_Comm            m_globComm;
     HYPRE_Solver        m_solver;
@@ -166,7 +167,9 @@ private:
     
     
 
-protected:
+protected:    
+    bool     m_useSpatialParallel;   /*  */
+    
     MPI_Comm m_spatialComm;     /* Spatial communicator; the spatial discretization code has access to this */
     int      m_spatialCommSize; /* Num processes in spatial communicator */
     int      m_spatialRank;     /* Process rank in spatial communicator */
@@ -175,9 +178,9 @@ protected:
     bool     m_L_isTimedependent; /* Is spatial discretization time dependent? */
     bool     m_g_isTimedependent; /* Is PDE source term time dependent? */
 
-    int*     m_M_rowptr;
-    int*     m_M_colinds;
-    double*  m_M_data;
+    int *    m_M_rowptr;
+    int *    m_M_colinds;
+    double * m_M_data;
     double   m_hmin;
     double   m_hmax;
 

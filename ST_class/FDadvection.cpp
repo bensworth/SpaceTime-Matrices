@@ -126,13 +126,12 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID},
     m_px{px}
 {    
-    
     /* ----------------------------------------------------------------------------------------------------- */
     /* --- Check specified proc distribution is consistent with the number of procs passed by base class --- */
     /* ----------------------------------------------------------------------------------------------------- */
-    if (!m_px.empty()) {
+    if (!m_px.empty()) {        
         // Doesn't make sense to prescribe proc grid if not using spatial parallelism
-        if (!m_spatialComm) {
+        if (!m_useSpatialParallel) {
             if (m_spatialRank == 0) std::cout << "WARNING: Trying to prescribe spatial processor grid layout while not using spatial parallelism!" << '\n';
         // Ensure the product of number of procs in each direction matches the number of procs assigned in space in the base class
         } else {
@@ -214,7 +213,7 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
     /* -------------------------------------------------------- */
     /* Ensure spatial parallelism setup is permissible and 
     decide which variables current process and its neighbours own, etc */
-    if (m_spatialComm) {
+    if (m_useSpatialParallel) {
         /* --- One spatial dimension --- */
         if (m_dim == 1) 
         {
@@ -241,7 +240,7 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
             if (m_px.empty()) {
                 int temp = sqrt(m_spatialCommSize);
                 if (temp * temp != m_spatialCommSize) {
-                    std::cout << "WARNING: Spatial processor grid dimensions must be specified if non-square grid is to be used (using P=" << m_spatialCommSize << "procs in space)" << '\n';
+                    std::cout << "WARNING: Spatial processor grid dimensions must be specified if non-square grid is to be used (using P=" << m_spatialCommSize << " procs in space)" << '\n';
                     MPI_Finalize();
                     return;
                 /* Setup default square process grid */

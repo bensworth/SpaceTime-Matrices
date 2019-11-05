@@ -43,6 +43,7 @@ int main(int argc, char *argv[])
     int AMGiters = 1;
 
     // Finite-difference specific parameters
+    const char * out_suf = "";
     int FD_ProblemID = 1;
     int px = -1;
     int py = -1;
@@ -77,14 +78,18 @@ int main(int argc, char *argv[])
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
     
-    args.AddOption(&FD_ProblemID, "-FD_ID", "--FD-prob-ID",
+    args.AddOption(&out_suf, "-outsuf", "--outfile-suffix",
+                  "Output file suffix.");  
+    args.AddOption(&FD_ProblemID, "-FD", "--FD-prob-ID",
                   "Finite difference problem ID.");  
     args.AddOption(&px, "-px", "--procx",
                   "Number of procs in x-direction.");
     args.AddOption(&py, "-py", "--procy",
                   "Number of procs in y-direction.");
+                  
     //args.AddOption(&numTimeSteps, "-nt", "--num-time-steps", // TOOD: I think this should be removed...
     //              "Number of time steps.");
+    
     args.AddOption(&nt, "-nt", "--num-time-steps", "Number of time steps.");
     args.AddOption(&use_gmres, "-gmres", "--use-gmres",
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
@@ -211,15 +216,14 @@ int main(int argc, char *argv[])
             dt = CFLlim/(1/dx + 1/dy);
         }
         
-        
         dt *= CFL_fraction;
         
-        // // Manually set time to integrate to
-        // double T = 2.0;
-        // 
-        // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        // nt = floor(T / dt);
-        // dt = T / (nt - 1);
+        // Manually set time to integrate to
+        double T = 2.0;
+        
+        // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
+        nt = floor(T / dt);
+        dt = T / (nt - 1);
         
         
         /* --- Get SPACETIMEMATRIX object --- */
@@ -264,7 +268,7 @@ int main(int argc, char *argv[])
         }
         
         if (save_sol) {
-            std::string file_name = "data/U_FD" + std::to_string(pit) + ".txt";
+            std::string file_name = "data/U_FD" + std::to_string(pit) + std::string(out_suf) + ".txt";
             STmatrix.SaveX(file_name);
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
