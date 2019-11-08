@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
     int AMGiters = 1;
 
     // Finite-difference specific parameters
-    const char * out_suf = "";
+    const char * out = ""; // Filename of data to be saved...
     int FD_ProblemID = 1;
     int px = -1;
     int py = -1;
@@ -78,8 +78,8 @@ int main(int argc, char *argv[])
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
     
-    args.AddOption(&out_suf, "-outsuf", "--outfile-suffix",
-                  "Output file suffix.");  
+    args.AddOption(&out, "-out", "--out",
+                  "Name of output file.");  
     args.AddOption(&FD_ProblemID, "-FD", "--FD-prob-ID",
                   "Finite difference problem ID.");  
     args.AddOption(&px, "-px", "--procx",
@@ -268,8 +268,13 @@ int main(int argc, char *argv[])
         }
         
         if (save_sol) {
-            std::string file_name = "data/U_FD" + std::to_string(pit) + std::string(out_suf) + ".txt";
-            STmatrix.SaveX(file_name);
+            std::string filename;
+            if (std::string(out) == "") {
+                filename =  "data/U" + std::to_string(pit); // Default filename...
+            } else {
+                filename = out;
+            }
+            STmatrix.SaveX(filename);
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
                 int nx = pow(2, refLevels+2);
@@ -277,11 +282,12 @@ int main(int argc, char *argv[])
                 space_info["space_order"]     = std::to_string(order);
                 space_info["nx"]              = std::to_string(nx);
                 space_info["space_dim"]       = std::to_string(dim);
+                space_info["space_refine"]    = std::to_string(refLevels);
                 space_info["problemID"]       = std::to_string(FD_ProblemID);
                 for(int d = 0; d < n_px.size(); d++) {
                     space_info[std::string("np_x") + std::to_string(d)] = std::to_string(n_px[d]);
                 }
-                STmatrix.SaveSolInfo(file_name, space_info);    
+                STmatrix.SaveSolInfo(filename, space_info);    
             }
         }
         

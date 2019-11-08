@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include "SpaceTimeMatrix.hpp"
+#include <iomanip> // Need this for std::setprecision
 #include <cmath> // OAK: I have to include this... There is some ambiguity with "abs". 
 // Something to do with how new OSX is setup now. But on stack exchage some people say this 
 // is not a good solution. But I think it'll do for now...
@@ -205,12 +206,24 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             // Get spatial discretization at t + c[i]*dt
             GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
             
-            // Build RHS of linear system, recycle g to hold this since it's not needed again
-            hypre_ParCSRMatrixMatvec(-1.0, L, u, 1.0, g); // g <- -L[i]*u + g 
+            
+            // TODO. Need a proper temporary vector here rather than x... 
+            HYPRE_ParVectorCopy(u, x); // x <- u.  x is just a place holder...
             for (int j = 0; j < i; j++) {
-                temp = -m_dt * m_A_butcher[i][j];
-                if (temp != 0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, g);  // g <- g - dt*A[i,j]*L[i]*k[j]  
+                double temp = m_dt * m_A_butcher[i][j];
+                if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], x); // x <- x + dt*aij*k[j]
             }
+            // RHS of linear system now  stored in g...
+            hypre_ParCSRMatrixMatvec(-1.0, L, x, 1.0, g); // g <- -L[i]*x + g
+    
+            
+            // // Old silly way...
+            // // Build RHS of linear system, recycle g to hold this since it's not needed again
+            // hypre_ParCSRMatrixMatvec(-1.0, L, u, 1.0, g); // g <- -L[i]*u + g 
+            // for (int j = 0; j < i; j++) {
+            //     temp = -m_dt * m_A_butcher[i][j];
+            //     if (temp != 0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, g);  // g <- g - dt*A[i,j]*L[i]*k[j]  
+            // }
             
             /* -------------- Solve linear system for ith stage vector, k[i] -------------- */
             // Get components of mass matrix only after spatial discretization has been assembled for the first time
@@ -323,6 +336,8 @@ void SpaceTimeMatrix::ERKSolve()
     std::vector<HYPRE_ParVector> k;
     std::vector<HYPRE_IJVector>  kij;
     
+    
+    
     // Take nt-1 steps
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
@@ -337,12 +352,21 @@ void SpaceTimeMatrix::ERKSolve()
             GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
             //std::cout << "G:\tSpatial disc." << '\n';
     
-            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] 
-
+            // TODO. Need a proper temporary vector here rather than x... 
+            HYPRE_ParVectorCopy(u, x); // x <- u.  x is just a place holder...
             for (int j = 0; j < i; j++) {
-                double temp = -m_dt * m_A_butcher[i][j];
-                if (temp !=  0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, k[i]);  // k[i] <- k[i] - dt*A[i,j]*L[i]*k[j]  
+                double temp = m_dt * m_A_butcher[i][j];
+                if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], x); // x <- x + dt*aij*k[j]
             }
+            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, x, 1.0, g, k[i]); // k[i] <- -L[i]*x + g[i] 
+    
+    
+            // // OLD silly way...
+            // hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] 
+            // for (int j = 0; j < i; j++) {
+            //     double temp = -m_dt * m_A_butcher[i][j];
+            //     if (temp !=  0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, k[i]);  // k[i] <- k[i] - dt*A[i,j]*L[i]*k[j]  
+            // }
         }
     
         // Sum solution
@@ -360,7 +384,6 @@ void SpaceTimeMatrix::ERKSolve()
         DestroyHypreStages(kij);
         DestroyHypreSpatialDisc(Lij, gij, xij);
     }
-    
     // Assign final solution to member variable for printing etc.
     m_xij = uij;
 }
@@ -564,6 +587,7 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
 {
     std::ofstream solinfo;
     solinfo.open(filename);
+    solinfo << std::setprecision(17); // Must accurately print out dt to file!
     solinfo << "pit " << int(m_pit) << "\n";
     solinfo << "P " << m_numProc << "\n";
     solinfo << "nt " << m_nt << "\n";
@@ -573,6 +597,7 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
     solinfo << "spatialParallel " << int(m_useSpatialParallel) << "\n";
     if (m_useSpatialParallel) solinfo << "np_xTotal " << m_spatialCommSize << "\n";
     
+    // Print out contents from additionalInfo to file too
     std::map<std::string, std::string>::iterator it;
     for (it=additionalInfo.begin(); it!=additionalInfo.end(); it++) {
         solinfo << it->first << " " << it->second << "\n";

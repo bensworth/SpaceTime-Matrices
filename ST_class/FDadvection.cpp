@@ -10,7 +10,7 @@
 double FDadvection::InitCond(double x) 
 {        
     if (m_problemID == 1) {
-        return pow(cos(PI * x), 4.0);
+        return pow(sin(PI * x), 4.0);
     } else if ((m_problemID == 2) || (m_problemID == 3)) {
         return cos(PI * x);
     } else {
