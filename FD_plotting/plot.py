@@ -1,21 +1,25 @@
 import numpy as np
 
+import matplotlib
 import matplotlib.pylab as plt
 from matplotlib import rc
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
 
 from sys import argv
-
-import pdb
 from numpy.linalg import norm
-from scipy.sparse import load_npz
 
 # Plot solution to 1D  test  problems  for advection
 
 # Sit there here to enable latex-style font in plots...
-# plt.rcParams['font.family'] = 'serif'
-# plt.rcParams['text.usetex'] = True
+plt.rcParams['font.family'] = 'serif'
+#plt.rcParams['text.usetex'] = True
+
+fs = {"fontsize": 18, "usetex": True}
+
+# plt.rc("font", family="serif")
+# plt.rc("text", usetex=True)
+#matplotlib.rcParams["font.size"] = (9)
 
 # Run me like << python plot.py <<path to file with solution information>>
 # File should contain a list of (at least) the following parameters:
@@ -40,7 +44,7 @@ if len(argv) > 1:
     suff = argv[1]
 else:
     suff = 0
-filename = "../ST_class/data/U_FD" + str(suff) + ".txt"
+filename = "../ST_class/data/U" + str(suff)
 print("Reading data from: " + filename)
 
 # Read data in and store in dictionary
@@ -146,7 +150,7 @@ else:
         dims.split(" ")
         dims = [int(x) for x in dims.split()] 
         # Get data from lines > 0
-        temp = np.loadtxt(Ufilename, skiprows = 1, usecols = 1) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
+        temp = np.loadtxt(Ufilename, skiprows = 1, usecols = 1, dtype = np.float64) # Ignore the 1st column since it's just indices..., top row has junk in it we don't need
         DOFsOnProc = temp.shape[0]
         uT[ind:ind+DOFsOnProc] = temp
         ind += DOFsOnProc
@@ -171,7 +175,9 @@ if params["space_dim"] == 1:
     def uexact(x,t):
         if params["problemID"] == 1:
             temp = np.mod(x + 1  - t, 2) - 1
-            return np.cos(np.pi*temp) ** 4
+            #return np.cos(np.pi*temp) ** 4
+            return np.sin(np.pi*temp) ** 4
+            
         elif (params["problemID"] == 2) or (params["problemID"] == 3):    
             return np.cos(np.pi*(x - t)) * np.exp(np.cos(2*np.pi*t) - 1)
             #return np.cos(np.pi*(x - t)) * np.exp(np.cos(t))/np.exp(1)
@@ -181,16 +187,15 @@ if params["space_dim"] == 1:
         uT_exact[i] = uexact(x[i],T)
 
     # Compare uT against the exact solution
-    #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    print("(nt,nx) = ({},{}), |uNum - uExact| = {:.4e}".format(params["nt"], nx, np.sqrt(2/nx) * np.linalg.norm(uT_exact - uT, 2)))
+    print("nx = {}, |uNum - uExact|_inf = {:.16e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
+    #print("(nt,nx) = ({},{}), |uNum - uExact| = {:.4e}".format(params["nt"], nx, np.sqrt(2/nx) * np.linalg.norm(uT_exact - uT, 2)))
 
     plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
     plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
     
-    fs = 18
-    plt.legend(fontsize = fs)
-    plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
+    plt.legend(fontsize = fs["fontsize"]-2)
+    plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), **fs)
+    plt.xlabel("$x$", **fs)
     plt.show()
     
     
@@ -282,7 +287,6 @@ if params["space_dim"] == 2:
     #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
     print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.max(np.abs(uT_exact - uT))))
 
-    fs = 18
     cmap = plt.cm.get_cmap("coolwarm")
     # ax = fig.gca(projection='3d') 
     # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
@@ -293,9 +297,9 @@ if params["space_dim"] == 2:
     plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
     
-    plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
-    plt.ylabel("$y$", fontsize = fs)
+    plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), **fs)
+    plt.xlabel("$x$", **fs)
+    plt.ylabel("$y$", **fs)
     
     ### --- Analytical solution --- ###
     fig = plt.figure(2)
@@ -303,9 +307,9 @@ if params["space_dim"] == 2:
     plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
     plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
     
-    plt.title("$u(x,y,{:.2f})$".format(T), fontsize = fs)
-    plt.xlabel("$x$", fontsize = fs)
-    plt.ylabel("$y$", fontsize = fs)
+    plt.title("$u(x,y,{:.2f})$".format(T), **fs)
+    plt.xlabel("$x$", **fs)
+    plt.ylabel("$y$", **fs)
     
     # fig = plt.figure(2)
     # ax = fig.gca(projection='3d') 

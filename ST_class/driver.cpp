@@ -219,12 +219,21 @@ int main(int argc, char *argv[])
         dt *= CFL_fraction;
         
         // Manually set time to integrate to
-        double T = 2.0;
+        double T = 2.0; // For 1D in space...
+        if (dim == 2) T = 0.5; // For 2D in space...
         
         // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        nt = floor(T / dt);
-        dt = T / (nt - 1);
+        nt = ceil(T / dt);
+        //dt = T / (nt - 1);
         
+        // Round up nt so that numProcess evenly divides it. Assuming time-only parallelism...
+        // NOTE: this will slightly change T... But actually, enforce this always so that 
+        // tests are consistent accross time-stepping and space-time system
+        int rem = nt % numProcess;
+        if (rem != 0) nt += (numProcess-rem);
+        
+        // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
+        dt = T / (nt - 1); 
         
         /* --- Get SPACETIMEMATRIX object --- */
         std::vector<int> n_px = {};
@@ -240,9 +249,13 @@ int main(int argc, char *argv[])
                                 dt, pit, dim, refLevels, order, 
                                 FD_ProblemID, n_px);
         
+        
+        STmatrix.SetAIRHyperbolic();
         if (!pit) {
             //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
-            STmatrix.SetAIR();
+            //STmatrix.SetAIR();
+            
+            //STmatrix.SetAIRHyperbolic();
             // TODO : Not really sure what the best way is to give linear solver info...
             if (use_gmres) {
                 STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres, AMGiters);
@@ -256,8 +269,43 @@ int main(int argc, char *argv[])
             if (save_mat) {
                 STmatrix.SaveMatrix("data/A_FD.mm");
             }
-            //STmatrix.SetAIR(); // TODO : What does this actually do? It works for implicit, where as the other settings do not...
-            STmatrix.SetAMGParameters(AMG);
+            
+            // /* Set standard AIR parameters for BoomerAMG solve. */
+            // void SpaceTimeMatrix::SetAIR()
+            // {
+            //    m_solverOptions.prerelax = "A";
+            //    m_solverOptions.postrelax = "FFC";
+            //    m_solverOptions.relax_type = 3;
+            //    m_solverOptions.interp_type = 100;
+            //    m_solverOptions.strength_tolC = 0.005;
+            //    m_solverOptions.coarsen_type = 6;
+            //    m_solverOptions.distance_R = 1.5;
+            //    m_solverOptions.strength_tolR = 0.005;
+            //    m_solverOptions.filter_tolA = 0.0;
+            //    m_solverOptions.filter_tolR = 0.0;
+            //    m_solverOptions.cycle_type = 1;
+            //    m_rebuildSolver = true;
+            // /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
+            // void SpaceTimeMatrix::SetAIRHyperbolic()
+            // {
+            // std::string prerelax = "A";
+            // std::string postrelax = "FFC";
+            // int relax_type = 3;
+            // int interp_type = 100;
+            // double strength_tolC = 0.005;
+            // int coarsen_type = 1;
+            // double distance_R = 1.5;
+            // double strength_tolR = 0.005;
+            // double filter_tolA = 0.0001;
+            // double filter_tolR = 0.0;
+            // // }
+            // 
+            // AMG = {distance_R, prerelax, postrelax, interp_type, relax_type, coarsen_type, strength_tolC, strength_tolR, filter_tolA, filter_tolR, 1};
+            // 
+            //AMG = {1.5, "", "FFC", 100, 3, 3, 0.1, 0.1, 0.0, 0.0, 1};
+            //STmatrix.SetAMGParameters(AMG);
+            //
+            //STmatrix.SetAIRHyperbolic();
             if (use_gmres) {
                 STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
                                     true, use_gmres, AMGiters);

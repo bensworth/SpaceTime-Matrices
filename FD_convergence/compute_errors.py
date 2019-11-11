@@ -4,6 +4,9 @@
 # This is more or less the same script as used to plot the solutions 
 # of FD discretizations, except here we don't plot them, we just 
 # compute their errors against the exact solution and save them to disc
+#
+# Pass in data for a specific solve and it'll save it with other data from solves
+# of the same problem at different spatial resolutions...
 
 
 import numpy as np
@@ -21,15 +24,16 @@ from scipy.sparse import load_npz
 import os.path
 
 
+# Pass in name of file that we're to read data from
 if len(argv) > 1:
-    filename = argv[1]
-    print("Reading data from: " + filename)
+    filenameIN = argv[1]
+    print("Reading data from: " + filenameIN)
 else:
     raise ValueError("You need to pass me the name of a file to read data from...")
 
 # Read data in and store in dictionary
 params = {}
-with open(filename) as f:
+with open(filenameIN) as f:
     for line in f:
        (key, val) = line.split()
        params[key] = val
@@ -43,6 +47,7 @@ params["dt"]              = float(params["dt"])
 params["problemID"]       = int(params["problemID"])
 params["nx"]              = int(params["nx"])
 params["space_dim"]       = int(params["space_dim"])
+params["space_refine"]    = int(params["space_refine"])
 params["spatialParallel"] = int(params["spatialParallel"])
 
 # Total number of DOFS in space
@@ -55,15 +60,18 @@ elif params["space_dim"] == 2:
     params["dy"] = 2/params["nx"] 
     #NX = params["nx"] * (params["nx"] + 7)
 
-# Create filename for outout of data
-filenameOut = "RK" + params["timeDisc"] + "_U" + params["space_order"] + "_id" + str(params["problemID"]) + "_d" + str(params["space_dim"]) + "_pit" + str(params["pit"]) +  ".npy"
-print("Saving data into" + filenameOut)
+# Create filenameIN for outout of data but remove reference to spatial refinement
+#filenameOUT = filenameIN.replace("U_", "data_") # Remove "U_" from start
+filenameOUT = filenameIN.replace("_l"+str(params["space_refine"]), "") + ".npy"
 
-# If output filename exists, open it, otherwise create it
-if os.path.isfile(filenameOut):
-    globalList = list(np.load(filenameOut))
+
+# If output filenameIN exists, open it, otherwise create it
+if os.path.isfile(filenameOUT):
+    globalList = list(np.load(filenameOUT))
+    print("The file '" + filenameOUT + "' already exists, I'm appending to it...")
 else:
     globalList = list([])
+    print("The file '" + filenameOUT + "' does not exist, I'm creating it...")
 
 # Pass me error vector/matrix and I'll compute its norm and then save it to disc...
 def save_error(e):
@@ -84,7 +92,7 @@ def save_error(e):
     # Append params to existing list
     globalList.append(params)
     # Save list
-    np.save(filenameOut, globalList)
+    np.save(filenameOUT, globalList)
 
 
 
@@ -101,8 +109,8 @@ if (params["pit"] == 1):
         PuT_DOF0Ind = PuT * DOFsPerProc # Global index of first variable on this proc
         PuT_uTInd   = (params["s"] * (params["nt"]-1)) - PuT_DOF0Ind # Local index of uT on its proc
         
-        # Filename for data output by processor output processor. Assumes format is <<filename>>.<<index of proc using 5 digits>>
-        Ufilename  = filename + "." + "0" * (5-len(str(PuT))) + str(PuT)
+        # filenameIN for data output by processor output processor. Assumes format is <<filenameIN>>.<<index of proc using 5 digits>>
+        Ufilename  = filenameIN + "." + "0" * (5-len(str(PuT))) + str(PuT)
 
         # Read all data from this proc
         with open(Ufilename) as f:
@@ -129,7 +137,7 @@ if (params["pit"] == 1):
         # Get names of all procs holding uT data
         PuT = []
         for P in range(PuT0, PuT0 + params["np_xTotal"]):
-            PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
+            PuT.append(filenameIN + "." + "0" * (5-len(str(P))) + str(P))
         
         uT = np.zeros(NX)
         ind = 0
@@ -154,7 +162,7 @@ else:
     # Get names of all procs holding data
     PuT = []
     for P in range(0, params["P"]):
-        PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
+        PuT.append(filenameIN + "." + "0" * (5-len(str(P))) + str(P))
     
     uT = np.zeros(NX)
     
@@ -191,7 +199,7 @@ if params["space_dim"] == 1:
     def uexact(x,t):
         if params["problemID"] == 1:
             temp = np.mod(x + 1  - t, 2) - 1
-            return np.cos(np.pi*temp) ** 4
+            return np.sin(np.pi*temp) ** 4
         elif (params["problemID"] == 2) or (params["problemID"] == 3):    
             return np.cos(np.pi*(x - t)) * np.exp(np.cos(2*np.pi*t) - 1)
             #return np.cos(np.pi*(x - t)) * np.exp(np.cos(t))/np.exp(1)
@@ -207,6 +215,11 @@ if params["space_dim"] == 1:
     # Compute errors and save them
     e = uT_exact-uT
     save_error(e)
+
+    
+    # plt.semilogy(x, abs(e), "-o")
+    # plt.title(nx)
+    # plt.show()
 
     # plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
     # plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")

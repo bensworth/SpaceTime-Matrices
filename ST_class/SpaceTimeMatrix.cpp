@@ -55,7 +55,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                     std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << "\n";
                 }
                 MPI_Finalize();
-                return;
+                exit(1);
+                //return;
             }
             else {
                 m_spatialCommSize = m_numProc / (m_nt * m_s_butcher);
@@ -84,7 +85,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                     std::cout << "Error: number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << " does not divide number of processes " << m_numProc << "\n";
                 }
                 MPI_Finalize();
-                return;
+                exit(1);
+                //return;
             }
             m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
             m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
@@ -244,7 +246,8 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             if (m_A_butcher[i][i] == 0.0) {
                 std::cout << "WARNING: DIRK solver cannot handle Butcher matrix A with 0s on its diagonal!" << '\n';
                 MPI_Finalize();
-                return;
+                exit(1);
+                //return;
             }
             
             // TODO : I'm scaling MASS and RHS vector by 1/dt*a_ii for the moment 
@@ -287,7 +290,8 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
                 std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << solve_tol << "\n\n";
                 MPI_Finalize();
-                return;
+                exit(1);
+                //return;
             }
         }
         
@@ -569,7 +573,8 @@ void SpaceTimeMatrix::BuildMatrix()
     if (!m_pit) {
         std::cout << "WARNING: BuildMatrix() only available when solving space-time system!" << '\n';
         MPI_Finalize();
-        return;
+        exit(1);        
+        //return;
     }
     if (m_globRank == 0) std::cout << "Building matrix, " << m_useSpatialParallel << "\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
@@ -793,7 +798,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     } else {
         std::cout << "WARNING: invalid choice of time integration.\n";
         MPI_Finalize();
-        return;
+        exit(1);
+        //return;
     }
 }
 
