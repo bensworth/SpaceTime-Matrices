@@ -54,36 +54,67 @@ private:
     std::vector<int>    m_neighboursNxOnProc;   /* Number of DOFs in each direction owned by neighbouring procs */
 
 
-    // Call when using spatial parallelism
+
+    // TODO -- these are to be removed...
+    // ---------------------------------------------------------------------------------
     void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
                                   int *&L_colinds, double *&L_data, double *&B,
                                   double *&X, int &localMinRow, int &localMaxRow,
                                   int &spatialDOFs, double t, int &bsize);
-                                  
-    // Call when NOT using spatial parallelism                              
     void getSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data,
                                   double *&B, double *&X, int &spatialDOFs, double t,
-                                  int &bsize);                              
+                                  int &bsize);  
+    void get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
+                                    int *&L_colinds, double *&L_data, double *&B,
+                                    double *&X, int &localMinRow, int &localMaxRow,
+                                    int &spatialDOFs, double t, int &bsize);
+    void get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
+                                    int *&L_colinds, double *&L_data, double *&B,
+                                    double *&X, int &localMinRow, int &localMaxRow,
+                                    int &spatialDOFs, double t, int &bsize);                                                               
+    void get2DSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data, 
+                                        double *&B, double *&X,
+                                        int &spatialDOFs, double t, int &bsize);                            
+    // ---------------------------------------------------------------------------------
+
+
+    // Call when using spatial parallelism                          
+    void getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
+                                    int &localMinRow, int &localMaxRow, int &spatialDOFs, double t);                               
+    void getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &L_rowptr, 
+                                    int* &L_colinds, double* &L_data,
+                                    double* &U0, bool getU0, 
+                                    int &localMinRow, int &localMaxRow, int &spatialDOFs,
+                                    double t, int &bsize);                                            
+    
+    // Call when NOT using spatial parallelism                                        
+    void getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t); 
+    void getSpatialDiscretizationL(int* &L_rowptr, int* &L_colinds, double* &L_data,
+                                    double* &U0, bool getU0, int &spatialDOFs,
+                                    double t, int &bsize);                                            
+                                 
                                   
     void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);                                  
             
     /* Uses spatial parallelism */                                
-    void get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                    int *&L_colinds, double *&L_data, double *&B,
-                                    double *&X, int &localMinRow, int &localMaxRow,
-                                    int &spatialDOFs, double t, int &bsize);
+    void get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
+                                        int *&L_rowptr, int *&L_colinds, double *&L_data, 
+                                        double * &U0, bool getU0,
+                                        int &localMinRow, int &localMaxRow, int &spatialDOFs, 
+                                        double t, int &bsize);
+    void get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
+                                        int *&L_rowptr, int *&L_colinds, double *&L_data, 
+                                        double * &U0, bool getU0,
+                                        int &localMinRow, int &localMaxRow, int &spatialDOFs, 
+                                        double t, int &bsize);                                
                                     
     /* No spatial parallelism */
-    void get2DSpatialDiscretization(int *&L_rowptr,
-                                    int *&L_colinds, double *&L_data, double *&B,
-                                    double *&X,
-                                    int &spatialDOFs, double t, int &bsize);
+    void get2DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data, 
+                                        double *&U0, bool getU0,
+                                        int &spatialDOFs, double t, int &bsize);
                                 
     /* Uses spatial parallelism */  
-    void get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                    int *&L_colinds, double *&L_data, double *&B,
-                                    double *&X, int &localMinRow, int &localMaxRow,
-                                    int &spatialDOFs, double t, int &bsize);                                  
+                                     
     
     void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, 
                                 int &localMaxRow, int &spatialDOFs);
