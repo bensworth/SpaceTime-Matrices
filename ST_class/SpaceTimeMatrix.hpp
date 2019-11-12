@@ -111,18 +111,40 @@ private:
               double *&X, int &onProcSize);
 
 
-    // Spatial discretization on more than one processor. Must same row distribution
-    // over processors each time called, e.g., first processor in communicator gets
-    // first 10 spatial DOFs, second processor next 10, and so on. 
+    // TODO : these functions are to be phased out...
+    // -----------------------------------------
     virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                           int* &A_colinds, double* &A_data, double* &B,
                                           double* &X, int &localMinRow, int &localMaxRow,
                                           int &spatialDOFs, double t, int &bsize) = 0;
-    // Spatial discretization on one processor
+
     virtual void getSpatialDiscretization(int* &A_rowptr, int* &A_colinds, double* &A_data,
                                           double* &B, double* &X, int &spatialDOFs,
-                                          double t, int &bsize) = 0;
+                                          double t, int &bsize) = 0;                                    
+    // -----------------------------------------
 
+    // Spatial discretization on more than one processor. Must same row distribution
+    // over processors each time called, e.g., first processor in communicator gets
+    // first 10 spatial DOFs, second processor next 10, and so on. 
+    
+    virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
+                                            int &localMinRow, int &localMaxRow,
+                                            int &spatialDOFs, double t);                                   
+    virtual void getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
+                                            int* &A_colinds, double* &A_data,
+                                            double* &U0, bool getU0, 
+                                            int &localMinRow, int &localMaxRow, 
+                                            int &spatialDOFs,
+                                            double t, int &bsize);                                            
+                                          
+                                          
+    // Spatial discretization on one processor                                  
+    virtual void getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t);
+    virtual void getSpatialDiscretizationL(int* &A_rowptr, int* &A_colinds, double* &A_data,
+                                          double* &U0, bool getU0, int &spatialDOFs,
+                                          double t, int &bsize);                                            
+        
+                                                                            
     // Get mass matrix for time integration; only for finite element discretizations.
     virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
 
@@ -139,13 +161,39 @@ private:
 
     
     /* ------ Sequential time integration routines ------ */
-    void ERKSolve();    /* General purpose ERK solver */
+    void ERKSolve();            /* General purpose ERK solver */
+    void ERKSolveWithMass();    /* General purpose ERK solver that can invert mass matrices */
+    
+    void RKInitializeHypreVectors(HYPRE_ParVector                &u0, 
+                                    HYPRE_IJVector               &u0ij, 
+                                    int                           numVectors,
+                                    std::vector<HYPRE_ParVector> &z, 
+                                    std::vector<HYPRE_IJVector>  &zij); 
+                                    
+    void RKGetHypreSpatialDiscretizationG(HYPRE_ParVector  &g,
+                                            HYPRE_IJVector &gij,
+                                            double          t);
+                                                    
+    void RKGetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
+                                            HYPRE_IJMatrix   &Lij,
+                                            double            t);
+    
+    
+    
+    
+
     void DIRKSolve(double solve_tol, int max_xiter, int printLevel,
                         bool binv_scale, int precondition, int AMGiters);   /* General purpose DIRK solver */
     void SDIRKTimeIndependentSolve(); // TODO ?
     void DIRKTimeIndependentSolve(); // TODO ?
     
     void GetHypreInitialCondition(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
+    
+    
+    
+    
+    
+    
     
     void InitializeHypreStages(HYPRE_IJVector uij, 
                                 std::vector<HYPRE_ParVector> &k, 
@@ -178,9 +226,12 @@ protected:
     bool     m_L_isTimedependent; /* Is spatial discretization time dependent? */
     bool     m_g_isTimedependent; /* Is PDE source term time dependent? */
 
+    
+    bool     m_M_exists; /* Is mass-matrix the identity? */
     int *    m_M_rowptr;
     int *    m_M_colinds;
     double * m_M_data;
+    
     double   m_hmin;
     double   m_hmax;
 

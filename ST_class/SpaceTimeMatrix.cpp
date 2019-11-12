@@ -17,11 +17,51 @@
 //      - namespace for RK tableaux/AMG parameters? Keep structs separate from class? 
 
 
+// TODO remove these functions when implemented in all spatial discretizations..
+void SpaceTimeMatrix::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
+                                            int* &A_colinds, double* &A_data,
+                                            double* &U0, bool getU0, 
+                                            int &localMinRow, int &localMaxRow, 
+                                            int &spatialDOFs,
+                                            double t, int &bsize)  
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationL' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}                                                                            
+void SpaceTimeMatrix::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
+                                            int &localMinRow, int &localMaxRow,
+                                            int &spatialDOFs, double t)
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationG' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}   
+void SpaceTimeMatrix::getSpatialDiscretizationL(int* &A_rowptr, 
+                                            int* &A_colinds, double* &A_data,
+                                            double* &U0, bool getU0, 
+                                            int &spatialDOFs,
+                                            double t, int &bsize)  
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationL' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}                                                        
+void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t)
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationG' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}                                                                          
+
+
+
 
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int nt, double dt, bool pit)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_nt{nt},
       m_dt{dt}, m_pit{pit}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_M_exists(true),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_bsize(1), m_hmin(-1), m_hmax(-1), m_ERK(false), m_DIRK(false), m_SDIRK(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true)
@@ -101,7 +141,6 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             if (m_globRank == 0) {
                 std::cout << "Time-stepping: Spatial parallelism!\n";    
             }
-            
             m_useSpatialParallel = true;
             
             // Update spatial communicator variable to be those of global communicator.
@@ -110,16 +149,9 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
             m_spatialCommSize = m_numProc;
             m_Np_x = m_spatialCommSize; // TODO delete...
         } else {
-            if (m_globRank == 0) {
-                std::cout << "Time-stepping: No parallelism!\n";    
-            }
+            std::cout << "Time-stepping: No parallelism!\n";    
             m_useSpatialParallel = false;
-        }
-        
-        // Maybe set solver type to ERK or DIRK??
-        if (m_ERK)  {
-            
-        }    
+        }  
     }
 }
 
@@ -138,6 +170,11 @@ void SpaceTimeMatrix::RKSolve(double solve_tol, int max_iter, int printLevel,
                                 bool binv_scale, int precondition, int AMGiters)
 {
     if (m_ERK) {
+        // if (m_M_exists) {
+        //     ERKSolveWithMass();
+        // } else {
+        //     ERKSolve();
+        // }
         ERKSolve();
     } else {
         // if (!m_L_isTimedependent) {
@@ -318,79 +355,346 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     m_xij = uij;
 }
 
-//  TODO : deal with mass matrix solver... Maybe make a new solver...
+// //  TODO : deal with mass matrix solver... Maybe make a new solver...
+// void SpaceTimeMatrix::ERKSolve() 
+// {
+//     double t = 0.0; // Initial time
+//     int ilower, iupper; // Dummy variables at the moment...
+// 
+//     HYPRE_ParVector u;
+//     HYPRE_IJVector  uij;
+//     //std::cout << "G:\tto get IC" << '\n';
+//     GetHypreInitialCondition(u, uij); 
+//     //std::cout << "G:\tIC" << '\n';
+// 
+//     HYPRE_ParCSRMatrix L;
+//     HYPRE_IJMatrix     Lij;
+//     HYPRE_ParVector    g;
+//     HYPRE_IJVector     gij;
+//     HYPRE_ParVector    x;
+//     HYPRE_IJVector     xij;
+// 
+//     std::vector<HYPRE_ParVector> k;
+//     std::vector<HYPRE_IJVector>  kij;
+// 
+// 
+// 
+//     // Take nt-1 steps
+//     int step = 0;
+//     for (step = 0; step < m_nt-1; step++) {
+//         // Initialize stage vectors on first time step
+//         if (step == 0) InitializeHypreStages(uij, k, kij);
+// 
+//         // Build ith stage vector, k[i]
+//         for (int i = 0; i < m_s_butcher; i++) {
+//             // Get spatial discretization at t + c[i]*dt
+//             if (step > 0) DestroyHypreSpatialDisc(Lij, gij, xij);
+//             //std::cout << "G:\tto get Spatial disc." << '\n';
+//             GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
+//             //std::cout << "G:\tSpatial disc." << '\n';
+// 
+//             // TODO. Need a proper temporary vector here rather than x... 
+//             HYPRE_ParVectorCopy(u, x); // x <- u.  x is just a place holder...
+//             for (int j = 0; j < i; j++) {
+//                 double temp = m_dt * m_A_butcher[i][j];
+//                 if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], x); // x <- x + dt*aij*k[j]
+//             }
+//             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, x, 1.0, g, k[i]); // k[i] <- -L[i]*x + g[i] 
+// 
+// 
+//             // // OLD silly way...
+//             // hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] 
+//             // for (int j = 0; j < i; j++) {
+//             //     double temp = -m_dt * m_A_butcher[i][j];
+//             //     if (temp !=  0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, k[i]);  // k[i] <- k[i] - dt*A[i,j]*L[i]*k[j]  
+//             // }
+//         }
+// 
+//         // Sum solution
+//         //std::cout << "G:\tto get Sum soln." << '\n';
+//         for (int i = 0; i < m_s_butcher; i++)  {
+//             double temp = m_dt * m_b_butcher[i];
+//             if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
+//         }
+//         t += m_dt; // Increment time
+//         //std::cout << "G:\tSum soln." << '\n';
+//     }
+// 
+//     // Clean up left over variables
+//     if (step > 0) {
+//         DestroyHypreStages(kij);
+//         DestroyHypreSpatialDisc(Lij, gij, xij);
+//     }
+//     // Assign final solution to member variable for printing etc.
+//     m_xij = uij;
+// }
+
 void SpaceTimeMatrix::ERKSolve() 
-{
-    double t = 0.0; // Initial time
-    int ilower, iupper; // Dummy variables at the moment...
-    
-    HYPRE_ParVector u;
-    HYPRE_IJVector  uij;
-    //std::cout << "G:\tto get IC" << '\n';
-    GetHypreInitialCondition(u, uij); 
-    //std::cout << "G:\tIC" << '\n';
-    
-    HYPRE_ParCSRMatrix L;
-    HYPRE_IJMatrix     Lij;
-    HYPRE_ParVector    g;
+{    
+    /* ---------------------------------------------------------------------- */
+    /* ------------------------ Setup/initialization ------------------------ */
+    /* ---------------------------------------------------------------------- */
+    double t = 0.0;         // Initial time
+
+    HYPRE_ParVector    u;   // Solution vector
+    HYPRE_IJVector     uij;
+    HYPRE_ParVector    g;   // Spatial discretization vector
     HYPRE_IJVector     gij;
-    HYPRE_ParVector    x;
-    HYPRE_IJVector     xij;
-    
-    std::vector<HYPRE_ParVector> k;
-    std::vector<HYPRE_IJVector>  kij;
-    
-    
-    
+    HYPRE_ParCSRMatrix L;   // Spatial discretization matrix  
+    HYPRE_IJMatrix     Lij;
+
+    // Place-holder vectors
+    std::vector<HYPRE_ParVector> vectors;
+    std::vector<HYPRE_IJVector>  vectorsij;
+    int numVectors = m_s_butcher + 1; // Have s stage vectors + 1 temporary vector
+
+    // Get initial condition and initialize place-holder vectors
+    RKInitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
+
+    // Shallow copy place-holder vectors into vectors with meaningful names
+    HYPRE_ParVector              b   = vectors[0];  // Temporary vector
+    HYPRE_IJVector               bij = vectorsij[0];
+    std::vector<HYPRE_ParVector> k; // Stage vectors
+    std::vector<HYPRE_IJVector>  kij;    
+    k.reserve(m_s_butcher);
+    kij.reserve(m_s_butcher);
+    for (int i = 0; i < m_s_butcher; i++) {
+        kij[i] = vectorsij[i+1];
+        k[i]   = vectors[i+1];
+    }
+
+
+    /* ----------------------------------------------------------- */
+    /* ------------------------ Time step ------------------------ */
+    /* ----------------------------------------------------------- */
     // Take nt-1 steps
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
-        // Initialize stage vectors on first time step
-        if (step == 0) InitializeHypreStages(uij, k, kij);
-    
+        // Get spatial discretization at initial time
+        if (step == 0) {
+            RKGetHypreSpatialDiscretizationG(g, gij, t); // Solution-independent term
+            RKGetHypreSpatialDiscretizationL(L, Lij, t); // Solution-dependent term
+        }
+        
         // Build ith stage vector, k[i]
         for (int i = 0; i < m_s_butcher; i++) {
-            // Get spatial discretization at t + c[i]*dt
-            if (step > 0) DestroyHypreSpatialDisc(Lij, gij, xij);
-            //std::cout << "G:\tto get Spatial disc." << '\n';
-            GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
-            //std::cout << "G:\tSpatial disc." << '\n';
-    
-            // TODO. Need a proper temporary vector here rather than x... 
-            HYPRE_ParVectorCopy(u, x); // x <- u.  x is just a place holder...
+            // Recompute spatial discretization at t + c[i]*dt only if it's time dependent
+            if (step + i > 0) {
+                // Solution-independent term
+                if (m_g_isTimedependent) {
+                    HYPRE_IJVectorDestroy(gij);
+                    RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
+                }
+                // Solution-dependent term
+                if (m_L_isTimedependent) {
+                    HYPRE_IJMatrixDestroy(Lij);
+                    RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
+                } 
+            }
+
+            HYPRE_ParVectorCopy(u, b); // b <- u
             for (int j = 0; j < i; j++) {
                 double temp = m_dt * m_A_butcher[i][j];
-                if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], x); // x <- x + dt*aij*k[j]
+                if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], b); // b <- b + dt*aij*k[j]
             }
-            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, x, 1.0, g, k[i]); // k[i] <- -L[i]*x + g[i] 
-    
-    
-            // // OLD silly way...
-            // hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, u, 1.0, g, k[i]); // k[i] <- -L[i]*u + g[i] 
-            // for (int j = 0; j < i; j++) {
-            //     double temp = -m_dt * m_A_butcher[i][j];
-            //     if (temp !=  0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, k[i]);  // k[i] <- k[i] - dt*A[i,j]*L[i]*k[j]  
-            // }
+
+            // Set final value of stage by computing MATVEC
+            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, b, 1.0, g, k[i]); // k[i] <- -L*b + g 
         }
-    
+
         // Sum solution
-        //std::cout << "G:\tto get Sum soln." << '\n';
         for (int i = 0; i < m_s_butcher; i++)  {
             double temp = m_dt * m_b_butcher[i];
             if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
         }
         t += m_dt; // Increment time
-        //std::cout << "G:\tSum soln." << '\n';
     }
-    
-    // Clean up left over variables
+
+
+    /* ---------------------------------------------------------- */
+    /* ------------------------ Clean up ------------------------ */
+    /* ---------------------------------------------------------- */
+    for (int i = 0; i < vectors.size(); i++) {
+        HYPRE_IJVectorDestroy(vectorsij[i]);
+    }
     if (step > 0) {
-        DestroyHypreStages(kij);
-        DestroyHypreSpatialDisc(Lij, gij, xij);
+        HYPRE_IJVectorDestroy(gij);
+        HYPRE_IJMatrixDestroy(Lij);
     }
-    // Assign final solution to member variable for printing etc.
+
+    // Assign final solution to member variable for saving etc.
     m_xij = uij;
 }
+
+
+/*
+Get initial condition, u0, as a HYPRE vector, and initialize all the HYPRE vectors 
+    in "vectors" with the same values as the intial conditon
+*/
+void SpaceTimeMatrix::RKInitializeHypreVectors(HYPRE_ParVector               &u0, 
+                                                HYPRE_IJVector               &u0ij, 
+                                                int                           numVectors,
+                                                std::vector<HYPRE_ParVector> &vectors, 
+                                                std::vector<HYPRE_IJVector>  &vectorsij) 
+{
+    int      spatialDOFs;
+    int      ilower;
+    int      iupper;
+    int      onProcSize;
+    double * U;
+    int    * rows;
+
+    // No parallelism: Spatial discretization on single processor
+    if (!m_useSpatialParallel) {
+        getInitialCondition(U, spatialDOFs);
+        ilower = 0; 
+        iupper = spatialDOFs - 1; 
+    // Spatial parallelism: Distribute initial condition across spatial communicator
+    } else {
+        getInitialCondition(m_spatialComm, U, ilower, iupper, spatialDOFs);    
+    }
+    
+    onProcSize = iupper - ilower + 1; // Number of rows on current process
+    rows       = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        rows[i] = ilower + i;
+    }
+
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &u0ij);
+    HYPRE_IJVectorSetObjectType(u0ij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(u0ij);
+    HYPRE_IJVectorSetValues(u0ij, onProcSize, rows, U);
+    HYPRE_IJVectorAssemble(u0ij);
+    HYPRE_IJVectorGetObject(u0ij, (void **) &u0);
+
+    // Reserve space for the specified number of vectors
+    vectors.reserve(numVectors);
+    vectorsij.reserve(numVectors);
+    // Create and initialize all vectors in vectorsij, setting their values to those of u
+    for (int i = 0; i < numVectors; i++) {
+        HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &vectorsij[i]);
+        HYPRE_IJVectorSetObjectType(vectorsij[i], HYPRE_PARCSR);
+        HYPRE_IJVectorInitialize(vectorsij[i]);
+        HYPRE_IJVectorSetValues(vectorsij[i], onProcSize, rows, U);
+        HYPRE_IJVectorAssemble(vectorsij[i]);
+        HYPRE_IJVectorGetObject(vectorsij[i], (void **) &vectors[i]);
+    }
+
+    delete[] rows;
+    delete[] U;
+}
+
+
+/* Get solution-independent component of spatial discretization, the vector g, as a HYPRE vector */
+void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationG(HYPRE_ParVector &g,
+                                                        HYPRE_IJVector &gij,
+                                                        double          t)  
+{
+    int      spatialDOFs;
+    int      ilower;
+    int      iupper;
+    int      onProcSize;
+    int    * G_rows;
+    double * G;
+
+    // No parallelism: Spatial discretization on single processor
+    if (!m_useSpatialParallel) {
+        getSpatialDiscretizationG(G, spatialDOFs, t);
+        ilower = 0; 
+        iupper = spatialDOFs - 1; 
+    // Spatial parallelism: Distribute spatial discretization across spatial communicator
+    } else {
+        getSpatialDiscretizationG(m_spatialComm, G, ilower, iupper, spatialDOFs, t);
+    }
+
+    // Get global row indices
+    onProcSize = iupper - ilower + 1; // Number of rows of spatial disc I own
+    G_rows = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        G_rows[i] = ilower + i;
+    }
+    
+    // Create HYPRE vector
+    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &gij);
+    HYPRE_IJVectorSetObjectType(gij, HYPRE_PARCSR);
+    HYPRE_IJVectorInitialize(gij);
+    HYPRE_IJVectorSetValues(gij, onProcSize, G_rows, G);
+    HYPRE_IJVectorAssemble(gij);
+    HYPRE_IJVectorGetObject(gij, (void **) &g);
+
+    // Remove pointers that should have been copied by Hypre
+    delete[] G_rows;
+    delete[] G;
+}
+
+
+/* Get solution-dependent component of spatial discretization, the matrix L, as a HYPRE matrix */
+void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
+                                                        HYPRE_IJMatrix    &Lij,
+                                                        double             t)  
+{
+    int      m_bsize;
+    int      ilower;
+    int      iupper;
+    int      spatialDOFs;
+    int      onProcSize;
+    int    * L_rowptr;
+    int    * L_colinds;
+    int    * L_rows;
+    int    * L_cols_per_row;
+    double * L_data;
+    double * U0; // Dummy variable
+    bool     getU0 = false; // No need to get initial guess at the solution
+
+    // No parallelism: Spatial discretization on single processor
+    if (!m_useSpatialParallel) {
+        getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, U0, getU0, spatialDOFs, t, m_bsize);
+        ilower = 0; 
+        iupper = spatialDOFs - 1; 
+    // Spatial parallelism: Distribute initial condition across spatial communicator    
+    } else {
+        getSpatialDiscretizationL(m_spatialComm, L_rowptr, L_colinds, L_data, 
+                                    U0, getU0, ilower, iupper, spatialDOFs, 
+                                    t, m_bsize);
+    }
+
+    // Initialize matrix
+    onProcSize = iupper - ilower + 1; // Number of rows on process
+    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &Lij);
+    HYPRE_IJMatrixSetObjectType(Lij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(Lij);
+
+    // Set matrix coefficients
+    L_rows         = new int[onProcSize];
+    L_cols_per_row = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        L_rows[i] = ilower + i;
+        L_cols_per_row[i] = L_rowptr[i+1] - L_rowptr[i];
+    }
+    HYPRE_IJMatrixSetValues(Lij, onProcSize, L_cols_per_row, L_rows, L_colinds, L_data);
+
+    // Finalize construction
+    HYPRE_IJMatrixAssemble(Lij);
+    HYPRE_IJMatrixGetObject(Lij, (void **) &L);
+
+    // Remove pointers that should have been copied by Hypre
+    delete[] L_rowptr;
+    delete[] L_colinds;
+    delete[] L_data;
+    delete[] L_rows;
+    delete[] L_cols_per_row;
+}
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -486,6 +790,10 @@ void SpaceTimeMatrix::GetHypreInitialCondition(HYPRE_ParVector &u0, HYPRE_IJVect
     delete[] rows;
     delete[] U;
 }
+
+
+
+
 
 
 // Get components of the spatial discretization as HYPRE objects on the given communicator...
