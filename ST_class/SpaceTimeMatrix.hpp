@@ -53,9 +53,9 @@ private:
     bool    m_rebuildSolver;
     
     int     m_timeDisc;             /* ID of Runge-Kutta scheme */
-    bool    m_ERK;
-    bool    m_DIRK;
-    bool    m_SDIRK;
+    bool    m_is_ERK;
+    bool    m_is_DIRK;
+    bool    m_is_SDIRK;
     
     /* Runge-Kutta Butcher tableaux variables */
     int                              m_s_butcher; /* Number of stages in RK scheme */

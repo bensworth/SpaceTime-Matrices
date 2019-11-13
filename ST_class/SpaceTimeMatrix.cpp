@@ -63,7 +63,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
       m_dt{dt}, m_pit{pit}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
       m_M_exists(true),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
-      m_bsize(1), m_hmin(-1), m_hmax(-1), m_ERK(false), m_DIRK(false), m_SDIRK(false),
+      m_bsize(1), m_hmin(-1), m_hmax(-1), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true)
 {
     
@@ -166,58 +166,61 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 }
 
 
+/* Call appropiate sequential time-stepping routine */
 void SpaceTimeMatrix::RKSolve(double solve_tol, int max_iter, int printLevel,
                                 bool binv_scale, int precondition, int AMGiters)
 {
-    if (m_ERK) {
-        // if (m_M_exists) {
-        //     ERKSolveWithMass();
-        // } else {
-        //     ERKSolve();
-        // }
+    if (m_is_ERK) {
         ERKSolve();
-    } else {
-        // if (!m_L_isTimedependent) {
-        //     // TODO 
-        //     // if (m_SDIRK) {
-        //     //     SDIRKTimeIndependentSolve();
-        //     // } else {
-        //     //     DIRKTimeIndependentSolve();
-        //     // }
-        // } else {
-        //     DIRKSolve();
-        // }
+    } else if (m_is_DIRK) {
         DIRKSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
+    } else {
+        std::cout << "WARNING: Only ERK and DIRK solvers available" << '\n';
+        MPI_Finalize();
+        exit(1);
     }
 }
 
-
-
-
-// TODO : 
-// Is there any reason to have member variables point to the last matrix and RHS that were solved? It's kind of meaningless...
+/* Sequential time-stepping routine for general DIRK schemes */
 void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
-                                bool binv_scale, int precondition, int AMGiters) 
-{
-    
-    double t = 0.0; // Initial time
-    int ilower, iupper, onProcSize;
-    double temp;
-    
-    HYPRE_ParVector u;
-    HYPRE_IJVector  uij;
-    GetHypreInitialCondition(u, uij); 
-    
-    HYPRE_ParCSRMatrix L;
-    HYPRE_IJMatrix     Lij;
-    HYPRE_ParVector    g;
+                                 bool binv_scale, int precondition, int AMGiters) 
+{    
+    /* ---------------------------------------------------------------------- */
+    /* ------------------------ Setup/initialization ------------------------ */
+    /* ---------------------------------------------------------------------- */
+    double t = 0.0;         // Initial time
+
+    HYPRE_ParVector    u;   // Solution vector
+    HYPRE_IJVector     uij;
+    HYPRE_ParVector    g;   // Spatial discretization vector
     HYPRE_IJVector     gij;
-    HYPRE_ParVector    x;
-    HYPRE_IJVector     xij;
-    
-    std::vector<HYPRE_ParVector> k;
-    std::vector<HYPRE_IJVector>  kij;
-    
+    HYPRE_ParCSRMatrix L;   // Spatial discretization matrix  
+    HYPRE_IJMatrix     Lij;
+    HYPRE_ParCSRMatrix DIRK_matrix; // Matrix to be inverted in linear solve
+    HYPRE_IJMatrix     DIRK_matrixij;
+
+    // Place-holder vectors
+    std::vector<HYPRE_ParVector> vectors;
+    std::vector<HYPRE_IJVector>  vectorsij;
+    int numVectors = m_s_butcher + 2; // Have s stage vectors + 2 temporary vectors
+
+    // Get initial condition and initialize place-holder vectors
+    RKInitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
+
+    // Shallow copy vectors into variables with meaningful names
+    HYPRE_ParVector              b1   = vectors[0];  // Temporary vector
+    HYPRE_IJVector               b1ij = vectorsij[0];
+    HYPRE_ParVector              b2   = vectors[1];  // Temporary vector
+    HYPRE_IJVector               b2ij = vectorsij[1];
+    std::vector<HYPRE_ParVector> k; // Stage vectors
+    std::vector<HYPRE_IJVector>  kij;    
+    k.reserve(m_s_butcher);
+    kij.reserve(m_s_butcher);
+    for (int i = 0; i < m_s_butcher; i++) {
+        kij[i] = vectorsij[i+2];
+        k[i]   = vectors[i+2];
+    }
+
     // Mass matrix components
     int    * M_rowptr;
     int    * M_colinds;
@@ -225,91 +228,110 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     double * M_scaled_data;
     int    * M_rows;
     int    * M_cols_per_row;
-    int      spatialDOFs;
-    
+    int      ilower;
+    int      iupper;
+    int      onProcSize;
+
     // For monitoring convergence of linear solver
     int    num_iters;
     double rel_res_norm;
-    
-    
+
+    // Is it necessary to build spatial disc. matrix/DIRK matrix more than once?
+    bool rebuildMatrix = ((m_L_isTimedependent) || (!m_is_SDIRK));
+
+
+    /* ------------------------------------------------------------ */
+    /* ------------------------ Time march ------------------------ */
+    /* ------------------------------------------------------------ */
     // Take nt-1 steps
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
-        // Initialize stage vectors on first time step
-        if (step == 0) InitializeHypreStages(uij, k, kij);
-    
-        /* ------ Compute ith stage vector, k[i] ------ */
+        
+        /* -------------- Build RHS vector, b2, in linear system (M+a_ii*dt*L)*k[i]=b2 -------------- */
         for (int i = 0; i < m_s_butcher; i++) {
-            if (step > 0) DestroyHypreSpatialDisc(Lij, gij, xij);
+            // Compute spatial discretization at t + c[i]*dt
+            // Solution-independent term
+            if (m_g_isTimedependent || (i == 0 && step == 0)) {
+                HYPRE_IJVectorDestroy(gij);
+                RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
+            }
+            // Solution-dependent term
+            if (rebuildMatrix || (i == 0 && step == 0)) {
+                HYPRE_IJMatrixDestroy(Lij);
+                RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
             
-            // Get spatial discretization at t + c[i]*dt
-            GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
-            
-            
-            // TODO. Need a proper temporary vector here rather than x... 
-            HYPRE_ParVectorCopy(u, x); // x <- u.  x is just a place holder...
+                // DIRK matrix is going to change, will need to rebuild linear solver 
+                // (this variable is reset to false when the solver (re)built)
+                m_rebuildSolver = true; 
+            } 
+        
+            // Assemble RHS of linear system in b2
+            HYPRE_ParVectorCopy(u, b1); // b1 <- u
             for (int j = 0; j < i; j++) {
                 double temp = m_dt * m_A_butcher[i][j];
-                if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], x); // x <- x + dt*aij*k[j]
+                if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[j], b1); // b1 <- b1 + dt*aij*k[j]
             }
-            // RHS of linear system now  stored in g...
-            hypre_ParCSRMatrixMatvec(-1.0, L, x, 1.0, g); // g <- -L[i]*x + g
-    
+            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, b1, 1.0, g, b2); // b2 <- -L*b1 + g 
             
-            // // Old silly way...
-            // // Build RHS of linear system, recycle g to hold this since it's not needed again
-            // hypre_ParCSRMatrixMatvec(-1.0, L, u, 1.0, g); // g <- -L[i]*u + g 
-            // for (int j = 0; j < i; j++) {
-            //     temp = -m_dt * m_A_butcher[i][j];
-            //     if (temp != 0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, g);  // g <- g - dt*A[i,j]*L[i]*k[j]  
-            // }
-            
-            /* -------------- Solve linear system for ith stage vector, k[i] -------------- */
+            /* -------------- Solve linear system, (M+a_ii*dt*L)*k[i]=b2, for ith stage vector, k[i] -------------- */
             // Get components of mass matrix only after spatial discretization has been assembled for the first time
-            if ((step == 0) && (i == 0)) 
-            {
+            // Mass matrix is NOT time dependent: Only needs to be assembled once
+            if ((step == 0) && (i == 0)) {
                 getMassMatrix(M_rowptr, M_colinds, M_data);
-                onProcSize = iupper - ilower + 1;
+                // Get rows this process owns from M; assumes rows of M and L are partitioned the same in memory
+                int jdummy1, jdummy2;
+                HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
+                onProcSize     = iupper - ilower + 1;
                 M_rows         = new int[onProcSize];
                 M_cols_per_row = new int[onProcSize];
-                for (int rowidx=0; rowidx<onProcSize; rowidx++) {
-                    M_rows[rowidx]         = ilower + rowidx;
-                    M_cols_per_row[rowidx] = M_rowptr[rowidx+1] - M_rowptr[rowidx];
+                for (int rowIdx = 0; rowIdx < onProcSize; rowIdx++) {
+                    M_rows[rowIdx]         = ilower + rowIdx;
+                    M_cols_per_row[rowIdx] = M_rowptr[rowIdx+1] - M_rowptr[rowIdx];
                 }
-                M_scaled_data = new double[M_rowptr[onProcSize]]; // Temp vector to use below...
+                M_scaled_data = new double[M_rowptr[onProcSize]]; // Temporary vector to use below...
             }
             
-            // TODO : Handle ESDIRK? Then just need to invert mass matrix..., for the moment, just throw an error 
+            // Throw error if there is a zero diagonal entry in A!
             if (m_A_butcher[i][i] == 0.0) {
-                std::cout << "WARNING: DIRK solver cannot handle Butcher matrix A with 0s on its diagonal!" << '\n';
+                std::cout << "WARNING: DIRK solver not implemented to handle Butcher matrix A with 0s on diagonal!" << '\n';
                 MPI_Finalize();
                 exit(1);
-                //return;
             }
             
-            // TODO : I'm scaling MASS and RHS vector by 1/dt*a_ii for the moment 
-            // since I don't know an efficient way to scale values of L...
-            // really want to scale entries in L by dt * a_ii
-            temp = 1/(m_dt * m_A_butcher[i][i]); 
-            for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
-                M_scaled_data[dataInd] = temp  * M_data[dataInd]; // M <- M / (dt* a_ii)
-            }
-            HYPRE_ParVectorScale(temp, g); // g <- g/(dt * a_ii)
+            // Scale RHS vector by 1/dt*a_ii for the moment 
+            double temp = 1.0/(m_dt * m_A_butcher[i][i]); 
+            HYPRE_ParVectorScale(temp, b2); // b2 <- b2/(dt*a_ii)
             
-            // Get DIRK matrix, L <- M + a_ii*dt*L
-            HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+            // Rescale mass matrix data by 1/dt*a_ii; only need to do this once if using SDIRK 
+            if (!m_is_SDIRK || ((step == 0) && (i == 0))) {
+                for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
+                    M_scaled_data[dataInd] = temp * M_data[dataInd]; // M <- M / (dt*a_ii)
+                }
+            }
+            
+            // Get DIRK matrix, DIRK_matrix <- M + a_ii*dt*L
+            // Build DIRK matrix once only if L time independent, and using SDIRK
+            if (!rebuildMatrix) {
+                // Build DIRK matrix on first iteration only
+                if ((step == 0) && (i == 0)) { 
+                    RKGetHypreSpatialDiscretizationL(DIRK_matrix, DIRK_matrixij, t);
+                    HYPRE_IJMatrixAddToValues(DIRK_matrixij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+                }
+            // Reuse/update L since it's rebuilt at next iteration, DIRK_matrix <- L <- M + a_ii*dt*L    
+            } else {
+                HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+                DIRK_matrix   = L;
+                DIRK_matrixij = Lij;
+            }
+            
+            // Point member variables to local variables so linear solver can access them
+            m_A = DIRK_matrix;
+            m_x = k[i]; // Initial guess at solution is value from previous time step
+            m_b = b2;
             
             if ((printLevel > 0) && (m_globRank == 0)) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
             
-            // Point member variables to local variables so linear solvers can access them
-            // TODO : why won't it let me do this for A and b outside of this loop???
-            m_A = L;
-            //HYPRE_ParVectorCopy(g, k[i]);  // k[i] <- g as initial guess? This doesn't seem too good...
-            //if (i > 0) m_x = k[i-1]; Use stage from previous node as initial guess? Not great...
-            m_x = k[i]; // Initial guess at solution is current stage from previous time step
-            m_b = g;
-            
-            // Solve linear system (M + a_ii*dt)*k[i] = g and get convergence statistics
+            // Solve linear system and get convergence statistics
             if (precondition) {
                 SolveGMRES(solve_tol, max_iter, printLevel, true, precondition, AMGiters);
                 HYPRE_GMRESGetNumIterations(m_gmres, &num_iters);
@@ -320,7 +342,7 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
             }
                 
-            // Ensure desired tolerance was reached, otherwise quit
+            // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
             // TODO : Make tolerances/norms consistent... i.e., relative v.s. absolute...
             if (rel_res_norm > solve_tol) {
                 std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
@@ -328,32 +350,197 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << solve_tol << "\n\n";
                 MPI_Finalize();
                 exit(1);
-                //return;
             }
         }
-        
-        /* ------ Sum stages with RK weights to get solution ------ */
+
+        // Sum solution
         for (int i = 0; i < m_s_butcher; i++)  {
             double temp = m_dt * m_b_butcher[i];
-            if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
+            if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*k[i]*k[i]; 
         }
         t += m_dt; // Increment time
     }
-    
-    // Clean up left over variables
-    if (step > 0) {
-        delete[] M_rowptr;
-        delete[] M_colinds;
-        delete[] M_data;
-        delete[] M_rows;
-        delete[] M_cols_per_row;
-        DestroyHypreStages(kij);
-        DestroyHypreSpatialDisc(Lij, gij, xij);
+
+
+    /* ---------------------------------------------------------- */
+    /* ------------------------ Clean up ------------------------ */
+    /* ---------------------------------------------------------- */
+    for (int i = 0; i < vectors.size(); i++) {
+        HYPRE_IJVectorDestroy(vectorsij[i]);
     }
-    
-    // Assign final solution to member variable for printing etc.
+    if (step > 0) {
+        HYPRE_IJVectorDestroy(gij);
+        HYPRE_IJMatrixDestroy(Lij);
+        if (!rebuildMatrix) HYPRE_IJMatrixDestroy(DIRK_matrixij); // Clean up extra matrix if we used it
+        m_A = NULL;
+        m_b = NULL;
+    }
+
+    // Assign final solution to member variable for saving etc.
     m_xij = uij;
 }
+
+
+// // TODO : 
+// // Is there any reason to have member variables point to the last matrix and RHS that were solved? It's kind of meaningless...
+// void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
+//                                 bool binv_scale, int precondition, int AMGiters) 
+// {
+// 
+//     double t = 0.0; // Initial time
+//     int ilower, iupper, onProcSize;
+//     double temp;
+// 
+//     HYPRE_ParVector u;
+//     HYPRE_IJVector  uij;
+//     GetHypreInitialCondition(u, uij); 
+// 
+//     HYPRE_ParCSRMatrix L;
+//     HYPRE_IJMatrix     Lij;
+//     HYPRE_ParVector    g;
+//     HYPRE_IJVector     gij;
+//     HYPRE_ParVector    x;
+//     HYPRE_IJVector     xij;
+// 
+//     std::vector<HYPRE_ParVector> k;
+//     std::vector<HYPRE_IJVector>  kij;
+// 
+//     // Mass matrix components
+//     int    * M_rowptr;
+//     int    * M_colinds;
+//     double * M_data;
+//     double * M_scaled_data;
+//     int    * M_rows;
+//     int    * M_cols_per_row;
+//     int      spatialDOFs;
+// 
+//     // For monitoring convergence of linear solver
+//     int    num_iters;
+//     double rel_res_norm;
+// 
+// 
+//     // Take nt-1 steps
+//     int step = 0;
+//     for (step = 0; step < m_nt-1; step++) {
+//         // Initialize stage vectors on first time step
+//         if (step == 0) InitializeHypreStages(uij, k, kij);
+// 
+//         /* ------ Compute ith stage vector, k[i] ------ */
+//         for (int i = 0; i < m_s_butcher; i++) {
+//             if (step > 0) DestroyHypreSpatialDisc(Lij, gij, xij);
+// 
+//             // Get spatial discretization at t + c[i]*dt
+//             GetHypreSpatialDisc(L, Lij, g, gij, x, xij, ilower, iupper, t + m_dt * m_c_butcher[i]); 
+// 
+// 
+//             // TODO. Need a proper temporary vector here rather than x... 
+//             HYPRE_ParVectorCopy(u, x); // x <- u.  x is just a place holder...
+//             for (int j = 0; j < i; j++) {
+//                 double temp = m_dt * m_A_butcher[i][j];
+//                 if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], x); // x <- x + dt*aij*k[j]
+//             }
+//             // RHS of linear system now  stored in g...
+//             hypre_ParCSRMatrixMatvec(-1.0, L, x, 1.0, g); // g <- -L[i]*x + g
+// 
+// 
+//             // // Old silly way...
+//             // // Build RHS of linear system, recycle g to hold this since it's not needed again
+//             // hypre_ParCSRMatrixMatvec(-1.0, L, u, 1.0, g); // g <- -L[i]*u + g 
+//             // for (int j = 0; j < i; j++) {
+//             //     temp = -m_dt * m_A_butcher[i][j];
+//             //     if (temp != 0.0) hypre_ParCSRMatrixMatvec(temp, L, k[j], 1.0, g);  // g <- g - dt*A[i,j]*L[i]*k[j]  
+//             // }
+// 
+//             /* -------------- Solve linear system for ith stage vector, k[i] -------------- */
+//             // Get components of mass matrix only after spatial discretization has been assembled for the first time
+//             if ((step == 0) && (i == 0)) 
+//             {
+//                 getMassMatrix(M_rowptr, M_colinds, M_data);
+//                 onProcSize = iupper - ilower + 1;
+//                 M_rows         = new int[onProcSize];
+//                 M_cols_per_row = new int[onProcSize];
+//                 for (int rowidx=0; rowidx<onProcSize; rowidx++) {
+//                     M_rows[rowidx]         = ilower + rowidx;
+//                     M_cols_per_row[rowidx] = M_rowptr[rowidx+1] - M_rowptr[rowidx];
+//                 }
+//                 M_scaled_data = new double[M_rowptr[onProcSize]]; // Temp vector to use below...
+//             }
+// 
+//             // TODO : Handle ESDIRK? Then just need to invert mass matrix..., for the moment, just throw an error 
+//             if (m_A_butcher[i][i] == 0.0) {
+//                 std::cout << "WARNING: DIRK solver cannot handle Butcher matrix A with 0s on its diagonal!" << '\n';
+//                 MPI_Finalize();
+//                 exit(1);
+//                 //return;
+//             }
+// 
+//             // TODO : I'm scaling MASS and RHS vector by 1/dt*a_ii for the moment 
+//             // since I don't know an efficient way to scale values of L...
+//             // really want to scale entries in L by dt * a_ii
+//             temp = 1/(m_dt * m_A_butcher[i][i]); 
+//             for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
+//                 M_scaled_data[dataInd] = temp  * M_data[dataInd]; // M <- M / (dt* a_ii)
+//             }
+//             HYPRE_ParVectorScale(temp, g); // g <- g/(dt * a_ii)
+// 
+//             // Get DIRK matrix, L <- M + a_ii*dt*L
+//             HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+// 
+//             if ((printLevel > 0) && (m_globRank == 0)) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+// 
+//             // Point member variables to local variables so linear solvers can access them
+//             // TODO : why won't it let me do this for A and b outside of this loop???
+//             m_A = L;
+//             //HYPRE_ParVectorCopy(g, k[i]);  // k[i] <- g as initial guess? This doesn't seem too good...
+//             //if (i > 0) m_x = k[i-1]; Use stage from previous node as initial guess? Not great...
+//             m_x = k[i]; // Initial guess at solution is current stage from previous time step
+//             m_b = g;
+// 
+//             // Solve linear system (M + a_ii*dt)*k[i] = g and get convergence statistics
+//             if (precondition) {
+//                 SolveGMRES(solve_tol, max_iter, printLevel, true, precondition, AMGiters);
+//                 HYPRE_GMRESGetNumIterations(m_gmres, &num_iters);
+//                 HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &rel_res_norm);
+//             } else {
+//                 SolveAMG(solve_tol, max_iter, printLevel);
+//                 HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
+//                 HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
+//             }
+// 
+//             // Ensure desired tolerance was reached, otherwise quit
+//             // TODO : Make tolerances/norms consistent... i.e., relative v.s. absolute...
+//             if (rel_res_norm > solve_tol) {
+//                 std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+//                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+//                 std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << solve_tol << "\n\n";
+//                 MPI_Finalize();
+//                 exit(1);
+//                 //return;
+//             }
+//         }
+// 
+//         /* ------ Sum stages with RK weights to get solution ------ */
+//         for (int i = 0; i < m_s_butcher; i++)  {
+//             double temp = m_dt * m_b_butcher[i];
+//             if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
+//         }
+//         t += m_dt; // Increment time
+//     }
+// 
+//     // Clean up left over variables
+//     if (step > 0) {
+//         delete[] M_rowptr;
+//         delete[] M_colinds;
+//         delete[] M_data;
+//         delete[] M_rows;
+//         delete[] M_cols_per_row;
+//         DestroyHypreStages(kij);
+//         DestroyHypreSpatialDisc(Lij, gij, xij);
+//     }
+// 
+//     // Assign final solution to member variable for printing etc.
+//     m_xij = uij;
+// }
 
 // //  TODO : deal with mass matrix solver... Maybe make a new solver...
 // void SpaceTimeMatrix::ERKSolve() 
@@ -464,33 +651,25 @@ void SpaceTimeMatrix::ERKSolve()
     }
 
 
-    /* ----------------------------------------------------------- */
-    /* ------------------------ Time step ------------------------ */
-    /* ----------------------------------------------------------- */
+    /* ------------------------------------------------------------ */
+    /* ------------------------ Time march ------------------------ */
+    /* ------------------------------------------------------------ */
     // Take nt-1 steps
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
-        // Get spatial discretization at initial time
-        if (step == 0) {
-            RKGetHypreSpatialDiscretizationG(g, gij, t); // Solution-independent term
-            RKGetHypreSpatialDiscretizationL(L, Lij, t); // Solution-dependent term
-        }
         
         // Build ith stage vector, k[i]
         for (int i = 0; i < m_s_butcher; i++) {
-            // Recompute spatial discretization at t + c[i]*dt only if it's time dependent
-            if (step + i > 0) {
-                // Solution-independent term
-                if (m_g_isTimedependent) {
-                    HYPRE_IJVectorDestroy(gij);
-                    RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
-                }
-                // Solution-dependent term
-                if (m_L_isTimedependent) {
-                    HYPRE_IJMatrixDestroy(Lij);
-                    RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
-                } 
+            // Compute spatial discretization at t + c[i]*dt
+            if (m_g_isTimedependent || (i == 0 && step == 0)) {
+                HYPRE_IJVectorDestroy(gij);
+                RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
+            // Solution-dependent term
+            if (m_L_isTimedependent || (i == 0 && step == 0)) {
+                HYPRE_IJMatrixDestroy(Lij);
+                RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
+            } 
 
             HYPRE_ParVectorCopy(u, b); // b <- u
             for (int j = 0; j < i; j++) {
@@ -505,7 +684,7 @@ void SpaceTimeMatrix::ERKSolve()
         // Sum solution
         for (int i = 0; i < m_s_butcher; i++)  {
             double temp = m_dt * m_b_butcher[i];
-            if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*b[i]*k[i]; 
+            if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*k[i]*k[i]; 
         }
         t += m_dt; // Increment time
     }
@@ -934,7 +1113,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
     if (m_timeDisc == 111) {
-        m_ERK             = true;
+        m_is_ERK             = true;
         m_s_butcher       = 1;
         m_A_butcher[0][0] = 0.0;
         m_b_butcher[0]    = 1.0; 
@@ -942,7 +1121,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     
     // 2nd-order Heun's method    
     } else if (m_timeDisc == 122) {
-        m_ERK             = true;
+        m_is_ERK             = true;
         m_s_butcher       = 2;
         m_A_butcher[0][0] = 0.0;
         m_A_butcher[1][0] = 1.0;
@@ -955,7 +1134,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 3rd-order optimal SSPERK
     } else if (m_timeDisc == 133) {
-        m_ERK             = true;
+        m_is_ERK             = true;
         m_s_butcher       = 3;
         m_A_butcher[0][0] = 0.0; // 1st col
         m_A_butcher[1][0] = 1.0;
@@ -975,7 +1154,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
 
     // Classical 4th-order ERK
     } else if (m_timeDisc == 144){
-        m_ERK             = true;
+        m_is_ERK             = true;
         m_s_butcher       = 4;
         m_A_butcher[0][0] = 0.0; // 1st col
         m_A_butcher[1][0] = 1.0/2.0;
@@ -1006,8 +1185,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- SDIRK tables --- */
     // Backward Euler, 1st-order
     } else if (m_timeDisc == 211) {
-        m_DIRK            = true;
-        m_SDIRK           = true;
+        m_is_DIRK            = true;
+        m_is_SDIRK           = true;
         m_s_butcher       = 1;
         m_A_butcher[0][0] = 1.0;
         m_b_butcher[0]    = 1.0; 
@@ -1016,8 +1195,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
     } else if (m_timeDisc == 222) {
         double sqrt2      = 1.414213562373095;
-        m_DIRK            = true;
-        m_SDIRK           = true;
+        m_is_DIRK            = true;
+        m_is_SDIRK           = true;
         m_s_butcher       = 2;
         m_A_butcher[0][0] = 1.0 - sqrt2/2.0;
         m_A_butcher[1][0] = sqrt2 - 1.0;
@@ -1035,8 +1214,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         double beta       =  0.5*(1.0 - zeta); 
         double gamma      = -3.0/2.0*zeta*zeta + 4.0*zeta - 0.25;
         double epsilon    =  3.0/2.0*zeta*zeta - 5.0*zeta + 1.25;
-        m_DIRK            =  true;
-        m_SDIRK           =  true;
+        m_is_DIRK            =  true;
+        m_is_SDIRK           =  true;
         m_s_butcher       =  3;
         m_A_butcher[0][0] =  zeta; // 1st col
         m_A_butcher[1][0] =  beta;
@@ -1056,8 +1235,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 4th-order (5-stage) L-stable SDIRK (see Wanner's & Hairer's, Solving ODEs II, 1996, eq. 6.16)
     } else if (m_timeDisc == 254) {
-        m_DIRK            =  true;
-        m_SDIRK           =  true;
+        m_is_DIRK            =  true;
+        m_is_SDIRK           =  true;
         m_s_butcher       =  5;
         // 1st col of A
         m_A_butcher[0][0] =  1.0/4.0; 
@@ -1337,7 +1516,12 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         if (m_solver) {
             std::cout << "Rebuilding solver.\n";
             HYPRE_BoomerAMGDestroy(m_solver);
+        } else {
+            std::cout << "Building solver.\n";
         }
+        
+        // Do not rebuild solver unless parameters are changed.
+        m_rebuildSolver = false;
 
         // Array to store relaxation scheme and pass to Hypre
         //      TODO: does hypre clean up grid_relax_points
@@ -1409,9 +1593,6 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         else if (m_solverOptions.filter_tolA == -1) {
             HYPRE_BoomerAMGSetADropType(m_solver, -1);
         }
-
-        // Do not rebuild solver unless parameters are changed.
-        m_rebuildSolver = false;
 
         // Set cycle type for solve 
         HYPRE_BoomerAMGSetCycleType(m_solver, m_solverOptions.cycle_type);
