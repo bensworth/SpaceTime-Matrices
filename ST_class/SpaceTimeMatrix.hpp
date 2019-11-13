@@ -163,6 +163,8 @@ private:
     /* ------ Sequential time integration routines ------ */
     void ERKSolve();            /* General purpose ERK solver */
     void ERKSolveWithMass();    /* General purpose ERK solver that can invert mass matrices */
+    void DIRKSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
+                        bool binv_scale, int precondition, int AMGiters);   
     
     void RKInitializeHypreVectors(HYPRE_ParVector                &u0, 
                                     HYPRE_IJVector               &u0ij, 
@@ -179,42 +181,6 @@ private:
                                             double            t);
     
     
-    
-    
-
-    void DIRKSolve(double solve_tol, int max_xiter, int printLevel,
-                        bool binv_scale, int precondition, int AMGiters);   /* General purpose DIRK solver */
-    void SDIRKTimeIndependentSolve(); // TODO ?
-    void DIRKTimeIndependentSolve(); // TODO ?
-    
-    void GetHypreInitialCondition(HYPRE_ParVector &u0, HYPRE_IJVector &u0ij);
-    
-    
-    
-    
-    
-    
-    
-    void InitializeHypreStages(HYPRE_IJVector uij, 
-                                std::vector<HYPRE_ParVector> &k, 
-                                std::vector<HYPRE_IJVector> &kij);
-    void DestroyHypreStages(std::vector<HYPRE_IJVector> &kij);
-    
-    void GetHypreSpatialDisc(HYPRE_ParCSRMatrix  &L,
-                                HYPRE_IJMatrix   &Lij,
-                                HYPRE_ParVector  &g,
-                                HYPRE_IJVector   &gij,
-                                HYPRE_ParVector  &x,
-                                HYPRE_IJVector   &xij,
-                                int              &ilower,
-                                int              &iupper,
-                                double t);
-    void DestroyHypreSpatialDisc(HYPRE_IJMatrix &Lij, 
-                                    HYPRE_IJVector &gij, 
-                                    HYPRE_IJVector &xij);
-    
-    
-
 protected:    
     bool     m_useSpatialParallel;   /*  */
     
