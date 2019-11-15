@@ -171,7 +171,7 @@ void SpaceTimeMatrix::RKSolve(double solve_tol, int max_iter, int printLevel,
                                 bool binv_scale, int precondition, int AMGiters)
 {
     if (m_is_ERK) {
-        ERKSolve();
+        ERKSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
     } else if (m_is_DIRK) {
         DIRKSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
     } else {
@@ -185,7 +185,7 @@ void SpaceTimeMatrix::RKSolve(double solve_tol, int max_iter, int printLevel,
 /* Sequential time-stepping routine for general DIRK schemes */
 void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                                  bool binv_scale, int precondition, int AMGiters) 
-{    
+{   
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
     /* ---------------------------------------------------------------------- */
@@ -194,9 +194,9 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     HYPRE_ParVector    u;   // Solution vector
     HYPRE_IJVector     uij;
     HYPRE_ParVector    g;   // Spatial discretization vector
-    HYPRE_IJVector     gij;
+    HYPRE_IJVector     gij = NULL;
     HYPRE_ParCSRMatrix L;   // Spatial discretization matrix  
-    HYPRE_IJMatrix     Lij;
+    HYPRE_IJMatrix     Lij = NULL;
     HYPRE_ParCSRMatrix DIRK_matrix; // Matrix to be inverted in linear solve
     HYPRE_IJMatrix     DIRK_matrixij;
 
@@ -247,25 +247,20 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     // Take nt-1 steps
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
-        
         /* -------------- Build RHS vector, b2, in linear system (M+a_ii*dt*L)*k[i]=b2 -------------- */
         for (int i = 0; i < m_s_butcher; i++) {
             // Compute spatial discretization at t + c[i]*dt
             // Solution-independent term
             if (m_g_isTimedependent || (i == 0 && step == 0)) {
-                HYPRE_IJVectorDestroy(gij);
+                //HYPRE_IJVectorDestroy(gij);
                 RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
             // Solution-dependent term
             if (rebuildMatrix || (i == 0 && step == 0)) {
-                HYPRE_IJMatrixDestroy(Lij);
+                //HYPRE_IJMatrixDestroy(Lij);
                 RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
-            
-                // DIRK matrix is going to change, will need to rebuild linear solver 
-                // (this variable is reset to false when the solver (re)built)
-                m_rebuildSolver = true; 
             } 
-        
+            
             // Assemble RHS of linear system in b2
             HYPRE_ParVectorCopy(u, b1); // b1 <- u
             for (int j = 0; j < i; j++) {
@@ -273,6 +268,18 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[j], b1); // b1 <- b1 + dt*aij*k[j]
             }
             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, b1, 1.0, g, b2); // b2 <- -L*b1 + g 
+            
+            
+            // Set inital guess at ith stage
+            HYPRE_ParVectorCopy(b2, k[i]); // Stage is RHS of linear system
+            
+            //HYPRE_ParVectorCopy(u, k[i]); // Stage is u at start of current interval
+            
+            // See Carpenter p.55 (115). But assumes L is evaluated at t which is not the case if it's time dependent
+            // double temp2 = m_dt * m_c_butcher[i];
+            // hypre_ParCSRMatrixMatvecOutOfPlace(-temp2, L, u, temp2, g, k[i]); // k[i] <- dt*ci*[ -L*u + g ]
+            // HYPRE_ParVectorAxpy(1.0, u, k[i]); // k[i] <- k[i] + u
+            
             
             /* -------------- Solve linear system, (M+a_ii*dt*L)*k[i]=b2, for ith stage vector, k[i] -------------- */
             // Get components of mass matrix only after spatial discretization has been assembled for the first time
@@ -323,14 +330,23 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
                 DIRK_matrix   = L;
                 DIRK_matrixij = Lij;
+                // DIRK matrix has changed, will need to rebuild linear solver 
+                // (this variable is reset to false when the solver (re)built)
+                m_rebuildSolver = true; // TODO : make this optional/have a frequency with which it's rebuilt!
             }
+            
+            
+            
             
             // Point member variables to local variables so linear solver can access them
             m_A = DIRK_matrix;
             m_x = k[i]; // Initial guess at solution is value from previous time step
             m_b = b2;
             
-            if ((printLevel > 0) && (m_globRank == 0)) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+            if ((printLevel > 0) && (m_globRank == 0)) {
+                std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                std::cout << "-----------------------------------------\n\n";
+            }
             
             // Solve linear system and get convergence statistics
             if (precondition) {
@@ -344,7 +360,6 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             }
                 
             // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
-            // TODO : Make tolerances/norms consistent... i.e., relative v.s. absolute...
             if (rel_res_norm > solve_tol) {
                 std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
@@ -383,7 +398,8 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
 
 
 /* Sequential time-stepping routine for general ERK schemes without mass matrix */
-void SpaceTimeMatrix::ERKSolve() 
+void SpaceTimeMatrix::ERKSolve(double solve_tol, int max_iter, int printLevel,
+                                 bool binv_scale, int precondition, int AMGiters) 
 {    
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
@@ -393,9 +409,9 @@ void SpaceTimeMatrix::ERKSolve()
     HYPRE_ParVector    u;   // Solution vector
     HYPRE_IJVector     uij;
     HYPRE_ParVector    g;   // Spatial discretization vector
-    HYPRE_IJVector     gij;
+    HYPRE_IJVector     gij = NULL;
     HYPRE_ParCSRMatrix L;   // Spatial discretization matrix  
-    HYPRE_IJMatrix     Lij;
+    HYPRE_IJMatrix     Lij = NULL;
 
     // Place-holder vectors
     std::vector<HYPRE_ParVector> vectors;
@@ -429,12 +445,10 @@ void SpaceTimeMatrix::ERKSolve()
         for (int i = 0; i < m_s_butcher; i++) {
             // Compute spatial discretization at t + c[i]*dt
             if (m_g_isTimedependent || (i == 0 && step == 0)) {
-                HYPRE_IJVectorDestroy(gij);
                 RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
             // Solution-dependent term
             if (m_L_isTimedependent || (i == 0 && step == 0)) {
-                HYPRE_IJMatrixDestroy(Lij);
                 RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
             } 
 
@@ -446,6 +460,10 @@ void SpaceTimeMatrix::ERKSolve()
 
             // Set final value of stage by computing MATVEC
             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, b, 1.0, g, k[i]); // k[i] <- -L*b + g 
+        }
+
+        if ((printLevel > 0) && (m_globRank == 0)) {
+            std::cout << "Time step " << step+1 << "/" << m_nt-1 << '\n';
         }
 
         // Sum solution
@@ -534,6 +552,9 @@ void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationG(HYPRE_ParVector &g,
                                                         HYPRE_IJVector &gij,
                                                         double          t)  
 {
+    // Free vector if currently allocated memory
+    if (gij) HYPRE_IJVectorDestroy(gij);
+    
     int      spatialDOFs;
     int      ilower;
     int      iupper;
@@ -577,6 +598,9 @@ void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
                                                         HYPRE_IJMatrix    &Lij,
                                                         double             t)  
 {
+    // Free matrix if currently allocated memory
+    if (Lij) HYPRE_IJMatrixDestroy(Lij);
+    
     int      m_bsize;
     int      ilower;
     int      iupper;
@@ -1093,10 +1117,10 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
     // Build/rebuild solver
     else {
         if (m_solver) {
-            std::cout << "Rebuilding solver.\n";
+            if (m_globRank == 0) std::cout << "Rebuilding solver.\n";
             HYPRE_BoomerAMGDestroy(m_solver);
         } else {
-            std::cout << "Building solver.\n";
+            if (m_globRank == 0) std::cout << "Building solver.\n";
         }
         
         // Do not rebuild solver unless parameters are changed.

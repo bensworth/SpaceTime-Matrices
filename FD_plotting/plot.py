@@ -285,7 +285,7 @@ if params["space_dim"] == 2:
 
     # Compare uT against the exact solution
     #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.max(np.abs(uT_exact - uT))))
+    print("nx = {}, |uNum - uExact| = {:.16e}".format(nx, np.max(np.abs(uT_exact - uT))))
 
     cmap = plt.cm.get_cmap("coolwarm")
     # ax = fig.gca(projection='3d') 

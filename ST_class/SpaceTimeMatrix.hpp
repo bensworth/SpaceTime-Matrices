@@ -75,6 +75,7 @@ private:
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_solverOptions;
 
+    double m_dumb;
     
     int     m_bsize;                /* DG specific variable... */
 
@@ -161,7 +162,8 @@ private:
 
     
     /* ------ Sequential time integration routines ------ */
-    void ERKSolve();            /* General purpose ERK solver */
+    void ERKSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
+                        bool binv_scale, int precondition, int AMGiters);            /* General purpose ERK solver */
     void ERKSolveWithMass();    /* General purpose ERK solver that can invert mass matrices */
     void DIRKSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
                         bool binv_scale, int precondition, int AMGiters);   
