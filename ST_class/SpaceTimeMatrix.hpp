@@ -35,10 +35,26 @@ struct AMG_parameters {
     // }
 };
 
+/* Struct containing solver options */
+struct Solver_options {
+    bool use_gmres;
+    
+    int rebuildRate;
+    double tol;
+    int maxiter;
+    int printLevel;
+    bool binv_scale;
+    int precondition;
+    int AMGiters;
+};
+
 
 class SpaceTimeMatrix
 {
 private:
+    bool    m_RK;                   /* Runge-Kutta time integration */
+    bool    m_BDF;                  /* BDF time integration */
+    
     bool    m_pit;                  /* Parallel (true) or sequential (false) in time */
     double  m_dt;                   /* Time step (constant) */
     int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
@@ -73,7 +89,8 @@ private:
     HYPRE_IJVector      m_bij;
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
-    AMG_parameters      m_solverOptions;
+    AMG_parameters      m_AMGParameters;
+    Solver_parameters   m_solverParameters;
 
     double m_dumb;
     
@@ -85,7 +102,7 @@ private:
     int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
     bool    m_isTimeDependent; //  TODO : Will need to be removed ...
     int     m_spCommSize; // TODO : remove... now protected
-    double  m_t0; // TOOD :  do we use this?? delete??
+    double  m_t0; 
     double  m_t1; // TOOD :  do we use this?? delete??
     int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
 
@@ -96,7 +113,7 @@ private:
 
     // Routine to build space-time matrices when the spatial discretization
     // takes more than one processor.
-    void RK(int *&rowptr, int *&colinds, double *&data, double *&B,
+    void RKSpaceTimeBlock(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
@@ -104,7 +121,7 @@ private:
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
 
     // Routine to build space-time matrices when spatial at least one DOF is allocated per processor.
-    void RK(int* &rowptr, int* &colinds, double* &data, double* &B, 
+    void RKSpaceTimeBlock(int* &rowptr, int* &colinds, double* &data, double* &B, 
               double* &X, int &onProcSize);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
@@ -162,25 +179,28 @@ private:
 
     
     /* ------ Sequential time integration routines ------ */
-    void ERKSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
+    void ERKTimeSteppingSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
                         bool binv_scale, int precondition, int AMGiters);            /* General purpose ERK solver */
     void ERKSolveWithMass();    /* General purpose ERK solver that can invert mass matrices */
-    void DIRKSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
-                        bool binv_scale, int precondition, int AMGiters);   
+    void DIRKTimeSteppingSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
+                        bool binv_scale, int precondition, int AMGiters, int rebuildIters);   
     
-    void RKInitializeHypreVectors(HYPRE_ParVector                &u0, 
+    void GetHypreInitialCondition(HYPRE_ParVector  &u0, 
+                                    HYPRE_IJVector &u0ij); 
+    
+    void InitializeHypreVectors(HYPRE_ParVector                  &u0, 
                                     HYPRE_IJVector               &u0ij, 
                                     int                           numVectors,
                                     std::vector<HYPRE_ParVector> &z, 
                                     std::vector<HYPRE_IJVector>  &zij); 
                                     
-    void RKGetHypreSpatialDiscretizationG(HYPRE_ParVector  &g,
+    void GetHypreSpatialDiscretizationG(HYPRE_ParVector    &g,
                                             HYPRE_IJVector &gij,
                                             double          t);
                                                     
-    void RKGetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
-                                            HYPRE_IJMatrix   &Lij,
-                                            double            t);
+    void GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
+                                            HYPRE_IJMatrix &Lij,
+                                            double          t);
     
     
 protected:    
@@ -217,7 +237,7 @@ public:
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
-    void SetAMGParameters(AMG_parameters &params);
+    void SetAMGParameters(AMG_parameters &AMG_params);
     void SolveAMG(double tol=1e-8, int maxiter=250, int printLevel=3,
                   bool binv_scale=true);
     void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3,
@@ -225,8 +245,10 @@ public:
     void PrintMeshData();
     
     
+    void SetSolverParameters(Solver_parameters &solver_params); 
+    
     /* Sequential time integration */
-    void RKSolve(double tol=1e-8, int maxiter=250, int printLevel=3,
-                    bool binv_scale=true, int precondition=1, int AMGiters=10);
+    void TimeSteppingSolve(int rebuildRate = 0, double tol=1e-8, int maxiter=250, int printLevel=3,
+                            bool binv_scale=true, int precondition=1, int AMGiters=10);
     
 };

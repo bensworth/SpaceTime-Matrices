@@ -22,12 +22,10 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &numProcess);
 
     // Parameters
-    int pit_temp     = 1; // TODO : OptionsParser cannot  seem to handle a bool here??? 
-    bool pit;
+    int pit     = 1; // TODO : OptionsParser cannot  seem to handle a bool here??? 
     bool isTimeDependent = true;
     int numTimeSteps = 2; // TODO: I think this should be removed...
     int nt           = 2;
-    int refLevels    = 1;
     int order        = 1;
     int dim          = 2;
     int use_gmres    = 0;
@@ -36,11 +34,17 @@ int main(int argc, char *argv[])
     double solve_tol = 1e-8;
     int print_level  = 3;
     int timeDisc     = 211;
-    int spatialDisc  = 1;
     int max_iter     = 250;
     double dt        = -1;
+    int AMGiters     = 1;
+    int rebuildRate  = 0; /* Sequential time integration: Rate at which solver is rebuilt */
+
+    /* --- Spatial discretization parameters --- */
+    int spatialDisc  = 1;
+    int refLevels    = 1;
+
+    // Finite-element specific
     int lump_mass    = true;
-    int AMGiters = 1;
 
     // Finite-difference specific parameters
     const char * out = ""; // Filename of data to be saved...
@@ -55,20 +59,26 @@ int main(int argc, char *argv[])
 
     OptionsParser args(argc, argv);
     
-    args.AddOption(&pit_temp, "-pit", "--parallel-in-time",
+    args.AddOption(&pit, "-pit", "--parallel-in-time",
                    "1=Parallel in time, 0=Sequential in time");               
-    args.AddOption(&spatialDisc, "-s", "--spatial-disc",
-                   "Spatial discretization (1=CG diffusion, 2=DG advection, 3=FD advection");
     args.AddOption(&timeDisc, "-t", "--time-disc",
                   "Time discretization (see RK IDs).");
-    args.AddOption(&order, "-o", "--order",
-                  "Finite element order.");
     args.AddOption(&dt, "-dt", "--dt",
                   "Time step size.");
+                  
+    args.AddOption(&rebuildRate, "-rebuild", "--rebuild-rate",
+                   "Frequency at which AMG solver is rebuilt during time stepping (-1=never rebuild, 0=rebuild every opportunity, x>0=after x time steps");              
+                  
+    /* Spatial discretization */
+    args.AddOption(&spatialDisc, "-s", "--spatial-disc",
+                   "Spatial discretization (1=CG diffusion, 2=DG advection, 3=FD advection");
+    args.AddOption(&order, "-o", "--order",
+                  "Finite element order."); // TODO : general space disc refinement?
     args.AddOption(&refLevels, "-l", "--level",
                   "Number levels mesh refinement.");
     args.AddOption(&lump_mass, "-lump", "--lump-mass",
                   "Lump mass matrix to be diagonal.");
+                  
     args.AddOption(&print_level, "-p", "--print-level",
                   "Hypre print level.");
     args.AddOption(&solve_tol, "-tol", "--solve-tol",
@@ -91,6 +101,7 @@ int main(int argc, char *argv[])
     //              "Number of time steps.");
     
     args.AddOption(&nt, "-nt", "--num-time-steps", "Number of time steps.");
+    
     args.AddOption(&use_gmres, "-gmres", "--use-gmres",
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
     args.AddOption(&AMGiters, "-amgi", "--amg-iters",
@@ -137,13 +148,15 @@ int main(int argc, char *argv[])
         //args.PrintOptions(std::cout); TODO : uncomment  me...
     }
 
-    // TODO : How can I originally have pit be a bool?
-    pit = bool(pit_temp);
+    pit = bool(pit); // Cast to boolean
 
     if (dt < 0) dt = 1.0/numTimeSteps;
 
     // For now have to keep SpaceTime object in scope so that MPI Communicators
     // get destroyed before MPI_Finalize() is called. 
+    /* -------------------------------------------------------------- */
+    /* ------ Continuous-Galerkin discretizations of diffusion ------ */
+    /* -------------------------------------------------------------- */
     if (spatialDisc == 1) {
         CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, pit, refLevels, order, lump_mass);
@@ -161,6 +174,11 @@ int main(int argc, char *argv[])
         }
         STmatrix.PrintMeshData();
     }
+    
+
+    /* ----------------------------------------------------------------- */
+    /* ------ Discontinuous-Galerkin discretizations of advection ------ */
+    /* ----------------------------------------------------------------- */
     else if (spatialDisc == 2) {
         DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, pit, refLevels, order, lump_mass);
@@ -179,7 +197,11 @@ int main(int argc, char *argv[])
         STmatrix.PrintMeshData();
     }
     
-    /* Finite-difference discretization of advection */
+    
+    
+    /* ------------------------------------------------------------ */
+    /* ------ Finite-difference discretizations of advection ------ */
+    /* ------------------------------------------------------------ */
     else if (spatialDisc == 3) {
         
         double CFL_fraction;
@@ -219,7 +241,8 @@ int main(int argc, char *argv[])
         dt *= CFL_fraction;
         
         // Manually set time to integrate to
-        double T = 2.0; // For 1D in space...
+        //double T = 2.0; // For 1D in space...
+        double T = 2.0  * dt; // For 1D in space...
         if (dim == 2) T = 0.5; // For 2D in space...
         
         // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
@@ -258,9 +281,9 @@ int main(int argc, char *argv[])
             //STmatrix.SetAIRHyperbolic();
             // TODO : Not really sure what the best way is to give linear solver info...
             if (use_gmres) {
-                STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres, AMGiters);
+                STmatrix.TimeSteppingSolve(rebuildRate, solve_tol, max_iter, print_level, false, use_gmres, AMGiters);
             } else {
-                STmatrix.RKSolve(solve_tol, max_iter, print_level, false, use_gmres);
+                STmatrix.TimeSteppingSolve(rebuildRate, solve_tol, max_iter, print_level, false, use_gmres);
             }
         
         } else {
@@ -305,7 +328,7 @@ int main(int argc, char *argv[])
             //AMG = {1.5, "", "FFC", 100, 3, 3, 0.1, 0.1, 0.0, 0.0, 1};
             //STmatrix.SetAMGParameters(AMG);
             //
-            //STmatrix.SetAIRHyperbolic();
+            STmatrix.SetAIRHyperbolic();
             if (use_gmres) {
                 STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
                                     true, use_gmres, AMGiters);

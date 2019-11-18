@@ -61,7 +61,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
                                  int nt, double dt, bool pit)
     : m_globComm{globComm}, m_timeDisc{timeDisc}, m_nt{nt},
       m_dt{dt}, m_pit{pit}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
-      m_M_exists(true),
+      m_M_exists(true), m_RK(false), m_BDF(false),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_bsize(1), m_hmin(-1), m_hmax(-1), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true)
@@ -74,62 +74,63 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
     MPI_Comm_size(m_globComm, &m_numProc);
 
 
-    // Get RK Butcher tabelaux
-    GetButcherTableaux();
-    // Set member variables
+    // Runge-Kutta time integration
+    if (m_timeDisc >= 111 && m_timeDisc < 300) {
+        m_RK = true;
+        GetButcherTableaux(); // Get RK Butcher tabelaux
+    } else {
+        if (m_globRank == 0) std::cout << "Temporal-discretization format is invalid!\n";   
+    }
+    
     
     /* ---------------------------------------------- */
     /* ------ Solving global space-time system ------ */
     /* ---------------------------------------------- */
     if (m_pit) {
+        
         // Check that number of time steps times number of stages divides the number MPI processes or vice versa.
-        /* ------ Temporal + spatial parallelism ------ */
-        if (m_numProc > (m_nt * m_s_butcher)) {
-            if (m_globRank == 0) {
-                std::cout << "Space-time system: Spatial + temporal parallelism!\n";    
+        if (m_RK) {        
+            /* ------ Temporal + spatial parallelism ------ */
+            if (m_numProc > (m_nt * m_s_butcher)) {
+                if (m_globRank == 0) std::cout << "Space-time system: Spatial + temporal parallelism!\n";
+                
+                m_useSpatialParallel = true;
+                if (m_numProc % (m_nt * m_s_butcher) != 0) {
+                    if (m_globRank == 0) std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << "\n";
+                    MPI_Finalize();
+                    exit(1);
+                }
+                else {
+                    m_spatialCommSize = m_numProc / (m_nt * m_s_butcher);
+                    m_Np_x = m_spatialCommSize; // TODO : remove. 
+                }
+                 
+                // Set up communication group for spatial discretizations.
+                m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
+                m_DOFInd = m_globRank / m_Np_x;
+                MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
+                MPI_Comm_rank(m_spatialComm, &m_spatialRank);
+                MPI_Comm_size(m_spatialComm, &m_spCommSize);
             }
             
-            m_useSpatialParallel = true;
-            if (m_numProc % (m_nt * m_s_butcher) != 0) {
-                if (m_globRank == 0) {
-                    std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << "\n";
-                }
-                MPI_Finalize();
-                exit(1);
-                //return;
-            }
+            /* ------ Temporal parallelism only ------ */
             else {
-                m_spatialCommSize = m_numProc / (m_nt * m_s_butcher);
-                m_Np_x = m_spatialCommSize; // TODO : remove. 
-            }
-             
-            // Set up communication group for spatial discretizations.
-            m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
-            m_DOFInd = m_globRank / m_Np_x;
-            MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
-            MPI_Comm_rank(m_spatialComm, &m_spatialRank);
-            MPI_Comm_size(m_spatialComm, &m_spCommSize);
-
-
-        }
-        /* ------ Temporal parallelism only ------ */
-        else {
-            if (m_globRank == 0) {
-                if (m_numProc > 1) std::cout << "Space-time system: Temporal parallelism only!\n";    
-                else std::cout << "Space-time system: No parallelism!\n";    
-            }
-            
-            m_useSpatialParallel = false;
-            if ( (m_nt * m_s_butcher) % m_numProc  != 0) {
                 if (m_globRank == 0) {
-                    std::cout << "Error: number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << " does not divide number of processes " << m_numProc << "\n";
+                    if (m_numProc > 1) std::cout << "Space-time system: Temporal parallelism only!\n";    
+                    else std::cout << "Space-time system: No parallelism!\n";    
                 }
-                MPI_Finalize();
-                exit(1);
-                //return;
+                
+                m_useSpatialParallel = false;
+                if ( (m_nt * m_s_butcher) % m_numProc  != 0) {
+                    if (m_globRank == 0) {
+                        std::cout << "Error: number of time points (" << m_nt << ") * number of RK stages (" << m_s_butcher << ") == " << m_nt * m_s_butcher << " does not divide number of processes " << m_numProc << "\n";
+                    }
+                    MPI_Finalize();
+                    exit(1);
+                }
+                m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
+                m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
             }
-            m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
-            m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
         }
     
     
@@ -167,38 +168,66 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
 
 
 /* Call appropiate sequential time-stepping routine */
-void SpaceTimeMatrix::RKSolve(double solve_tol, int max_iter, int printLevel,
-                                bool binv_scale, int precondition, int AMGiters)
+void SpaceTimeMatrix::TimeSteppingSolve(int rebuildRate,
+                                            double solve_tol, 
+                                            int max_iter, 
+                                            int printLevel,
+                                            bool binv_scale, 
+                                            int precondition, 
+                                            int AMGiters)
 {
-    if (m_is_ERK) {
-        ERKSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
-    } else if (m_is_DIRK) {
-        DIRKSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
-    } else {
-        std::cout << "WARNING: Only ERK and DIRK solvers available" << '\n';
-        MPI_Finalize();
-        exit(1);
+    
+    // Runge-Kutta routines: Integrate nt-1 steps from time=0
+    if (m_RK) {
+        m_t0 = 0.0; // Set global starting time to 0
+        
+        // Setup initial condition for time-integration 
+        HYPRE_ParVector u0;   
+        HYPRE_IJVector  u0ij;
+        GetHypreInitialCondition(u0, u0ij);
+        
+        // Copy initial condition into member vector so that RK routines can access it
+        m_x   = u0;
+        m_xij = u0ij;
+        
+        if (m_is_ERK) {
+            ERKTimeSteppingSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
+        } else if (m_is_DIRK) {
+            DIRKTimeSteppingSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters, rebuildRate);
+        }
     }
 }
 
 
 /* Sequential time-stepping routine for general DIRK schemes */
-void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
-                                 bool binv_scale, int precondition, int AMGiters) 
+void SpaceTimeMatrix::DIRKTimeSteppingSolve(double solve_tol, 
+                                                int max_iter, 
+                                                int printLevel,
+                                                bool binv_scale, 
+                                                int precondition, 
+                                                int AMGiters,
+                                                int rebuildRate) 
 {   
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
     /* ---------------------------------------------------------------------- */
-    double t = 0.0;         // Initial time
-
-    HYPRE_ParVector    u;   // Solution vector
-    HYPRE_IJVector     uij;
-    HYPRE_ParVector    g;   // Spatial discretization vector
-    HYPRE_IJVector     gij = NULL;
-    HYPRE_ParCSRMatrix L;   // Spatial discretization matrix  
-    HYPRE_IJMatrix     Lij = NULL;
-    HYPRE_ParCSRMatrix DIRK_matrix; // Matrix to be inverted in linear solve
-    HYPRE_IJMatrix     DIRK_matrixij;
+    double t = m_t0;        // Initial time to integrate from
+    
+    // Check that solution vector has been initialized!
+    if (!m_xij) {
+        std::cout << "WARNING: Global solution vector must be allocated before beginning RK time stepping" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    HYPRE_ParVector    u   = m_x;   // Initial solution vector to integrate from
+    HYPRE_IJVector     uij = m_xij;
+    
+    HYPRE_ParVector    g             = NULL; // Spatial discretization vector
+    HYPRE_IJVector     gij           = NULL;
+    HYPRE_ParCSRMatrix L             = NULL; // Spatial discretization matrix  
+    HYPRE_IJMatrix     Lij           = NULL;
+    HYPRE_ParCSRMatrix DIRK_matrix   = NULL; // Matrix to be inverted in linear solve
+    HYPRE_IJMatrix     DIRK_matrixij = NULL;
 
     // Place-holder vectors
     std::vector<HYPRE_ParVector> vectors;
@@ -206,7 +235,7 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     int numVectors = m_s_butcher + 2; // Have s stage vectors + 2 temporary vectors
 
     // Get initial condition and initialize place-holder vectors
-    RKInitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
+    InitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
 
     // Shallow copy vectors into variables with meaningful names
     HYPRE_ParVector              b1   = vectors[0];  // Temporary vector
@@ -240,7 +269,6 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
     // Is it necessary to build spatial disc. matrix/DIRK matrix more than once?
     bool rebuildMatrix = ((m_L_isTimedependent) || (!m_is_SDIRK));
 
-
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
     /* ------------------------------------------------------------ */
@@ -253,12 +281,12 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             // Solution-independent term
             if (m_g_isTimedependent || (i == 0 && step == 0)) {
                 //HYPRE_IJVectorDestroy(gij);
-                RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
+                GetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
             // Solution-dependent term
             if (rebuildMatrix || (i == 0 && step == 0)) {
                 //HYPRE_IJMatrixDestroy(Lij);
-                RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
+                GetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
             } 
             
             // Assemble RHS of linear system in b2
@@ -322,7 +350,7 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
             if (!rebuildMatrix) {
                 // Build DIRK matrix on first iteration only
                 if ((step == 0) && (i == 0)) { 
-                    RKGetHypreSpatialDiscretizationL(DIRK_matrix, DIRK_matrixij, t);
+                    GetHypreSpatialDiscretizationL(DIRK_matrix, DIRK_matrixij, t);
                     HYPRE_IJMatrixAddToValues(DIRK_matrixij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
                 }
             // Reuse/update L since it's rebuilt at next iteration, DIRK_matrix <- L <- M + a_ii*dt*L    
@@ -330,13 +358,11 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
                 HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
                 DIRK_matrix   = L;
                 DIRK_matrixij = Lij;
-                // DIRK matrix has changed, will need to rebuild linear solver 
-                // (this variable is reset to false when the solver (re)built)
-                m_rebuildSolver = true; // TODO : make this optional/have a frequency with which it's rebuilt!
+                
+                // DIRK matrix has changed, check if AMG solver is due to be rebuild
+                // (m_rebuildSolver is reset to false when the solver (re)built)
+                if (rebuildRate == 0 || (rebuildRate > 0 && i == 0 && (step % rebuildRate) == 0)) m_rebuildSolver = true; 
             }
-            
-            
-            
             
             // Point member variables to local variables so linear solver can access them
             m_A = DIRK_matrix;
@@ -398,19 +424,26 @@ void SpaceTimeMatrix::DIRKSolve(double solve_tol, int max_iter, int printLevel,
 
 
 /* Sequential time-stepping routine for general ERK schemes without mass matrix */
-void SpaceTimeMatrix::ERKSolve(double solve_tol, int max_iter, int printLevel,
+void SpaceTimeMatrix::ERKTimeSteppingSolve(double solve_tol, int max_iter, int printLevel,
                                  bool binv_scale, int precondition, int AMGiters) 
 {    
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
     /* ---------------------------------------------------------------------- */
-    double t = 0.0;         // Initial time
-
-    HYPRE_ParVector    u;   // Solution vector
-    HYPRE_IJVector     uij;
-    HYPRE_ParVector    g;   // Spatial discretization vector
+    double t = m_t0;        // Initial time to integrate from
+    
+    // Check that solution vector has been initialized!
+    if (!m_xij) {
+        std::cout << "WARNING: Global solution vector must be allocated before beginning RK time stepping" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    HYPRE_ParVector    u   = m_x;  // Initial solution vector to integrate from
+    HYPRE_IJVector     uij = m_xij;
+    
+    HYPRE_ParVector    g   = NULL; // Spatial discretization vector
     HYPRE_IJVector     gij = NULL;
-    HYPRE_ParCSRMatrix L;   // Spatial discretization matrix  
+    HYPRE_ParCSRMatrix L   = NULL; // Spatial discretization matrix  
     HYPRE_IJMatrix     Lij = NULL;
 
     // Place-holder vectors
@@ -419,7 +452,7 @@ void SpaceTimeMatrix::ERKSolve(double solve_tol, int max_iter, int printLevel,
     int numVectors = m_s_butcher + 1; // Have s stage vectors + 1 temporary vector
 
     // Get initial condition and initialize place-holder vectors
-    RKInitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
+    InitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
 
     // Shallow copy place-holder vectors into vectors with meaningful names
     HYPRE_ParVector              b   = vectors[0];  // Temporary vector
@@ -445,11 +478,11 @@ void SpaceTimeMatrix::ERKSolve(double solve_tol, int max_iter, int printLevel,
         for (int i = 0; i < m_s_butcher; i++) {
             // Compute spatial discretization at t + c[i]*dt
             if (m_g_isTimedependent || (i == 0 && step == 0)) {
-                RKGetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
+                GetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
             // Solution-dependent term
             if (m_L_isTimedependent || (i == 0 && step == 0)) {
-                RKGetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
+                GetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
             } 
 
             HYPRE_ParVectorCopy(u, b); // b <- u
@@ -491,13 +524,9 @@ void SpaceTimeMatrix::ERKSolve(double solve_tol, int max_iter, int printLevel,
 }
 
 
-/* Get initial condition, u0, as a HYPRE vector, and initialize all the HYPRE vectors 
-    in "vectors" to the same values as the intial conditon */
-void SpaceTimeMatrix::RKInitializeHypreVectors(HYPRE_ParVector               &u0, 
-                                                HYPRE_IJVector               &u0ij, 
-                                                int                           numVectors,
-                                                std::vector<HYPRE_ParVector> &vectors, 
-                                                std::vector<HYPRE_IJVector>  &vectorsij) 
+/* Get initial condition, u0, as a HYPRE vector */
+void SpaceTimeMatrix::GetHypreInitialCondition(HYPRE_ParVector &u0, 
+                                                HYPRE_IJVector &u0ij) 
 {
     int      spatialDOFs;
     int      ilower;
@@ -529,9 +558,41 @@ void SpaceTimeMatrix::RKInitializeHypreVectors(HYPRE_ParVector               &u0
     HYPRE_IJVectorAssemble(u0ij);
     HYPRE_IJVectorGetObject(u0ij, (void **) &u0);
 
+    delete[] rows;
+    delete[] U;
+}
+
+/* Initialize all the HYPRE vectors in "vectors" to the same values as in u */
+void SpaceTimeMatrix::InitializeHypreVectors(HYPRE_ParVector                 &u, 
+                                                HYPRE_IJVector               &uij, 
+                                                int                           numVectors,
+                                                std::vector<HYPRE_ParVector> &vectors, 
+                                                std::vector<HYPRE_IJVector>  &vectorsij) 
+{
+    int      ilower;
+    int      iupper;
+    int      onProcSize;
+    double * U;
+    int    * rows;
+    
+    // Get range of rows owned by current process
+    HYPRE_IJVectorGetLocalRange(uij, &ilower, &iupper);
+    
+    // Get rows owned by current process
+    onProcSize = iupper - ilower + 1; // Number of rows on current process
+    rows       = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        rows[i] = ilower + i;
+    }
+    
+    // Get entries owned by current process
+    U = new double[onProcSize];
+    HYPRE_IJVectorGetValues(uij, onProcSize, rows, U);
+    
     // Reserve space for the specified number of vectors
     vectors.reserve(numVectors);
     vectorsij.reserve(numVectors);
+    
     // Create and initialize all vectors in vectorsij, setting their values to those of u
     for (int i = 0; i < numVectors; i++) {
         HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &vectorsij[i]);
@@ -548,7 +609,7 @@ void SpaceTimeMatrix::RKInitializeHypreVectors(HYPRE_ParVector               &u0
 
 
 /* Get solution-independent component of spatial discretization, the vector g, as a HYPRE vector */
-void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationG(HYPRE_ParVector &g,
+void SpaceTimeMatrix::GetHypreSpatialDiscretizationG(HYPRE_ParVector   &g,
                                                         HYPRE_IJVector &gij,
                                                         double          t)  
 {
@@ -594,12 +655,12 @@ void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationG(HYPRE_ParVector &g,
 
 
 /* Get solution-dependent component of spatial discretization, the matrix L, as a HYPRE matrix */
-void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
+void SpaceTimeMatrix::GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
                                                         HYPRE_IJMatrix    &Lij,
                                                         double             t)  
 {
     // Free matrix if currently allocated memory
-    if (Lij) HYPRE_IJMatrixDestroy(Lij);
+    if (Lij) HYPRE_IJMatrixDestroy(Lij); 
     
     int      m_bsize;
     int      ilower;
@@ -656,7 +717,6 @@ void SpaceTimeMatrix::RKGetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
 
 
 
-
 void SpaceTimeMatrix::BuildMatrix()
 {
     // Check not using time stepping, since this doesn't make sense!
@@ -664,9 +724,8 @@ void SpaceTimeMatrix::BuildMatrix()
         std::cout << "WARNING: BuildMatrix() only available when solving space-time system!" << '\n';
         MPI_Finalize();
         exit(1);        
-        //return;
     }
-    if (m_globRank == 0) std::cout << "Building matrix, " << m_useSpatialParallel << "\n";
+    if (m_globRank == 0) std::cout << "Building space-time matrix\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
     if (m_globRank == 0) std::cout << "Space-time matrix assembled.\n";
@@ -906,7 +965,7 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     int localMinRow;
     int localMaxRow;
     int spatialDOFs;
-    RK(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
+    RKSpaceTimeBlock(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
     // TODO: remove code below, but keep for the moment. 
     // if (m_timeDisc == 11) {
     //     BDF1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
@@ -977,7 +1036,7 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     double* B;
     double* X;
     int onProcSize;
-    RK(rowptr, colinds, data, B, X, onProcSize);
+    RKSpaceTimeBlock(rowptr, colinds, data, B, X, onProcSize);
     // TODO : Delete the stuff below. But just keep for the moment.. 
    // if (m_timeDisc == 11) {
    //      BDF1(rowptr, colinds, data, B, X, onProcSize);
@@ -1037,20 +1096,21 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
 }
 
 
+
 /* Set classical AMG parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAMG()
 {
-   m_solverOptions.prerelax = "AA";
-   m_solverOptions.postrelax = "AA";
-   m_solverOptions.relax_type = 3;
-   m_solverOptions.interp_type = 6;
-   m_solverOptions.strength_tolC = 0.1;
-   m_solverOptions.coarsen_type = 6;
-   m_solverOptions.distance_R = -1;
-   m_solverOptions.strength_tolR = -1;
-   m_solverOptions.filter_tolA = 0.0;
-   m_solverOptions.filter_tolR = 0.0;
-   m_solverOptions.cycle_type = 1;
+   m_AMGParameters.prerelax = "AA";
+   m_AMGParameters.postrelax = "AA";
+   m_AMGParameters.relax_type = 3;
+   m_AMGParameters.interp_type = 6;
+   m_AMGParameters.strength_tolC = 0.1;
+   m_AMGParameters.coarsen_type = 6;
+   m_AMGParameters.distance_R = -1;
+   m_AMGParameters.strength_tolR = -1;
+   m_AMGParameters.filter_tolA = 0.0;
+   m_AMGParameters.filter_tolR = 0.0;
+   m_AMGParameters.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -1058,17 +1118,17 @@ void SpaceTimeMatrix::SetAMG()
 /* Set standard AIR parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIR()
 {
-   m_solverOptions.prerelax = "A";
-   m_solverOptions.postrelax = "FFC";
-   m_solverOptions.relax_type = 3;
-   m_solverOptions.interp_type = 100;
-   m_solverOptions.strength_tolC = 0.005;
-   m_solverOptions.coarsen_type = 6;
-   m_solverOptions.distance_R = 1.5;
-   m_solverOptions.strength_tolR = 0.005;
-   m_solverOptions.filter_tolA = 0.0;
-   m_solverOptions.filter_tolR = 0.0;
-   m_solverOptions.cycle_type = 1;
+   m_AMGParameters.prerelax = "A";
+   m_AMGParameters.postrelax = "FFC";
+   m_AMGParameters.relax_type = 3;
+   m_AMGParameters.interp_type = 100;
+   m_AMGParameters.strength_tolC = 0.005;
+   m_AMGParameters.coarsen_type = 6;
+   m_AMGParameters.distance_R = 1.5;
+   m_AMGParameters.strength_tolR = 0.005;
+   m_AMGParameters.filter_tolA = 0.0;
+   m_AMGParameters.filter_tolR = 0.0;
+   m_AMGParameters.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -1076,26 +1136,32 @@ void SpaceTimeMatrix::SetAIR()
 /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIRHyperbolic()
 {
-   m_solverOptions.prerelax = "A";
-   m_solverOptions.postrelax = "F";
-   m_solverOptions.relax_type = 10;
-   m_solverOptions.interp_type = 100;
-   m_solverOptions.strength_tolC = 0.005;
-   m_solverOptions.coarsen_type = 6;
-   m_solverOptions.distance_R = 1.5;
-   m_solverOptions.strength_tolR = 0.005;
-   m_solverOptions.filter_tolA = 0.0001;
-   m_solverOptions.filter_tolR = 0.0;
-   m_solverOptions.cycle_type = 1;
+   m_AMGParameters.prerelax = "A";
+   m_AMGParameters.postrelax = "F";
+   m_AMGParameters.relax_type = 10;
+   m_AMGParameters.interp_type = 100;
+   m_AMGParameters.strength_tolC = 0.005;
+   m_AMGParameters.coarsen_type = 6;
+   m_AMGParameters.distance_R = 1.5;
+   m_AMGParameters.strength_tolR = 0.005;
+   m_AMGParameters.filter_tolA = 0.0001;
+   m_AMGParameters.filter_tolR = 0.0;
+   m_AMGParameters.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
 
 /* Provide BoomerAMG parameters struct for solve. */
-void SpaceTimeMatrix::SetAMGParameters(AMG_parameters &params)
+void SpaceTimeMatrix::SetAMGParameters(AMG_parameters &AMG_params)
 {
     // TODO: does this copy the structure by value?
-    m_solverOptions = params;
+    m_AMGParameters = AMG_params;
+}
+
+
+
+void SetSolverParameters(Solver_parameters &solver_params) {
+    m_solverParameters = solver_params;
 }
 
 
@@ -1107,7 +1173,7 @@ void SpaceTimeMatrix::PrintMeshData()
     }
 }
 
-/* Initialize AMG solver based on parameters in m_solverOptions struct. */
+/* Initialize AMG solver based on parameters in m_AMGParameters struct. */
 void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 {
     // If solver exists and rebuild bool is false, return
@@ -1128,8 +1194,8 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // Array to store relaxation scheme and pass to Hypre
         //      TODO: does hypre clean up grid_relax_points
-        int ns_down = m_solverOptions.prerelax.length();
-        int ns_up = m_solverOptions.postrelax.length();
+        int ns_down = m_AMGParameters.prerelax.length();
+        int ns_up = m_AMGParameters.postrelax.length();
         int ns_coarse = 1;
         std::string Fr("F");
         std::string Cr("C");
@@ -1143,26 +1209,26 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // set down relax scheme 
         for(unsigned int i = 0; i<ns_down; i++) {
-            if (m_solverOptions.prerelax.compare(i,1,Fr) == 0) {
+            if (m_AMGParameters.prerelax.compare(i,1,Fr) == 0) {
                 grid_relax_points[1][i] = -1;
             }
-            else if (m_solverOptions.prerelax.compare(i,1,Cr) == 0) {
+            else if (m_AMGParameters.prerelax.compare(i,1,Cr) == 0) {
                 grid_relax_points[1][i] = 1;
             }
-            else if (m_solverOptions.prerelax.compare(i,1,Ar) == 0) {
+            else if (m_AMGParameters.prerelax.compare(i,1,Ar) == 0) {
                 grid_relax_points[1][i] = 0;
             }
         }
 
         // set up relax scheme 
         for(unsigned int i = 0; i<ns_up; i++) {
-            if (m_solverOptions.postrelax.compare(i,1,Fr) == 0) {
+            if (m_AMGParameters.postrelax.compare(i,1,Fr) == 0) {
                 grid_relax_points[2][i] = -1;
             }
-            else if (m_solverOptions.postrelax.compare(i,1,Cr) == 0) {
+            else if (m_AMGParameters.postrelax.compare(i,1,Cr) == 0) {
                 grid_relax_points[2][i] = 1;
             }
-            else if (m_solverOptions.postrelax.compare(i,1,Ar) == 0) {
+            else if (m_AMGParameters.postrelax.compare(i,1,Ar) == 0) {
                 grid_relax_points[2][i] = 0;
             }
         }
@@ -1173,32 +1239,34 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         HYPRE_BoomerAMGSetMaxIter(m_solver, maxiter);
         HYPRE_BoomerAMGSetPrintLevel(m_solver, printLevel);
 
-        if (m_solverOptions.distance_R > 0) {
-            HYPRE_BoomerAMGSetRestriction(m_solver, m_solverOptions.distance_R);
-            HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_solverOptions.strength_tolR);
-            HYPRE_BoomerAMGSetFilterThresholdR(m_solver, m_solverOptions.filter_tolR);
+        if (m_AMGParameters.distance_R > 0) {
+            HYPRE_BoomerAMGSetRestriction(m_solver, m_AMGParameters.distance_R);
+            HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_AMGParameters.strength_tolR);
+            HYPRE_BoomerAMGSetFilterThresholdR(m_solver, m_AMGParameters.filter_tolR);
         }
-        HYPRE_BoomerAMGSetInterpType(m_solver, m_solverOptions.interp_type);
-        HYPRE_BoomerAMGSetCoarsenType(m_solver, m_solverOptions.coarsen_type);
+        HYPRE_BoomerAMGSetInterpType(m_solver, m_AMGParameters.interp_type);
+        HYPRE_BoomerAMGSetCoarsenType(m_solver, m_AMGParameters.coarsen_type);
         HYPRE_BoomerAMGSetAggNumLevels(m_solver, 0);
-        HYPRE_BoomerAMGSetStrongThreshold(m_solver, m_solverOptions.strength_tolC);
+        HYPRE_BoomerAMGSetStrongThreshold(m_solver, m_AMGParameters.strength_tolC);
         HYPRE_BoomerAMGSetGridRelaxPoints(m_solver, grid_relax_points);
-        if (m_solverOptions.relax_type > -1) {
-            HYPRE_BoomerAMGSetRelaxType(m_solver, m_solverOptions.relax_type);
+        if (m_AMGParameters.relax_type > -1) {
+            HYPRE_BoomerAMGSetRelaxType(m_solver, m_AMGParameters.relax_type);
         }
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_coarse, 3);
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_down,   1);
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_up,     2);
-        if (m_solverOptions.filter_tolA > 0) {
-            HYPRE_BoomerAMGSetADropTol(m_solver, m_solverOptions.filter_tolA);
+        if (m_AMGParameters.filter_tolA > 0) {
+            HYPRE_BoomerAMGSetADropTol(m_solver, m_AMGParameters.filter_tolA);
         }
         // type = -1: drop based on row inf-norm
-        else if (m_solverOptions.filter_tolA == -1) {
+        else if (m_AMGParameters.filter_tolA == -1) {
             HYPRE_BoomerAMGSetADropType(m_solver, -1);
         }
 
         // Set cycle type for solve 
-        HYPRE_BoomerAMGSetCycleType(m_solver, m_solverOptions.cycle_type);
+        HYPRE_BoomerAMGSetCycleType(m_solver, m_AMGParameters.cycle_type);
+        
+        if (m_globRank == 0) std::cout << "Solver assembled.\n";
     }
 }
 
@@ -1214,7 +1282,7 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel,
         hypre_ParCSRMatrixDropSmallEntries(A_s, 1e-15, 1);
         HYPRE_ParVector b_s;
         hypre_ParvecBdiagInvScal(m_b, m_bsize, &b_s, m_A);
-
+    
         HYPRE_BoomerAMGSetup(m_solver, A_s, b_s, m_x);
         HYPRE_BoomerAMGSolve(m_solver, A_s, b_s, m_x);
     }
@@ -1286,7 +1354,7 @@ void SpaceTimeMatrix::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_
 //  assumes nnz of spatial discretization does not depend on time
 
 /* Arbitrary component(s) of s-stage RK block(s) w/ last stage eliminated. */
-void SpaceTimeMatrix::RK(int* &rowptr, int* &colinds, double* &data,
+void SpaceTimeMatrix::RKSpaceTimeBlock(int* &rowptr, int* &colinds, double* &data,
                            double* &B, double* &X, int &onProcSize)
 {
     int globalInd0 = m_globRank * m_nDOFPerProc;        // Global index of first variable I own
@@ -1946,7 +2014,7 @@ void SpaceTimeMatrix::AB1(int* &rowptr, int* &colinds, double* &data,
 /* ------------------------------------------------------------------------- */
 // (Spatial parallelism)
 
-void SpaceTimeMatrix::RK(int *&rowptr, int *&colinds, double *&data, 
+void SpaceTimeMatrix::RKSpaceTimeBlock(int *&rowptr, int *&colinds, double *&data, 
                         double *&B, double *&X, int &localMinRow, 
                         int &localMaxRow, int &spatialDOFs)
 {
