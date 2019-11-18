@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numProcess);
 
+
     // Parameters
     int pit     = 1; // TODO : OptionsParser cannot  seem to handle a bool here??? 
     bool isTimeDependent = true;
@@ -28,29 +29,44 @@ int main(int argc, char *argv[])
     int nt           = 2;
     int order        = 1;
     int dim          = 2;
-    int use_gmres    = 0;
+    
     int save_mat     = 0;
     int save_sol     = 0;
-    double solve_tol = 1e-8;
-    int print_level  = 3;
+    const char * out = ""; // Filename of data to be saved...
+    
     int timeDisc     = 211;
-    int max_iter     = 250;
+    
     double dt        = -1;
+    
+    /* Solver parameters */
+    double tol       = 1e-8;
+    int maxiter      = 250;
+    int printLevel   = 3;
+    
+    int use_gmres    = 0;
     int AMGiters     = 1;
-    int rebuildRate  = 0; /* Sequential time integration: Rate at which solver is rebuilt */
+    int gmres_preconditioner = 1;
+    
+    int binv_scale   = 0;
+    
+    int rebuildRate  = 0; /* Time-stepping: Rate at which solver is rebuilt */
+
 
     /* --- Spatial discretization parameters --- */
     int spatialDisc  = 1;
     int refLevels    = 1;
 
-    // Finite-element specific
-    int lump_mass    = true;
-
     // Finite-difference specific parameters
-    const char * out = ""; // Filename of data to be saved...
     int FD_ProblemID = 1;
     int px = -1;
     int py = -1;
+    
+    // Finite-element specific
+    int lump_mass    = true;
+
+
+    // Initialize solver options struct with default parameters */
+    Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, AMGiters, bool(binv_scale), rebuildRate};
 
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
@@ -65,8 +81,22 @@ int main(int argc, char *argv[])
                   "Time discretization (see RK IDs).");
     args.AddOption(&dt, "-dt", "--dt",
                   "Time step size.");
+    args.AddOption(&nt, "-nt", "--num-time-steps", "Number of time steps.");    
                   
-    args.AddOption(&rebuildRate, "-rebuild", "--rebuild-rate",
+    /* Linear solver options */              
+    args.AddOption(&(solver.tol), "-tol", "-solver-tolerance",
+                  "Tolerance to solve linear system.");
+    args.AddOption(&(solver.maxiter), "-maxit", "--max-iterations",
+                  "Maximum number of linear solver iterations."); 
+    args.AddOption(&(solver.printLevel), "-p", "--print-level",
+                  "Hypre print level.");
+    args.AddOption(&use_gmres, "-gmres", "--use-gmres",
+                  "Boolean to use GMRES as solver (default with AMG preconditioning).");
+    args.AddOption(&(solver.gmres_preconditioner), "-pre", "gmres-preconditioner",
+                  "Type of preconditioning for GMRES.");                     
+    args.AddOption(&AMGiters, "-amgi", "--amg-iters",
+                  "Number of BoomerAMG iterations to precondition one GMRES step.");       
+    args.AddOption(&(solver.rebuildRate), "-rebuild", "--rebuild-rate",
                    "Frequency at which AMG solver is rebuilt during time stepping (-1=never rebuild, 0=rebuild every opportunity, x>0=after x time steps");              
                   
     /* Spatial discretization */
@@ -76,20 +106,8 @@ int main(int argc, char *argv[])
                   "Finite element order."); // TODO : general space disc refinement?
     args.AddOption(&refLevels, "-l", "--level",
                   "Number levels mesh refinement.");
-    args.AddOption(&lump_mass, "-lump", "--lump-mass",
-                  "Lump mass matrix to be diagonal.");
-                  
-    args.AddOption(&print_level, "-p", "--print-level",
-                  "Hypre print level.");
-    args.AddOption(&solve_tol, "-tol", "--solve-tol",
-                  "Tolerance to solve linear system.");
-    args.AddOption(&max_iter, "-maxit", "--max-iterations",
-                  "Maximum number of linear solver iterations.");
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
-    
-    args.AddOption(&out, "-out", "--out",
-                  "Name of output file.");  
     args.AddOption(&FD_ProblemID, "-FD", "--FD-prob-ID",
                   "Finite difference problem ID.");  
     args.AddOption(&px, "-px", "--procx",
@@ -97,19 +115,18 @@ int main(int argc, char *argv[])
     args.AddOption(&py, "-py", "--procy",
                   "Number of procs in y-direction.");
                   
-    //args.AddOption(&numTimeSteps, "-nt", "--num-time-steps", // TOOD: I think this should be removed...
-    //              "Number of time steps.");
-    
-    args.AddOption(&nt, "-nt", "--num-time-steps", "Number of time steps.");
-    
-    args.AddOption(&use_gmres, "-gmres", "--use-gmres",
-                  "Boolean to use GMRES as solver (default with AMG preconditioning).");
-    args.AddOption(&AMGiters, "-amgi", "--amg-iters",
-                  "Number of BoomerAMG iterations to precondition one GMRES step.");
+    args.AddOption(&lump_mass, "-lump", "--lump-mass",
+                  "Lump mass matrix to be diagonal.");              
+
+    /* --- Text output of solution etc --- */              
+    args.AddOption(&out, "-out", "--out",
+                  "Name of output file."); 
     args.AddOption(&save_mat, "-saveA", "--save-mat",
                   "Boolean to save matrix to file.");
     args.AddOption(&save_sol, "-saveX", "--save-sol",
                   "Boolean to save solution to file.");
+                  
+    /* --- AMG parameters --- */              
     args.AddOption(&(AMG.cycle_type), "-c", "--cycle-type",
                   "Cycle type; 0=F, 1=V, 2=W.");
     args.AddOption(&(AMG.distance_R), "-AIR", "--AIR-distance",
@@ -133,6 +150,11 @@ int main(int argc, char *argv[])
     args.AddOption(&temp_postrelax, "-Ar2", "--AMG-postrelax",
                   "String denoting postrelaxation scheme, e.g., FC for F relaxation followed by C relaxation.");
     args.Parse();
+    
+    
+    // Fix-up options that cannot be passed by the options parser
+    solver.use_gmres = bool(use_gmres);
+    
     AMG.prerelax = std::string(temp_prerelax);
     AMG.postrelax = std::string(temp_postrelax);
     if (AMG.prerelax.compare("N") == 0) AMG.prerelax = "";
@@ -152,6 +174,7 @@ int main(int argc, char *argv[])
 
     if (dt < 0) dt = 1.0/numTimeSteps;
 
+
     // For now have to keep SpaceTime object in scope so that MPI Communicators
     // get destroyed before MPI_Finalize() is called. 
     /* -------------------------------------------------------------- */
@@ -160,18 +183,10 @@ int main(int argc, char *argv[])
     if (spatialDisc == 1) {
         CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, pit, refLevels, order, lump_mass);
-        STmatrix.BuildMatrix();
-        if (save_mat) {
-            STmatrix.SaveMatrix("test.mm");
-        }
-        STmatrix.SetAMGParameters(AMG);
-        if (use_gmres) {
-            STmatrix.SolveGMRES(solve_tol, max_iter, print_level, false,
-                                use_gmres, AMGiters);
-        }
-        else {
-            STmatrix.SolveAMG(solve_tol, max_iter, print_level, false);
-        }
+            
+        STmatrix.SetSolverParameters(solver);                 
+        STmatrix.Solve();                            
+        
         STmatrix.PrintMeshData();
     }
     
@@ -182,18 +197,10 @@ int main(int argc, char *argv[])
     else if (spatialDisc == 2) {
         DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,
                              dt, pit, refLevels, order, lump_mass);
-        STmatrix.BuildMatrix();
-        if (save_mat) {
-            STmatrix.SaveMatrix("test.mm");
-        }
-        STmatrix.SetAMGParameters(AMG);
-        if (use_gmres) {
-            STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
-                                true, use_gmres, AMGiters);
-        }
-        else {
-            STmatrix.SolveAMG(solve_tol, max_iter, print_level);
-        }
+        
+        STmatrix.SetSolverParameters(solver);
+        STmatrix.Solve();
+
         STmatrix.PrintMeshData();
     }
     
@@ -207,7 +214,7 @@ int main(int argc, char *argv[])
         double CFL_fraction;
         double CFLlim;
         // Set CFL number 
-        if (timeDisc < 200) {
+        if (timeDisc > 100 && timeDisc < 200) {
             // These limits apply for ERKp+Up schemes
             CFL_fraction = 0.85;
             if (order == 1)  {
@@ -222,7 +229,7 @@ int main(int argc, char *argv[])
                 CFLlim = 1.96583;
             }
         // Implicit schemes
-        } else {
+        } else if (timeDisc > 200 && timeDisc < 300) {
             CFLlim = 1.0;
             CFL_fraction = 1.0; // Use a CFL number of ...
         }
@@ -241,8 +248,8 @@ int main(int argc, char *argv[])
         dt *= CFL_fraction;
         
         // Manually set time to integrate to
-        //double T = 2.0; // For 1D in space...
-        double T = 2.0  * dt; // For 1D in space...
+        double T = 2.0; // For 1D in space...
+        //double T = 2.0  * dt; // For 1D in space...
         if (dim == 2) T = 0.5; // For 2D in space...
         
         // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
@@ -268,75 +275,18 @@ int main(int argc, char *argv[])
                 n_px.push_back(py);
             }
         }
+        
+        // Build SpaceTime object
         FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
                                 dt, pit, dim, refLevels, order, 
                                 FD_ProblemID, n_px);
         
-        
+        // Set parameters
+        STmatrix.SetSolverParameters(solver);
         STmatrix.SetAIRHyperbolic();
-        if (!pit) {
-            //STmatrix.SetAMGParameters(AMG); // TODO : This is bad!! Doesn't work...
-            //STmatrix.SetAIR();
-            
-            //STmatrix.SetAIRHyperbolic();
-            // TODO : Not really sure what the best way is to give linear solver info...
-            if (use_gmres) {
-                STmatrix.TimeSteppingSolve(rebuildRate, solve_tol, max_iter, print_level, false, use_gmres, AMGiters);
-            } else {
-                STmatrix.TimeSteppingSolve(rebuildRate, solve_tol, max_iter, print_level, false, use_gmres);
-            }
+        // Solve PDE
+        STmatrix.Solve();
         
-        } else {
-            STmatrix.BuildMatrix();
-        
-            if (save_mat) {
-                STmatrix.SaveMatrix("data/A_FD.mm");
-            }
-            
-            // /* Set standard AIR parameters for BoomerAMG solve. */
-            // void SpaceTimeMatrix::SetAIR()
-            // {
-            //    m_solverOptions.prerelax = "A";
-            //    m_solverOptions.postrelax = "FFC";
-            //    m_solverOptions.relax_type = 3;
-            //    m_solverOptions.interp_type = 100;
-            //    m_solverOptions.strength_tolC = 0.005;
-            //    m_solverOptions.coarsen_type = 6;
-            //    m_solverOptions.distance_R = 1.5;
-            //    m_solverOptions.strength_tolR = 0.005;
-            //    m_solverOptions.filter_tolA = 0.0;
-            //    m_solverOptions.filter_tolR = 0.0;
-            //    m_solverOptions.cycle_type = 1;
-            //    m_rebuildSolver = true;
-            // /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
-            // void SpaceTimeMatrix::SetAIRHyperbolic()
-            // {
-            // std::string prerelax = "A";
-            // std::string postrelax = "FFC";
-            // int relax_type = 3;
-            // int interp_type = 100;
-            // double strength_tolC = 0.005;
-            // int coarsen_type = 1;
-            // double distance_R = 1.5;
-            // double strength_tolR = 0.005;
-            // double filter_tolA = 0.0001;
-            // double filter_tolR = 0.0;
-            // // }
-            // 
-            // AMG = {distance_R, prerelax, postrelax, interp_type, relax_type, coarsen_type, strength_tolC, strength_tolR, filter_tolA, filter_tolR, 1};
-            // 
-            //AMG = {1.5, "", "FFC", 100, 3, 3, 0.1, 0.1, 0.0, 0.0, 1};
-            //STmatrix.SetAMGParameters(AMG);
-            //
-            STmatrix.SetAIRHyperbolic();
-            if (use_gmres) {
-                STmatrix.SolveGMRES(solve_tol, max_iter, print_level,
-                                    true, use_gmres, AMGiters);
-            }
-            else {
-                STmatrix.SolveAMG(solve_tol, max_iter, print_level);
-            }
-        }
         
         if (save_sol) {
             std::string filename;

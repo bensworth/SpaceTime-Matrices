@@ -234,7 +234,6 @@ FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
             m_localMinRow = m_pGridInd[0] * m_nxOnProcInt[0]; // Index of first DOF on proc
             m_onProcSize  = m_nxOnProc[0];
             
-            
         /* --- Two spatial dimensions --- */
         } 
         else if (m_dim == 2) 

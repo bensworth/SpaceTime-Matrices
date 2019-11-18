@@ -166,17 +166,29 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
     if (m_xij) HYPRE_IJVectorDestroy(m_xij);
 }
 
+/* General solve function, calls appropriate time integration routine */
+void SpaceTimeMatrix::Solve() {
+    
+    // Solve space-time system
+    if (m_pit) {
+        BuildSpaceTimeMatrix(); // Build space-time system
+        // Call appropiate solver
+        if (m_solver_parameters.use_gmres) {
+            SolveGMRES(); 
+        } else {
+            SolveAMG();
+        }
+    
+    // sequential time-stepping
+    } else {
+        TimeSteppingSolve();
+    }
+}
+
 
 /* Call appropiate sequential time-stepping routine */
-void SpaceTimeMatrix::TimeSteppingSolve(int rebuildRate,
-                                            double solve_tol, 
-                                            int max_iter, 
-                                            int printLevel,
-                                            bool binv_scale, 
-                                            int precondition, 
-                                            int AMGiters)
+void SpaceTimeMatrix::TimeSteppingSolve()
 {
-    
     // Runge-Kutta routines: Integrate nt-1 steps from time=0
     if (m_RK) {
         m_t0 = 0.0; // Set global starting time to 0
@@ -191,22 +203,16 @@ void SpaceTimeMatrix::TimeSteppingSolve(int rebuildRate,
         m_xij = u0ij;
         
         if (m_is_ERK) {
-            ERKTimeSteppingSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters);
+            ERKTimeSteppingSolve();
         } else if (m_is_DIRK) {
-            DIRKTimeSteppingSolve(solve_tol, max_iter, printLevel, binv_scale, precondition, AMGiters, rebuildRate);
+            DIRKTimeSteppingSolve();
         }
     }
 }
 
 
 /* Sequential time-stepping routine for general DIRK schemes */
-void SpaceTimeMatrix::DIRKTimeSteppingSolve(double solve_tol, 
-                                                int max_iter, 
-                                                int printLevel,
-                                                bool binv_scale, 
-                                                int precondition, 
-                                                int AMGiters,
-                                                int rebuildRate) 
+void SpaceTimeMatrix::DIRKTimeSteppingSolve() 
 {   
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
@@ -361,7 +367,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve(double solve_tol,
                 
                 // DIRK matrix has changed, check if AMG solver is due to be rebuild
                 // (m_rebuildSolver is reset to false when the solver (re)built)
-                if (rebuildRate == 0 || (rebuildRate > 0 && i == 0 && (step % rebuildRate) == 0)) m_rebuildSolver = true; 
+                if (m_solver_parameters.rebuildRate == 0 || (m_solver_parameters.rebuildRate > 0 && i == 0 && (step % m_solver_parameters.rebuildRate) == 0)) m_rebuildSolver = true; 
             }
             
             // Point member variables to local variables so linear solver can access them
@@ -369,27 +375,27 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve(double solve_tol,
             m_x = k[i]; // Initial guess at solution is value from previous time step
             m_b = b2;
             
-            if ((printLevel > 0) && (m_globRank == 0)) {
+            if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
                 std::cout << "-----------------------------------------\n\n";
             }
             
             // Solve linear system and get convergence statistics
-            if (precondition) {
-                SolveGMRES(solve_tol, max_iter, printLevel, true, precondition, AMGiters);
+            if (m_solver_parameters.use_gmres) {
+                SolveGMRES();
                 HYPRE_GMRESGetNumIterations(m_gmres, &num_iters);
                 HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &rel_res_norm);
             } else {
-                SolveAMG(solve_tol, max_iter, printLevel);
+                SolveAMG();
                 HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
                 HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
             }
                 
             // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
-            if (rel_res_norm > solve_tol) {
+            if (rel_res_norm > m_solver_parameters.tol) {
                 std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
-                std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << solve_tol << "\n\n";
+                std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
                 MPI_Finalize();
                 exit(1);
             }
@@ -424,8 +430,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve(double solve_tol,
 
 
 /* Sequential time-stepping routine for general ERK schemes without mass matrix */
-void SpaceTimeMatrix::ERKTimeSteppingSolve(double solve_tol, int max_iter, int printLevel,
-                                 bool binv_scale, int precondition, int AMGiters) 
+void SpaceTimeMatrix::ERKTimeSteppingSolve() 
 {    
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
@@ -495,7 +500,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve(double solve_tol, int max_iter, int p
             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, b, 1.0, g, k[i]); // k[i] <- -L*b + g 
         }
 
-        if ((printLevel > 0) && (m_globRank == 0)) {
+        if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
             std::cout << "Time step " << step+1 << "/" << m_nt-1 << '\n';
         }
 
@@ -544,6 +549,7 @@ void SpaceTimeMatrix::GetHypreInitialCondition(HYPRE_ParVector &u0,
     } else {
         getInitialCondition(m_spatialComm, U, ilower, iupper, spatialDOFs);    
     }
+
     
     onProcSize = iupper - ilower + 1; // Number of rows on current process
     rows       = new int[onProcSize];
@@ -717,11 +723,11 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
 
 
 
-void SpaceTimeMatrix::BuildMatrix()
+void SpaceTimeMatrix::BuildSpaceTimeMatrix()
 {
     // Check not using time stepping, since this doesn't make sense!
     if (!m_pit) {
-        std::cout << "WARNING: BuildMatrix() only available when solving space-time system!" << '\n';
+        std::cout << "WARNING: BuildSpaceTimeMatrix() only available when solving space-time system!" << '\n';
         MPI_Finalize();
         exit(1);        
     }
@@ -746,10 +752,10 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
     solinfo << "P " << m_numProc << "\n";
     solinfo << "nt " << m_nt << "\n";
     solinfo << "dt " << m_dt << "\n";
-    solinfo << "s " << m_s_butcher << "\n";
     solinfo << "timeDisc " << m_timeDisc << "\n";
     solinfo << "spatialParallel " << int(m_useSpatialParallel) << "\n";
     if (m_useSpatialParallel) solinfo << "np_xTotal " << m_spatialCommSize << "\n";
+    if (m_RK) solinfo << "s " << m_s_butcher << "\n";
     
     // Print out contents from additionalInfo to file too
     std::map<std::string, std::string>::iterator it;
@@ -965,7 +971,7 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     int localMinRow;
     int localMaxRow;
     int spatialDOFs;
-    RKSpaceTimeBlock(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
+    if (m_RK) RKSpaceTimeBlock(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
     // TODO: remove code below, but keep for the moment. 
     // if (m_timeDisc == 11) {
     //     BDF1(rowptr, colinds, data, B, X, localMinRow, localMaxRow, spatialDOFs);
@@ -1036,7 +1042,9 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
     double* B;
     double* X;
     int onProcSize;
-    RKSpaceTimeBlock(rowptr, colinds, data, B, X, onProcSize);
+    
+    if (m_RK) RKSpaceTimeBlock(rowptr, colinds, data, B, X, onProcSize);
+    
     // TODO : Delete the stuff below. But just keep for the moment.. 
    // if (m_timeDisc == 11) {
    //      BDF1(rowptr, colinds, data, B, X, onProcSize);
@@ -1097,20 +1105,42 @@ void SpaceTimeMatrix::GetMatrix_ntGT1()
 
 
 
+/* Provide options for solver */
+void SpaceTimeMatrix::SetSolverParameters(Solver_parameters &solver_params) {
+    m_solver_parameters = solver_params;
+}
+
+
+/* Set default options for solver */
+void SpaceTimeMatrix::SetSolverParametersDefaults() {
+    m_solver_parameters.tol          = 1e-8;
+    m_solver_parameters.maxiter      = 250;
+    m_solver_parameters.printLevel   = 3;
+    
+    m_solver_parameters.use_gmres    = 1;
+    m_solver_parameters.gmres_preconditioner = 1;
+    m_solver_parameters.AMGiters     = 10;
+    
+    m_solver_parameters.binv_scale   = true;
+    
+    m_solver_parameters.rebuildRate  = 0;
+}
+
+
 /* Set classical AMG parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAMG()
 {
-   m_AMGParameters.prerelax = "AA";
-   m_AMGParameters.postrelax = "AA";
-   m_AMGParameters.relax_type = 3;
-   m_AMGParameters.interp_type = 6;
-   m_AMGParameters.strength_tolC = 0.1;
-   m_AMGParameters.coarsen_type = 6;
-   m_AMGParameters.distance_R = -1;
-   m_AMGParameters.strength_tolR = -1;
-   m_AMGParameters.filter_tolA = 0.0;
-   m_AMGParameters.filter_tolR = 0.0;
-   m_AMGParameters.cycle_type = 1;
+   m_AMG_parameters.prerelax = "AA";
+   m_AMG_parameters.postrelax = "AA";
+   m_AMG_parameters.relax_type = 3;
+   m_AMG_parameters.interp_type = 6;
+   m_AMG_parameters.strength_tolC = 0.1;
+   m_AMG_parameters.coarsen_type = 6;
+   m_AMG_parameters.distance_R = -1;
+   m_AMG_parameters.strength_tolR = -1;
+   m_AMG_parameters.filter_tolA = 0.0;
+   m_AMG_parameters.filter_tolR = 0.0;
+   m_AMG_parameters.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -1118,17 +1148,17 @@ void SpaceTimeMatrix::SetAMG()
 /* Set standard AIR parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIR()
 {
-   m_AMGParameters.prerelax = "A";
-   m_AMGParameters.postrelax = "FFC";
-   m_AMGParameters.relax_type = 3;
-   m_AMGParameters.interp_type = 100;
-   m_AMGParameters.strength_tolC = 0.005;
-   m_AMGParameters.coarsen_type = 6;
-   m_AMGParameters.distance_R = 1.5;
-   m_AMGParameters.strength_tolR = 0.005;
-   m_AMGParameters.filter_tolA = 0.0;
-   m_AMGParameters.filter_tolR = 0.0;
-   m_AMGParameters.cycle_type = 1;
+   m_AMG_parameters.prerelax = "A";
+   m_AMG_parameters.postrelax = "FFC";
+   m_AMG_parameters.relax_type = 3;
+   m_AMG_parameters.interp_type = 100;
+   m_AMG_parameters.strength_tolC = 0.005;
+   m_AMG_parameters.coarsen_type = 6;
+   m_AMG_parameters.distance_R = 1.5;
+   m_AMG_parameters.strength_tolR = 0.005;
+   m_AMG_parameters.filter_tolA = 0.0;
+   m_AMG_parameters.filter_tolR = 0.0;
+   m_AMG_parameters.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -1136,17 +1166,17 @@ void SpaceTimeMatrix::SetAIR()
 /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIRHyperbolic()
 {
-   m_AMGParameters.prerelax = "A";
-   m_AMGParameters.postrelax = "F";
-   m_AMGParameters.relax_type = 10;
-   m_AMGParameters.interp_type = 100;
-   m_AMGParameters.strength_tolC = 0.005;
-   m_AMGParameters.coarsen_type = 6;
-   m_AMGParameters.distance_R = 1.5;
-   m_AMGParameters.strength_tolR = 0.005;
-   m_AMGParameters.filter_tolA = 0.0001;
-   m_AMGParameters.filter_tolR = 0.0;
-   m_AMGParameters.cycle_type = 1;
+   m_AMG_parameters.prerelax = "A";
+   m_AMG_parameters.postrelax = "F";
+   m_AMG_parameters.relax_type = 10;
+   m_AMG_parameters.interp_type = 100;
+   m_AMG_parameters.strength_tolC = 0.005;
+   m_AMG_parameters.coarsen_type = 6;
+   m_AMG_parameters.distance_R = 1.5;
+   m_AMG_parameters.strength_tolR = 0.005;
+   m_AMG_parameters.filter_tolA = 0.0001;
+   m_AMG_parameters.filter_tolR = 0.0;
+   m_AMG_parameters.cycle_type = 1;
    m_rebuildSolver = true;
 }
 
@@ -1155,14 +1185,11 @@ void SpaceTimeMatrix::SetAIRHyperbolic()
 void SpaceTimeMatrix::SetAMGParameters(AMG_parameters &AMG_params)
 {
     // TODO: does this copy the structure by value?
-    m_AMGParameters = AMG_params;
+    m_AMG_parameters = AMG_params;
 }
 
 
 
-void SetSolverParameters(Solver_parameters &solver_params) {
-    m_solverParameters = solver_params;
-}
 
 
 void SpaceTimeMatrix::PrintMeshData()
@@ -1173,7 +1200,9 @@ void SpaceTimeMatrix::PrintMeshData()
     }
 }
 
-/* Initialize AMG solver based on parameters in m_AMGParameters struct. */
+/* Initialize AMG solver based on parameters in m_AMG_parameters struct. */
+// TODO : do we eliminate the arguments to this function and just use those from m_solver_parameters
+// Is there any real reason not to do this? Why pass tol=0 for GMRES preconditioner?
 void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 {
     // If solver exists and rebuild bool is false, return
@@ -1194,8 +1223,8 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // Array to store relaxation scheme and pass to Hypre
         //      TODO: does hypre clean up grid_relax_points
-        int ns_down = m_AMGParameters.prerelax.length();
-        int ns_up = m_AMGParameters.postrelax.length();
+        int ns_down = m_AMG_parameters.prerelax.length();
+        int ns_up = m_AMG_parameters.postrelax.length();
         int ns_coarse = 1;
         std::string Fr("F");
         std::string Cr("C");
@@ -1209,26 +1238,26 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // set down relax scheme 
         for(unsigned int i = 0; i<ns_down; i++) {
-            if (m_AMGParameters.prerelax.compare(i,1,Fr) == 0) {
+            if (m_AMG_parameters.prerelax.compare(i,1,Fr) == 0) {
                 grid_relax_points[1][i] = -1;
             }
-            else if (m_AMGParameters.prerelax.compare(i,1,Cr) == 0) {
+            else if (m_AMG_parameters.prerelax.compare(i,1,Cr) == 0) {
                 grid_relax_points[1][i] = 1;
             }
-            else if (m_AMGParameters.prerelax.compare(i,1,Ar) == 0) {
+            else if (m_AMG_parameters.prerelax.compare(i,1,Ar) == 0) {
                 grid_relax_points[1][i] = 0;
             }
         }
 
         // set up relax scheme 
         for(unsigned int i = 0; i<ns_up; i++) {
-            if (m_AMGParameters.postrelax.compare(i,1,Fr) == 0) {
+            if (m_AMG_parameters.postrelax.compare(i,1,Fr) == 0) {
                 grid_relax_points[2][i] = -1;
             }
-            else if (m_AMGParameters.postrelax.compare(i,1,Cr) == 0) {
+            else if (m_AMG_parameters.postrelax.compare(i,1,Cr) == 0) {
                 grid_relax_points[2][i] = 1;
             }
-            else if (m_AMGParameters.postrelax.compare(i,1,Ar) == 0) {
+            else if (m_AMG_parameters.postrelax.compare(i,1,Ar) == 0) {
                 grid_relax_points[2][i] = 0;
             }
         }
@@ -1239,44 +1268,43 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
         HYPRE_BoomerAMGSetMaxIter(m_solver, maxiter);
         HYPRE_BoomerAMGSetPrintLevel(m_solver, printLevel);
 
-        if (m_AMGParameters.distance_R > 0) {
-            HYPRE_BoomerAMGSetRestriction(m_solver, m_AMGParameters.distance_R);
-            HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_AMGParameters.strength_tolR);
-            HYPRE_BoomerAMGSetFilterThresholdR(m_solver, m_AMGParameters.filter_tolR);
+        if (m_AMG_parameters.distance_R > 0) {
+            HYPRE_BoomerAMGSetRestriction(m_solver, m_AMG_parameters.distance_R);
+            HYPRE_BoomerAMGSetStrongThresholdR(m_solver, m_AMG_parameters.strength_tolR);
+            HYPRE_BoomerAMGSetFilterThresholdR(m_solver, m_AMG_parameters.filter_tolR);
         }
-        HYPRE_BoomerAMGSetInterpType(m_solver, m_AMGParameters.interp_type);
-        HYPRE_BoomerAMGSetCoarsenType(m_solver, m_AMGParameters.coarsen_type);
+        HYPRE_BoomerAMGSetInterpType(m_solver, m_AMG_parameters.interp_type);
+        HYPRE_BoomerAMGSetCoarsenType(m_solver, m_AMG_parameters.coarsen_type);
         HYPRE_BoomerAMGSetAggNumLevels(m_solver, 0);
-        HYPRE_BoomerAMGSetStrongThreshold(m_solver, m_AMGParameters.strength_tolC);
+        HYPRE_BoomerAMGSetStrongThreshold(m_solver, m_AMG_parameters.strength_tolC);
         HYPRE_BoomerAMGSetGridRelaxPoints(m_solver, grid_relax_points);
-        if (m_AMGParameters.relax_type > -1) {
-            HYPRE_BoomerAMGSetRelaxType(m_solver, m_AMGParameters.relax_type);
+        if (m_AMG_parameters.relax_type > -1) {
+            HYPRE_BoomerAMGSetRelaxType(m_solver, m_AMG_parameters.relax_type);
         }
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_coarse, 3);
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_down,   1);
         HYPRE_BoomerAMGSetCycleNumSweeps(m_solver, ns_up,     2);
-        if (m_AMGParameters.filter_tolA > 0) {
-            HYPRE_BoomerAMGSetADropTol(m_solver, m_AMGParameters.filter_tolA);
+        if (m_AMG_parameters.filter_tolA > 0) {
+            HYPRE_BoomerAMGSetADropTol(m_solver, m_AMG_parameters.filter_tolA);
         }
         // type = -1: drop based on row inf-norm
-        else if (m_AMGParameters.filter_tolA == -1) {
+        else if (m_AMG_parameters.filter_tolA == -1) {
             HYPRE_BoomerAMGSetADropType(m_solver, -1);
         }
 
         // Set cycle type for solve 
-        HYPRE_BoomerAMGSetCycleType(m_solver, m_AMGParameters.cycle_type);
+        HYPRE_BoomerAMGSetCycleType(m_solver, m_AMG_parameters.cycle_type);
         
         if (m_globRank == 0) std::cout << "Solver assembled.\n";
     }
 }
 
 
-void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel,
-                               bool binv_scale)
+void SpaceTimeMatrix::SolveAMG()
 {
-    SetupBoomerAMG(printLevel, maxiter, tol);
+    SetupBoomerAMG(m_solver_parameters.printLevel, m_solver_parameters.maxiter, m_solver_parameters.tol);
 
-    if (binv_scale) {
+    if (m_solver_parameters.binv_scale) {
         HYPRE_ParCSRMatrix A_s;
         hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);
         hypre_ParCSRMatrixDropSmallEntries(A_s, 1e-15, 1);
@@ -1293,30 +1321,29 @@ void SpaceTimeMatrix::SolveAMG(double tol, int maxiter, int printLevel,
 }
 
 
-void SpaceTimeMatrix::SolveGMRES(double tol, int maxiter, int printLevel,
-                                 bool binv_scale, int precondition, int AMGiters) 
+void SpaceTimeMatrix::SolveGMRES() 
 {
     HYPRE_ParCSRGMRESCreate(m_globComm, &m_gmres);
     
-    // AMG preconditioning (setup boomerAMG with 1 max iter and print level 1)
-    if (precondition == 1) {
-        SetupBoomerAMG(1, AMGiters, 0.0);
+    // AMG preconditioning (setup boomerAMG with zero halting tolerance so we can do a fixed number of iterations)
+    if (m_solver_parameters.gmres_preconditioner == 1) {
+        SetupBoomerAMG(m_solver_parameters.printLevel, m_solver_parameters.AMGiters, 0.0);
         HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
                           (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
     }
     // Diagonally scaled preconditioning?
-    else if (precondition == 2) {
+    else if (m_solver_parameters.gmres_preconditioner == 2) {
         HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSolve,
                              (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSetup, m_solver);  
     }
 
     HYPRE_GMRESSetKDim(m_gmres, 50);
-    HYPRE_GMRESSetMaxIter(m_gmres, maxiter);
-    HYPRE_GMRESSetTol(m_gmres, tol);
-    HYPRE_GMRESSetPrintLevel(m_gmres, printLevel);
+    HYPRE_GMRESSetMaxIter(m_gmres, m_solver_parameters.maxiter);
+    HYPRE_GMRESSetTol(m_gmres, m_solver_parameters.tol);
+    HYPRE_GMRESSetPrintLevel(m_gmres, m_solver_parameters.printLevel);
     HYPRE_GMRESSetLogging(m_gmres, 1);
 
-   if (binv_scale) {
+   if (m_solver_parameters.binv_scale) {
         HYPRE_ParCSRMatrix A_s;
         hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);
         hypre_ParCSRMatrixDropSmallEntries(A_s, 1e-15, 1);

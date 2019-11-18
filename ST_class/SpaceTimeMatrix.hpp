@@ -36,27 +36,29 @@ struct AMG_parameters {
 };
 
 /* Struct containing solver options */
-struct Solver_options {
-    bool use_gmres;
+struct Solver_parameters {
+    double tol;                 /* Relative residual holting tolerance */
+    int    maxiter;             /* Maximum number of solver iterations */
+    int    printLevel;          /* Amount of information about solver */
     
-    int rebuildRate;
-    double tol;
-    int maxiter;
-    int printLevel;
-    bool binv_scale;
-    int precondition;
-    int AMGiters;
+    bool   use_gmres;           /* Use preconditioned GMRES as solver */
+    int    gmres_preconditioner;/* Preconditioner for GMRES */
+    int    AMGiters;            /* Number of AMG iterations to precondition a GMRES iteration by, if preconditioning by GMRES */
+    
+    bool   binv_scale;          /* Scale by block inverse if mass matrix is block diagonal */
+    
+    int    rebuildRate;         /* Time-stepping: Rate solver is rebuilt */
 };
 
 
 class SpaceTimeMatrix
 {
 private:
-    bool    m_RK;                   /* Runge-Kutta time integration */
-    bool    m_BDF;                  /* BDF time integration */
+    
     
     bool    m_pit;                  /* Parallel (true) or sequential (false) in time */
     double  m_dt;                   /* Time step (constant) */
+    double  m_t0;                   /* Initial time to integrate from */
     int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
 
     int     m_DOFInd;               /* Index of DOF that spatial comm group belongs to */
@@ -66,18 +68,23 @@ private:
     int     m_numProc;              /* Total number of procs; TODO : Change to "m_globCommSize" */
     
     
-    bool    m_rebuildSolver;
+    bool    m_rebuildSolver;        /* Flag specifying when AMG solver is rebuilt */
     
-    int     m_timeDisc;             /* ID of Runge-Kutta scheme */
-    bool    m_is_ERK;
-    bool    m_is_DIRK;
-    bool    m_is_SDIRK;
+    
+    /* --- The time-integration scheme --- */
+    int     m_timeDisc;             /* ID of time-integration scheme */
     
     /* Runge-Kutta Butcher tableaux variables */
+    bool    m_RK;                   /* Runge-Kutta time integration */
+    bool    m_is_ERK;               /* Explicit Runge-Kutta */
+    bool    m_is_DIRK;              /* Diagonally implicit Runge-Kutta */
+    bool    m_is_SDIRK;             /* Singly diagonally Runge-Kutta */
     int                              m_s_butcher; /* Number of stages in RK scheme */
     std::vector<std::vector<double>> m_A_butcher; /* Coefficients in RK Butcher tableaux */
     std::vector<double>              m_b_butcher; /* Coefficients in RK Butcher tableaux */
     std::vector<double>              m_c_butcher; /* Coefficients in RK Butcher tableaux */
+
+    bool    m_BDF;                  /* BDF time integration */
 
 
     MPI_Comm            m_globComm;
@@ -89,10 +96,9 @@ private:
     HYPRE_IJVector      m_bij;
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
-    AMG_parameters      m_AMGParameters;
-    Solver_parameters   m_solverParameters;
+    AMG_parameters      m_AMG_parameters;
+    Solver_parameters   m_solver_parameters;
 
-    double m_dumb;
     
     int     m_bsize;                /* DG specific variable... */
 
@@ -102,7 +108,7 @@ private:
     int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
     bool    m_isTimeDependent; //  TODO : Will need to be removed ...
     int     m_spCommSize; // TODO : remove... now protected
-    double  m_t0; 
+    
     double  m_t1; // TOOD :  do we use this?? delete??
     int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
 
@@ -179,11 +185,9 @@ private:
 
     
     /* ------ Sequential time integration routines ------ */
-    void ERKTimeSteppingSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
-                        bool binv_scale, int precondition, int AMGiters);            /* General purpose ERK solver */
-    void ERKSolveWithMass();    /* General purpose ERK solver that can invert mass matrices */
-    void DIRKTimeSteppingSolve(double solve_tol, int max_xiter, int printLevel,         /* General purpose DIRK solver */
-                        bool binv_scale, int precondition, int AMGiters, int rebuildIters);   
+    void ERKTimeSteppingSolve();  /* General purpose ERK solver */
+    void ERKSolveWithMass();      /* General purpose ERK solver that can invert mass matrices */
+    void DIRKTimeSteppingSolve(); /* General purpose DIRK solver */
     
     void GetHypreInitialCondition(HYPRE_ParVector  &u0, 
                                     HYPRE_IJVector &u0ij); 
@@ -202,6 +206,13 @@ private:
                                             HYPRE_IJMatrix &Lij,
                                             double          t);
     
+    void SolveAMG();
+    void SolveGMRES();
+    
+    void BuildSpaceTimeMatrix();
+    
+    void SpaceTimeSolve();      /* Solve full space-time system */
+    void TimeSteppingSolve();   /* Sequential time integration */
     
 protected:    
     bool     m_useSpatialParallel;   /*  */
@@ -228,27 +239,22 @@ public:
     // SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, double dt, double t0, double t1);
     virtual ~SpaceTimeMatrix();
 
-    void BuildMatrix();
-    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
-    void SaveRHS(std::string filename) { HYPRE_IJVectorPrint(m_bij, filename.c_str()); }
-    void SaveX(std::string filename) { HYPRE_IJVectorPrint(m_xij, filename.c_str()); }
-    void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
+
+    void Solve(); /* General solver! */
 
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
     void SetAMGParameters(AMG_parameters &AMG_params);
-    void SolveAMG(double tol=1e-8, int maxiter=250, int printLevel=3,
-                  bool binv_scale=true);
-    void SolveGMRES(double tol=1e-8, int maxiter=250, int printLevel=3,
-                    bool binv_scale=true, int precondition=1, int AMGiters=10);
-    void PrintMeshData();
     
-    
+    void SetSolverParametersDefaults();
     void SetSolverParameters(Solver_parameters &solver_params); 
+        
     
-    /* Sequential time integration */
-    void TimeSteppingSolve(int rebuildRate = 0, double tol=1e-8, int maxiter=250, int printLevel=3,
-                            bool binv_scale=true, int precondition=1, int AMGiters=10);
-    
+    void PrintMeshData();
+
+    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
+    void SaveRHS(std::string filename) { HYPRE_IJVectorPrint(m_bij, filename.c_str()); }
+    void SaveX(std::string filename) { HYPRE_IJVectorPrint(m_xij, filename.c_str()); }
+    void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
 };
