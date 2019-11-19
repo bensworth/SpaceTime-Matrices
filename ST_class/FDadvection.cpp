@@ -858,34 +858,6 @@ void FDadvection::getLocalUpwindDiscretization(double * &localWeights, int * &lo
 
 
 
-
-// The mass matrix just the identity
-void FDadvection::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
-{
-    // Check if mass matrix has been constructed, if not then build it
-    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-        int localMinRow = m_localMinRow;                    // First row on proc
-        int localMaxRow = m_localMinRow + m_onProcSize - 1; // Last row on proc
-        m_M_rowptr      = new int[m_onProcSize+1];
-        m_M_colinds     = new int[m_onProcSize];
-        m_M_data        = new double[m_onProcSize];
-        m_M_rowptr[0]   = 0;
-        int rowcount    = 0;
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            m_M_colinds[rowcount]  = row;
-            m_M_data[rowcount]     = 1.0;
-            m_M_rowptr[rowcount+1] = rowcount+1;
-            rowcount += 1;
-        }
-    } 
-    
-    // Direct pointers to existing member mass matrix data arrays
-    M_rowptr = m_M_rowptr;
-    M_colinds = m_M_colinds; 
-    M_data = m_M_data; 
-}
-
-
 // PARALLELISM: Get solution-independent component of spatial discretization in vector  G
 void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double * &G, 
                                             int &localMinRow, int &localMaxRow, 

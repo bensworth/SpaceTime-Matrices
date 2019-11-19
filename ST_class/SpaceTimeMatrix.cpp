@@ -17,6 +17,75 @@
 //      - namespace for RK tableaux/AMG parameters? Keep structs separate from class? 
 
 
+/* Update member variables for describing which component of the identity 
+mass-matrix the current process owns 
+
+This is a helper function for when the spatial discretization doesn't use a mass 
+matrix but we still need one in the form of an identity matrix
+
+TODO : This is a little funny... I don't think the member variable should change over the life 
+of the code since I think a process will always own the same local range of a spatial
+discretization... But not convinced due to the way some of Ben's code is written, so just account for 
+the possiblity that they might change
+*/
+void SpaceTimeMatrix::setIdentityMassLocalRange(int localMinRow, int localMaxRow) 
+{    
+    // Reset local range if : Not previously set, has changed, or the rebuild flag has been set
+    if (m_M_localMinRow == -1 || m_M_localMaxRow == -1 || localMinRow != m_M_localMinRow || localMaxRow != m_M_localMaxRow || m_rebuildMass) {
+        m_M_localMinRow = localMinRow;
+        m_M_localMaxRow = localMaxRow;
+        m_rebuildMass   = true; // Ensures identity mass matrix will be build or rebuilt
+    }
+}
+
+
+/* Assmble some component of an identity mass matrix based on the member variables incidcating the local range owned by current process */
+void SpaceTimeMatrix::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
+{
+    // Ensure this function is not being called when the user has indicated that the spatial discretization does use a mass matrix
+    if (m_M_exists) {
+        std::cout << "WARNING: Spatial discretization subclass must implement mass matrix!" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    
+    // Ensure that local range variables have been set before we try to assmble
+    if (m_M_localMinRow == -1 || m_M_localMaxRow == -1) {
+        std::cout << "WARNING: Local range of identity mass matrix must be set before 'getMassMatrix' is called" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    // Only build or rebuild mass matrix if this flag has been set
+    if (m_rebuildMass) {
+        // Free existing member variables since we're updating them
+        if (m_M_rowptr)  delete[] m_M_rowptr;
+        if (m_M_colinds) delete[] m_M_colinds;
+        if (m_M_data)    delete[] m_M_data;
+        
+        int onProcSize = m_M_localMaxRow - m_M_localMinRow + 1; // Number of rows to assemble
+        
+        m_M_rowptr    = new int[onProcSize+1];
+        m_M_colinds   = new int[onProcSize];
+        m_M_data      = new double[onProcSize];
+        m_M_rowptr[0] = 0;
+        int rowcount  = 0;
+        for (int row = m_M_localMinRow; row <= m_M_localMaxRow; row++) {
+            m_M_colinds[rowcount]  = row;
+            m_M_data[rowcount]     = 1.0;
+            m_M_rowptr[rowcount+1] = rowcount+1;
+            rowcount += 1;
+        }
+    }
+    
+    // Direct input references to existing member variables
+    M_rowptr  = m_M_rowptr;
+    M_colinds = m_M_colinds; 
+    M_data    = m_M_data; 
+}
+
+
 // TODO remove these functions when implemented in all spatial discretizations..
 void SpaceTimeMatrix::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
                                             int* &A_colinds, double* &A_data,
@@ -64,7 +133,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
       m_RK(false), m_BDF(false), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
-      m_bsize(1), m_hmin(-1), m_hmax(-1)
+      m_bsize(1), m_hmin(-1), m_hmax(-1),
+      m_M_localMinRow(-1), m_M_localMaxRow(-1),  m_rebuildMass(true)
 {
     
     m_isTimeDependent = true; // TODO : this will need to be removed later... when L and G are treated separately
@@ -323,10 +393,14 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
             // Get components of mass matrix only after spatial discretization has been assembled for the first time
             // Mass matrix is NOT time dependent: Only needs to be assembled once
             if ((step == 0) && (i == 0)) {
-                getMassMatrix(M_rowptr, M_colinds, M_data);
-                // Get rows this process owns from M; assumes rows of M and L are partitioned the same in memory
+                // Get rows this process owns of M assuming rows of M and L are partitioned the same in memory
                 int jdummy1, jdummy2;
                 HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
+                
+                // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
+                if (!m_M_exists) setIdentityMassLocalRange(ilower, iupper);
+                
+                getMassMatrix(M_rowptr, M_colinds, M_data);
                 onProcSize     = iupper - ilower + 1;
                 M_rows         = new int[onProcSize];
                 M_cols_per_row = new int[onProcSize];
@@ -1464,18 +1538,6 @@ void SpaceTimeMatrix::SolveGMRES()
 }
 
 
-// TODO : this function may be unnecessary if mass matrix is stored as member variables...
-void SpaceTimeMatrix::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
-{
-    // TODO : set to sparse identity matrix here
-    if ((!m_M_rowptr) || (!m_M_colinds) || (!m_M_data)) {
-
-    }
-
-    // TODO : set input pointers to address of member variables
-
-}
-
 /* ------------------------------------------------------------------------- */
 /* ----------------- At least 1 temporal DOF per processor ------------------ */
 /* ------------------------------------------------------------------------- */
@@ -1524,9 +1586,13 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int* &rowptr, int* &colinds, double* &dat
     
     
     // Get mass matrix
-    int* M_rowptr;
-    int* M_colinds;
+    int*    M_rowptr;
+    int*    M_colinds;
     double* M_data;
+    
+    // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
+    if (!m_M_exists) setIdentityMassLocalRange(0, spatialDOFs-1); // Entire spatial discretization fits on process
+    
     getMassMatrix(M_rowptr, M_colinds, M_data);
     int nnzM = M_rowptr[spatialDOFs];
     // TODO: Why is this not making sense  for DG??
@@ -2181,9 +2247,13 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int *&rowptr, int *&colinds, double *&dat
     //exit(0);
     
     // Get mass matrix
-    int* M_rowptr;
-    int* M_colinds;
-    double* M_data;
+    int *    M_rowptr;
+    int *    M_colinds;
+    double * M_data;
+    
+    // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
+    if (!m_M_exists) setIdentityMassLocalRange(localMinRow, localMaxRow); 
+    
     getMassMatrix(M_rowptr, M_colinds, M_data);
     int nnzM = M_rowptr[onProcSize] - M_rowptr[0];
     

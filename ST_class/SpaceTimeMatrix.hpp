@@ -103,7 +103,10 @@ private:
     Solver_parameters   m_solver_parameters;
 
     
-    
+    /* --- Identity-mass-matrix related --- */
+    int  m_M_localMinRow;
+    int  m_M_localMaxRow;
+    bool m_rebuildMass;
     
     
     int     m_bsize;                /* DG specific variable... */
@@ -181,7 +184,8 @@ private:
                                                                             
     // Get mass matrix for time integration; only for finite element discretizations.
     virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
-
+    // Helper function to setup identity mass matrix when not using finite-element discretization
+    void setIdentityMassLocalRange(int localMinRow, int localMaxRow);
     
     // TODO : these need to be implemented in CG and DG also...
     virtual void getInitialCondition(const MPI_Comm &spatialComm, double * &B, 

@@ -92,10 +92,7 @@ private:
     void getSpatialDiscretizationL(int* &L_rowptr, int* &L_colinds, double* &L_data,
                                     double* &U0, bool getU0, int &spatialDOFs,
                                     double t, int &bsize);                                            
-                                 
-                                  
-    void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);                                  
-            
+                                         
     /* Uses spatial parallelism */                                
     void get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
                                         int *&L_rowptr, int *&L_colinds, double *&L_data, 
