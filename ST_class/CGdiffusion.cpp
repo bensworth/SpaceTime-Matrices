@@ -14,9 +14,9 @@ void CGdiffusion::getInitialCondition(double * &B, int &spatialDOFs)
 {    
 }
 
-CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
+CGdiffusion::CGdiffusion(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+                         double dt): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL)
 {
     m_order = 1;
@@ -25,9 +25,9 @@ CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit, int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
+CGdiffusion::CGdiffusion(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+                         double dt, int refLevels, int order): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}
 {
@@ -35,9 +35,9 @@ CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-CGdiffusion::CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit, int refLevels, int order, bool lumped): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
+CGdiffusion::CGdiffusion(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+                         double dt, int refLevels, int order, bool lumped): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL),
     m_refLevels{refLevels}, m_order{order}, m_lumped(lumped)
 {

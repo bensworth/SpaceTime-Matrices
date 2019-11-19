@@ -104,9 +104,9 @@ double inflow_function(const Vector &x) {
     }
 }
 
-DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit)
+DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, 
+                            int timeDisc, int numTimeSteps, double dt): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt)
 {
     m_order = 1;
     m_refLevels = 1;
@@ -145,10 +145,11 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit, int refLevels, int order): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
-    m_refLevels{refLevels}, m_order{order}
+DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, 
+                            int timeDisc, int numTimeSteps,
+                            double dt, int refLevels, int order): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
+                    m_refLevels{refLevels}, m_order{order}
 {
     m_lumped = false;
     m_dim = 2;
@@ -183,10 +184,10 @@ DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
 }
 
 
-DGadvection::DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit, int refLevels, int order, bool lumped): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
-    m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}
+DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+                         double dt, int refLevels, int order, bool lumped): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
+        m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}
 {
     m_dim = 2;
     m_basis_type = 1;

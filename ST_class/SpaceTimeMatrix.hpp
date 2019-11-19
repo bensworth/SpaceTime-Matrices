@@ -57,8 +57,8 @@ class SpaceTimeMatrix
 {
 private:
     
-    
     bool    m_pit;                  /* Parallel (true) or sequential (false) in time */
+    bool    m_M_exists;             /* Does the spatial discretization use a mass matrix? */
     double  m_dt;                   /* Time step (constant) */
     double  m_t0;                   /* Initial time to integrate from */
     int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
@@ -89,6 +89,7 @@ private:
     bool    m_BDF;                  /* BDF time integration */
 
 
+    /* --- Relating to HYPRE solution of linear systems --- */
     MPI_Comm            m_globComm;
     HYPRE_Solver        m_solver;
     HYPRE_Solver        m_gmres;
@@ -101,6 +102,9 @@ private:
     AMG_parameters      m_AMG_parameters;
     Solver_parameters   m_solver_parameters;
 
+    
+    
+    
     
     int     m_bsize;                /* DG specific variable... */
 
@@ -120,18 +124,21 @@ private:
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);
     void SetGMRESOptions();
 
-    // Routine to build space-time matrices when the spatial discretization
-    // takes more than one processor.
+
+    // Not using spatial parallelism
     void RKSpaceTimeBlock(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    
+    // Using spatial parallelism
+    void RKSpaceTimeBlock(int* &rowptr, int* &colinds, double* &data, double* &B, 
+              double* &X, int &onProcSize);
+              
+              
+    //  TODO : remove these functions...          
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-
-    // Routine to build space-time matrices when spatial at least one DOF is allocated per processor.
-    void RKSpaceTimeBlock(int* &rowptr, int* &colinds, double* &data, double* &B, 
-              double* &X, int &onProcSize);
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
               double *&X, int &onProcSize);
     void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
@@ -228,8 +235,6 @@ protected:
     bool     m_L_isTimedependent; /* Is spatial discretization time dependent? */
     bool     m_g_isTimedependent; /* Is PDE source term time dependent? */
 
-    
-    bool     m_M_exists; /* Is mass-matrix the identity? */
     int *    m_M_rowptr;
     int *    m_M_colinds;
     double * m_M_data;
@@ -238,8 +243,7 @@ protected:
     double   m_hmax;
 
 public:
-    SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, int numTimeSteps, double dt, bool pit);
-    // SpaceTimeMatrix(MPI_Comm globComm, int timeDisc, double dt, double t0, double t1);
+    SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt);
     virtual ~SpaceTimeMatrix();
 
 

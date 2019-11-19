@@ -57,14 +57,14 @@ void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, int &spatialDOFs, do
 
 
 
-SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, int timeDisc,
-                                 int nt, double dt, bool pit)
-    : m_globComm{globComm}, m_timeDisc{timeDisc}, m_nt{nt},
-      m_dt{dt}, m_pit{pit}, m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
-      m_M_exists(true), m_RK(false), m_BDF(false),
+SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists, 
+                                    int timeDisc, int nt, double dt)
+    : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
+      m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_RK(false), m_BDF(false), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
-      m_bsize(1), m_hmin(-1), m_hmax(-1), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
-      m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true)
+      m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
+      m_bsize(1), m_hmin(-1), m_hmax(-1)
 {
     
     m_isTimeDependent = true; // TODO : this will need to be removed later... when L and G are treated separately

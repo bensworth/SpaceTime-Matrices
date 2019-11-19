@@ -115,20 +115,17 @@ double FDadvection::PDE_Source(double x, double y, double t)
 
 
 
-FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit)
+FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt)
 {
     
 }
 
 
-FDadvection::FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-                         double dt, bool pit, int dim, int refLevels, int order, 
-                         int problemID, std::vector<int> px): 
-    SpaceTimeMatrix(globComm, timeDisc, numTimeSteps, dt, pit),
-    m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID},
-    m_px{px}
+FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+                        double dt, int dim, int refLevels, int order, int problemID, std::vector<int> px): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
+                        m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID}, m_px{px}
 {    
     /* ----------------------------------------------------------------------------------------------------- */
     /* --- Check specified proc distribution is consistent with the number of procs passed by base class --- */

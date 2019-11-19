@@ -38,12 +38,12 @@ private:
     
 public:
 
-	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit);
-	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit, int refLevels, int order);
-	CGdiffusion(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit, int refLevels, int order, bool lumped);
+	CGdiffusion(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+				double dt);
+	CGdiffusion(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+				double dt, int refLevels, int order);
+	CGdiffusion(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+				double dt, int refLevels, int order, bool lumped);
     ~CGdiffusion() { };
 
 };

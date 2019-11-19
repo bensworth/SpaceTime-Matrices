@@ -25,7 +25,8 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------------ */
     /* --- Set default values for command-line parameters --- */
     /* ------------------------------------------------------ */
-    int pit     = 1; // TODO : OptionsParser cannot  seem to handle a bool here??? 
+    int pit          = 1; 
+    bool mass_exists = false;
     bool isTimeDependent = true;
     int numTimeSteps = 2; // TODO: I think this should be removed...
     int nt           = 2;
@@ -188,8 +189,8 @@ int main(int argc, char *argv[])
     /* ------ Continuous-Galerkin discretizations of diffusion ------ */
     /* -------------------------------------------------------------- */
     if (spatialDisc == 1) {
-        CGdiffusion STmatrix(MPI_COMM_WORLD, timeDisc, nt,
-                             dt, pit, refLevels, order, lump_mass);
+        mass_exists = true; // Have a mass matrix
+        CGdiffusion STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, dt, refLevels, order, lump_mass);
             
         STmatrix.SetSolverParameters(solver);                 
         STmatrix.Solve();                            
@@ -202,8 +203,8 @@ int main(int argc, char *argv[])
     /* ------ Discontinuous-Galerkin discretizations of advection ------ */
     /* ----------------------------------------------------------------- */
     else if (spatialDisc == 2) {
-        DGadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt,
-                             dt, pit, refLevels, order, lump_mass);
+        mass_exists = true; // Have a mass matrix
+        DGadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, dt, refLevels, order, lump_mass);
         
         STmatrix.SetSolverParameters(solver);
         STmatrix.Solve();
@@ -284,9 +285,8 @@ int main(int argc, char *argv[])
         }
         
         // Build SpaceTime object
-        FDadvection STmatrix(MPI_COMM_WORLD, timeDisc, nt, 
-                                dt, pit, dim, refLevels, order, 
-                                FD_ProblemID, n_px);
+        FDadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, 
+                                dt, dim, refLevels, order, FD_ProblemID, n_px);
         
         // Set parameters
         STmatrix.SetSolverParameters(solver);

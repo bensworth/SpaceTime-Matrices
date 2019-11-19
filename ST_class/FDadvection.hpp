@@ -145,11 +145,9 @@ private:
 public:
 
     /* Constructors */
-	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit);
-	FDadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit, int dim, int refLevels, int order, 
-                int problemID, std::vector<int> px = {});
+	FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt);
+	FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt, 
+                    int dim, int refLevels, int order, int problemID, std::vector<int> px = {});
     ~FDadvection();
 
 };

@@ -44,12 +44,12 @@ private:
 
 public:
 
-	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit);
-	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit, int refLevels, int order);
-	DGadvection(MPI_Comm globComm, int timeDisc, int numTimeSteps,
-				double dt, bool pit, int refLevels, int order, bool lumped);
+	DGadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+				double dt);
+	DGadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+				double dt, int refLevels, int order);
+	DGadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps,
+				double dt, int refLevels, int order, bool lumped);
     ~DGadvection();
 
 };
