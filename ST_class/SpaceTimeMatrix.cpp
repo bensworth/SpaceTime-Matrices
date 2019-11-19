@@ -271,14 +271,18 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     // For monitoring convergence of linear solver
     int    num_iters;
     double rel_res_norm;
+    double avg_iters;
+    double avg_convergence_rate;
 
-    // Is it necessary to build spatial disc. matrix/DIRK matrix more than once?
+
+    // Is it necessary to build spatial discretization matrix/DIRK matrix more than once?
     bool rebuildMatrix = ((m_L_isTimedependent) || (!m_is_SDIRK));
 
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
     /* ------------------------------------------------------------ */
     // Take nt-1 steps
+    int solve_count = 0; // Number of linear solves
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
         /* -------------- Build RHS vector, b2, in linear system (M+a_ii*dt*L)*k[i]=b2 -------------- */
@@ -390,6 +394,10 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
                 HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
                 HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
             }
+            solve_count += 1;
+            avg_iters   += (double) num_iters;
+            // avg_convergence_rate += ...; // TODO : Not sure how to do
+            
                 
             // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
             if (rel_res_norm > m_solver_parameters.tol) {
@@ -409,6 +417,17 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
         t += m_dt; // Increment time
     }
 
+
+    // Print statistics about average iteration counts and convergence factor across whole time interval
+    if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+        std::cout << "=============================================\n";
+        std::cout << "Summary of linear solves during time stepping\n";
+        std::cout << "---------------------------------------------\n";
+        std::cout << "Number of systems solved = " << solve_count << '\n';
+        std::cout << "Average number of iterations = " << avg_iters/solve_count << '\n';
+        std::cout << "***TODO***: Average convergence factor = ..." << '\n';
+        //hypre_BoomerAMGGetRelResidualNorm(m_solver, &rel_res_norm);
+    }
 
     /* ---------------------------------------------------------- */
     /* ------------------------ Clean up ------------------------ */
@@ -1120,6 +1139,7 @@ void SpaceTimeMatrix::SetSolverParametersDefaults() {
     m_solver_parameters.use_gmres    = 1;
     m_solver_parameters.gmres_preconditioner = 1;
     m_solver_parameters.AMGiters     = 10;
+    m_solver_parameters.gmres_AMG_printLevel = 1;
     
     m_solver_parameters.binv_scale   = true;
     
@@ -1200,10 +1220,12 @@ void SpaceTimeMatrix::PrintMeshData()
     }
 }
 
-/* Initialize AMG solver based on parameters in m_AMG_parameters struct. */
-// TODO : do we eliminate the arguments to this function and just use those from m_solver_parameters
-// Is there any real reason not to do this? Why pass tol=0 for GMRES preconditioner?
-void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
+/* Initialize AMG solver based on parameters in m_AMG_parameters struct. 
+
+NOTE: Some parameters are passed here rather than set through m_solver_parameters
+since they differ depending on whether BoomerAMG is used as the solver of preconditioned
+*/
+void SpaceTimeMatrix::SetBoomerAMGOptions(int printLevel, int maxiter, double tol)
 {
     // If solver exists and rebuild bool is false, return
     if (m_solver && !m_rebuildSolver){
@@ -1218,9 +1240,6 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
             if (m_globRank == 0) std::cout << "Building solver.\n";
         }
         
-        // Do not rebuild solver unless parameters are changed.
-        m_rebuildSolver = false;
-
         // Array to store relaxation scheme and pass to Hypre
         //      TODO: does hypre clean up grid_relax_points
         int ns_down = m_AMG_parameters.prerelax.length();
@@ -1294,16 +1313,20 @@ void SpaceTimeMatrix::SetupBoomerAMG(int printLevel, int maxiter, double tol)
 
         // Set cycle type for solve 
         HYPRE_BoomerAMGSetCycleType(m_solver, m_AMG_parameters.cycle_type);
-        
-        if (m_globRank == 0) std::cout << "Solver assembled.\n";
     }
 }
 
 
+
+/* Solve current linear system with AMG
+
+NOTE: If applicable, an existing AMG solver, i.e., one based on a previously 
+constructed matrix A, is used to solve the current linear system if the underlying 
+AMG solver is not explicitly told to be rebuilt via the m_rebuildSolver flag */
 void SpaceTimeMatrix::SolveAMG()
 {
-    SetupBoomerAMG(m_solver_parameters.printLevel, m_solver_parameters.maxiter, m_solver_parameters.tol);
-
+    if (!m_solver) m_rebuildSolver = true; // Ensure that if solver not build previously then it is built now
+    
     if (m_solver_parameters.binv_scale) {
         HYPRE_ParCSRMatrix A_s;
         hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);
@@ -1311,49 +1334,131 @@ void SpaceTimeMatrix::SolveAMG()
         HYPRE_ParVector b_s;
         hypre_ParvecBdiagInvScal(m_b, m_bsize, &b_s, m_A);
     
-        HYPRE_BoomerAMGSetup(m_solver, A_s, b_s, m_x);
+    
+        // TODO : wrap setup timer around this block
+        // If necessary, construct AMG solver based on current value of  A
+        if (m_rebuildSolver) {
+            // Set or reset options for AMG solver
+            SetBoomerAMGOptions(m_solver_parameters.printLevel, m_solver_parameters.maxiter, m_solver_parameters.tol);
+            // Build AMG hierarchy based on current value of A_s
+            HYPRE_BoomerAMGSetup(m_solver, A_s, b_s, m_x); // NOTE: Values of b and x are ignored by this function!
+            if (m_globRank == 0) std::cout << "Solver assembled.\n";
+            m_rebuildSolver = false; // Don't rebuild solver again unless explicitly told to
+        }
+        
+        // TODO : wrap solve timer around this block
+        // Solve linear system based on current values of A,b,x 
         HYPRE_BoomerAMGSolve(m_solver, A_s, b_s, m_x);
+        
+        // TODO : What happens to A_s and b_s here? Don't they need to be free'd? Or are they just copies?
     }
-    else {
-        HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x);
+    else 
+    {
+        // TODO : wrap setup timer around block
+        // If necessary, construct AMG solver based on current value of  A
+        if (m_rebuildSolver) {
+            // Set or reset options for AMG solver
+            SetBoomerAMGOptions(m_solver_parameters.printLevel, m_solver_parameters.maxiter, m_solver_parameters.tol);
+            // Build AMG hierarchy based on current value of A
+            HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
+            if (m_globRank == 0) std::cout << "Solver assembled.\n";
+            m_rebuildSolver = false; // Don't rebuild solver again unless explicitly told to
+        }
+        
+        // TODO : wrap solve timer around this block
+        // Solve linear system based on current values of A,b,x 
         HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
     }
 }
 
 
+
+/* Initialize GMRES solver based on parameters in m_solver_options struct. */
+void SpaceTimeMatrix::SetGMRESOptions() {
+    // If GMRES solver exists and underlying preconditioner not being rebuilt then return
+    if (m_gmres && !m_rebuildSolver){
+        return;
+    
+    // Initialize or reinitalize GMRES solver if it already existed
+    } else {
+        if (m_gmres) HYPRE_ParCSRGMRESDestroy(m_gmres);
+    
+        // Create solver object
+        HYPRE_ParCSRGMRESCreate(m_globComm, &m_gmres);
+    
+        // AMG preconditioning 
+        if (m_solver_parameters.gmres_preconditioner == 1) {
+            // Setup boomerAMG with zero halting tolerance so we can do a fixed number of AMG iterations
+            SetBoomerAMGOptions(m_solver_parameters.gmres_AMG_printLevel, m_solver_parameters.AMGiters, 0.0);
+            HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
+                              (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
+        }
+        // Diagonally scaled preconditioning?
+        else if (m_solver_parameters.gmres_preconditioner == 2) {
+            // TODO : Ben, does this make sense? m_solver has never been set before it is used below, i.e., it's currently NULL???
+            HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSolve,
+                                 (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSetup, m_solver);  
+        }
+    
+        HYPRE_GMRESSetKDim(m_gmres, 50);
+        HYPRE_GMRESSetMaxIter(m_gmres, m_solver_parameters.maxiter);
+        HYPRE_GMRESSetTol(m_gmres, m_solver_parameters.tol);
+        HYPRE_GMRESSetPrintLevel(m_gmres, m_solver_parameters.printLevel);
+        HYPRE_GMRESSetLogging(m_gmres, 1);
+    }
+}
+
+
+/* Solve current linear system with preconditioned GMRES
+
+NOTE: If applicable, an existing GMRES solver, i.e., one based on a previously 
+constructed AMG preconditioner (in turn based on a previously constructed matrix A), 
+is used to solve the current linear system if the underlying AMG preconditioner 
+is not explicitly told to be rebuilt via the m_rebuildSolver flag */
 void SpaceTimeMatrix::SolveGMRES() 
 {
-    HYPRE_ParCSRGMRESCreate(m_globComm, &m_gmres);
-    
-    // AMG preconditioning (setup boomerAMG with zero halting tolerance so we can do a fixed number of iterations)
-    if (m_solver_parameters.gmres_preconditioner == 1) {
-        SetupBoomerAMG(m_solver_parameters.printLevel, m_solver_parameters.AMGiters, 0.0);
-        HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
-                          (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
-    }
-    // Diagonally scaled preconditioning?
-    else if (m_solver_parameters.gmres_preconditioner == 2) {
-        HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSolve,
-                             (HYPRE_PtrToSolverFcn) HYPRE_ParCSROnProcTriSetup, m_solver);  
-    }
+    if (!m_gmres) m_rebuildSolver = true; // Ensure that if solver not build previously then it is built now
 
-    HYPRE_GMRESSetKDim(m_gmres, 50);
-    HYPRE_GMRESSetMaxIter(m_gmres, m_solver_parameters.maxiter);
-    HYPRE_GMRESSetTol(m_gmres, m_solver_parameters.tol);
-    HYPRE_GMRESSetPrintLevel(m_gmres, m_solver_parameters.printLevel);
-    HYPRE_GMRESSetLogging(m_gmres, 1);
-
-   if (m_solver_parameters.binv_scale) {
+    if (m_solver_parameters.binv_scale) {
         HYPRE_ParCSRMatrix A_s;
         hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);
         hypre_ParCSRMatrixDropSmallEntries(A_s, 1e-15, 1);
         HYPRE_ParVector b_s;
         hypre_ParvecBdiagInvScal(m_b, m_bsize, &b_s, m_A);
-        HYPRE_ParCSRGMRESSetup(m_gmres, A_s, b_s, m_x);
+        
+        // TODO : wrap setup timer around block
+        // If necessary, build GMRES solver based on current value of A_s
+        if (m_rebuildSolver) {
+            // Set or reset options for GMRES solver
+            SetGMRESOptions();
+            // Build GMRES solver based on current value of A
+            HYPRE_ParCSRGMRESSetup(m_gmres, A_s, b_s, m_x); // NOTE: Values of b and x are ignored by this function!
+            if (m_globRank == 0) std::cout << "Solver assembled.\n";
+            m_rebuildSolver = false; // Don't rebuild solver again unless explicitly told to
+        }
+        
+        // TODO : wrap solve timer around this block
+        // Solve linear system based on current values of A,b,x
         HYPRE_ParCSRGMRESSolve(m_gmres, A_s, b_s, m_x);
+        
+        // TODO : What happens to A_s and b_s here? Don't they need to be free'd? Or are they just copies?
     }
-    else {
-        HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x);
+    else 
+    {
+        
+        // TODO : wrap setup timer around block
+        // If necessary, build GMRES solver based on current value of A
+        if (m_rebuildSolver) {
+            // Set or reset options for GMRES solver
+            SetGMRESOptions();
+            // Build GMRES solver based on current value of A
+            HYPRE_ParCSRGMRESSetup(m_gmres, m_A, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
+            if (m_globRank == 0) std::cout << "Solver assembled.\n";
+            m_rebuildSolver = false; // Don't rebuild solver again unless explicitly told to
+        }
+        
+        // TODO : wrap solve timer around this block
+        // Solve linear system based on current values of A,b,x
         HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
     }
 }

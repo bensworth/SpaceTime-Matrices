@@ -22,7 +22,9 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &numProcess);
 
 
-    // Parameters
+    /* ------------------------------------------------------ */
+    /* --- Set default values for command-line parameters --- */
+    /* ------------------------------------------------------ */
     int pit     = 1; // TODO : OptionsParser cannot  seem to handle a bool here??? 
     bool isTimeDependent = true;
     int numTimeSteps = 2; // TODO: I think this should be removed...
@@ -43,9 +45,11 @@ int main(int argc, char *argv[])
     int maxiter      = 250;
     int printLevel   = 3;
     
+    // Parameters if using GMRES as solver rather than AMG
     int use_gmres    = 0;
     int AMGiters     = 1;
     int gmres_preconditioner = 1;
+    int gmres_AMG_printLevel = 1;
     
     int binv_scale   = 0;
     
@@ -66,7 +70,8 @@ int main(int argc, char *argv[])
 
 
     // Initialize solver options struct with default parameters */
-    Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, AMGiters, bool(binv_scale), rebuildRate};
+    Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, 
+                                    AMGiters, gmres_AMG_printLevel, bool(binv_scale), rebuildRate};
 
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
@@ -96,6 +101,8 @@ int main(int argc, char *argv[])
                   "Type of preconditioning for GMRES.");                     
     args.AddOption(&AMGiters, "-amgi", "--amg-iters",
                   "Number of BoomerAMG iterations to precondition one GMRES step.");       
+    args.AddOption(&(solver.gmres_AMG_printLevel), "-pamg", "--AMG-print-level",
+                  "Print level of BoomerAMG when preconditioning GMRES.");
     args.AddOption(&(solver.rebuildRate), "-rebuild", "--rebuild-rate",
                    "Frequency at which AMG solver is rebuilt during time stepping (-1=never rebuild, 0=rebuild every opportunity, x>0=after x time steps");              
                   

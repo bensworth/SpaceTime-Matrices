@@ -6,6 +6,7 @@
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
 #include "_hypre_parcsr_mv.h"
+#include "_hypre_parcsr_ls.h"
 #include "HYPRE_krylov.h"
 #define SPACETIMEMATRIX
 
@@ -44,6 +45,7 @@ struct Solver_parameters {
     bool   use_gmres;           /* Use preconditioned GMRES as solver */
     int    gmres_preconditioner;/* Preconditioner for GMRES */
     int    AMGiters;            /* Number of AMG iterations to precondition a GMRES iteration by, if preconditioning by GMRES */
+    int    gmres_AMG_printLevel;/* Print level for BoomerAMG if used as a preconditioner */
     
     bool   binv_scale;          /* Scale by block inverse if mass matrix is block diagonal */
     
@@ -115,7 +117,8 @@ private:
     void GetButcherTableaux();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
-    void SetupBoomerAMG(int printLevel=3, int maxiter=250, double tol=1e-8);
+    void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);
+    void SetGMRESOptions();
 
     // Routine to build space-time matrices when the spatial discretization
     // takes more than one processor.
