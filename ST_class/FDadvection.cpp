@@ -242,7 +242,7 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
                 if (temp * temp != m_spatialCommSize) {
                     std::cout << "WARNING: Spatial processor grid dimensions must be specified if non-square grid is to be used (using P=" << m_spatialCommSize << " procs in space)" << '\n';
                     MPI_Finalize();
-                    return;
+                    exit(1);
                 /* Setup default square process grid */
                 } else {
                     m_px.push_back(temp); // In x-direction have sqrt of number of total procs
@@ -1064,7 +1064,7 @@ void FDadvection::get1DUpwindStencil(int * &inds, double * &weights, int dim)
     {
         std::cout << "WARNING: invalid choice of spatial discretization. Upwind discretizations of orders 1--5 only implemented.\n";
         MPI_Finalize();
-        return;
+        exit(1);
     }
     
     for (int i = 0; i < m_order[dim]+1; i++) {

@@ -59,13 +59,16 @@ void SpaceTimeMatrix::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * 
     
     // Only build or rebuild mass matrix if this flag has been set
     if (m_rebuildMass) {
+        m_rebuildMass = false; // Don't rebuild unless this flag is changed
+        
         // Free existing member variables since we're updating them
         if (m_M_rowptr)  delete[] m_M_rowptr;
         if (m_M_colinds) delete[] m_M_colinds;
         if (m_M_data)    delete[] m_M_data;
         
         int onProcSize = m_M_localMaxRow - m_M_localMinRow + 1; // Number of rows to assemble
-        
+
+        // Build some component of the sparse identity
         m_M_rowptr    = new int[onProcSize+1];
         m_M_colinds   = new int[onProcSize];
         m_M_data      = new double[onProcSize];
@@ -77,6 +80,44 @@ void SpaceTimeMatrix::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * 
             m_M_rowptr[rowcount+1] = rowcount+1;
             rowcount += 1;
         }
+        
+        // As a test for inverting mass matrix, make it be the 1D Laplacian....
+        // int nnz = 3*onProcSize;
+        // m_M_rowptr    = new int[onProcSize+1];
+        // m_M_colinds   = new int[nnz];
+        // m_M_data      = new double[nnz];
+        // m_M_rowptr[0] = 0;
+        // int dataInd = 0;
+        // int rowcount = 0;
+        // for (int row = m_M_localMinRow; row <= m_M_localMaxRow; row++) {
+        //     if (row == m_M_localMinRow) {
+        //         m_M_data[dataInd] = 2.0;
+        //         m_M_colinds[dataInd] = row;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row+1;
+        //         dataInd += 1;
+        //     } else if (row == m_M_localMaxRow) {
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row-1;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = 2.0;
+        //         m_M_colinds[dataInd] = row;
+        //         dataInd += 1;
+        //     } else {
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row-1;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = 2.0;
+        //         m_M_colinds[dataInd] = row;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row+1;
+        //         dataInd += 1;
+        //     }
+        //     m_M_rowptr[rowcount+1] = dataInd;
+        //     rowcount += 1;
+        // }
     }
     
     // Direct input references to existing member variables
@@ -129,14 +170,14 @@ void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, int &spatialDOFs, do
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists, 
                                     int timeDisc, int nt, double dt)
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
-      m_solver(NULL), m_gmres(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_iterative(true), 
       m_RK(false), m_BDF(false), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
       m_bsize(1), m_hmin(-1), m_hmax(-1),
       m_M_localMinRow(-1), m_M_localMaxRow(-1),  m_rebuildMass(true)
 {
-    
     m_isTimeDependent = true; // TODO : this will need to be removed later... when L and G are treated separately
     
     // Get number of processes
@@ -229,11 +270,18 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 
 SpaceTimeMatrix::~SpaceTimeMatrix()
 {
+    if (m_M_rowptr)  delete[] m_M_rowptr;
+    if (m_M_colinds) delete[] m_M_colinds;
+    if (m_M_data)    delete[] m_M_data;
+    
     if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
-    if (m_gmres) HYPRE_ParCSRGMRESDestroy(m_gmres);
-    if (m_Aij) HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
-    if (m_bij) HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
-    if (m_xij) HYPRE_IJVectorDestroy(m_xij);
+    if (m_gmres)  HYPRE_ParCSRGMRESDestroy(m_gmres);
+    if (m_pcg)    HYPRE_ParCSRPCGDestroy(m_pcg); 
+    if (m_Aij)    HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
+    if (m_bij)    HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
+    if (m_xij)    HYPRE_IJVectorDestroy(m_xij);
+    
+    // TODO : destroy mass matrix member variables here...
 }
 
 /* General solve function, calls appropriate time integration routine */
@@ -259,6 +307,7 @@ void SpaceTimeMatrix::Solve() {
 /* Call appropiate sequential time-stepping routine */
 void SpaceTimeMatrix::TimeSteppingSolve()
 {
+    
     // Runge-Kutta routines: Integrate nt-1 steps from time=0
     if (m_RK) {
         m_t0 = 0.0; // Set global starting time to 0
@@ -357,6 +406,11 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     for (step = 0; step < m_nt-1; step++) {
         /* -------------- Build RHS vector, b2, in linear system (M+a_ii*dt*L)*k[i]=b2 -------------- */
         for (int i = 0; i < m_s_butcher; i++) {
+            if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+                std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                std::cout << "-----------------------------------------\n\n";
+            }
+            
             // Compute spatial discretization at t + c[i]*dt
             // Solution-independent term
             if (m_g_isTimedependent || (i == 0 && step == 0)) {
@@ -453,11 +507,6 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
             m_x = k[i]; // Initial guess at solution is value from previous time step
             m_b = b2;
             
-            if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
-                std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
-                std::cout << "-----------------------------------------\n\n";
-            }
-            
             // Solve linear system and get convergence statistics
             if (m_solver_parameters.use_gmres) {
                 SolveGMRES();
@@ -475,9 +524,9 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
                 
             // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
             if (rel_res_norm > m_solver_parameters.tol) {
-                std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
-                std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
-                std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+                if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+                if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                if (m_globRank == 0) std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
                 MPI_Finalize();
                 exit(1);
             }
@@ -522,9 +571,9 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
 }
 
 
-/* Sequential time-stepping routine for general ERK schemes without mass matrix */
+/* Sequential time-stepping routine for general ERK schemes */
 void SpaceTimeMatrix::ERKTimeSteppingSolve() 
-{    
+{        
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
     /* ---------------------------------------------------------------------- */
@@ -543,6 +592,8 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     HYPRE_IJVector     gij = NULL;
     HYPRE_ParCSRMatrix L   = NULL; // Spatial discretization matrix  
     HYPRE_IJMatrix     Lij = NULL;
+    HYPRE_ParCSRMatrix M   = NULL; // Mass matrix
+    HYPRE_IJMatrix     Mij = NULL;
 
     // Place-holder vectors
     std::vector<HYPRE_ParVector> vectors;
@@ -564,20 +615,32 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
         k[i]   = vectors[i+1];
     }
 
+    // For monitoring convergence of linear solver
+    int    num_iters;
+    double rel_res_norm;
+    double avg_iters;
+    double avg_convergence_rate;
 
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
     /* ------------------------------------------------------------ */
     // Take nt-1 steps
+    int solve_count = 0;
     int step = 0;
     for (step = 0; step < m_nt-1; step++) {
         
         // Build ith stage vector, k[i]
         for (int i = 0; i < m_s_butcher; i++) {
+            if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+                std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                std::cout << "-----------------------------------------\n\n";
+            }
+            
             // Compute spatial discretization at t + c[i]*dt
             if (m_g_isTimedependent || (i == 0 && step == 0)) {
                 GetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
+
             // Solution-dependent term
             if (m_L_isTimedependent || (i == 0 && step == 0)) {
                 GetHypreSpatialDiscretizationL(L, Lij, t + m_dt * m_c_butcher[i]);
@@ -589,22 +652,72 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
                 if (temp !=  0.0) HYPRE_ParVectorAxpy(temp, k[j], b); // b <- b + dt*aij*k[j]
             }
 
-            // Set final value of stage by computing MATVEC
+            // Set final value of stage if no mass matrix, otherwise this makes a good initial guess at solution
             hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, L, b, 1.0, g, k[i]); // k[i] <- -L*b + g 
-        }
-
-        if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
-            std::cout << "Time step " << step+1 << "/" << m_nt-1 << '\n';
+            
+            /* -------------------------------------------------------- */
+            /* --- Invert mass matrix: Find k_i such that M*k_i=b_i --- */
+            /* -------------------------------------------------------- */
+            if (m_M_exists) {
+            //if (!m_M_exists) { // TODO : Hack for testing when I don't have a mass matrix but want to invert whatever is provided by getMassMatrix()
+                // Assemble mass matrix on first iteration
+                if (step == 0 && i == 0) {
+                    // Get rows this process owns of M assuming rows of M and L are partitioned the same in memory
+                    int ilower, iupper, jdummy1, jdummy2;
+                    HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
+                    //setIdentityMassLocalRange(ilower, iupper); // TODO : Hack for testing when I don't have a mass matrix but want to invert whatever is provided by getMassMatrix()
+                    GetHypreMassMatrix(M, Mij, ilower, iupper);
+                    m_A = M; // Set member matrix to mass matrix so mass solver has access to it
+                }
+                
+                /* --- Solve --- */
+                HYPRE_ParVectorCopy(k[i], b); // b <- k[i]; // RHS of linear system is the value currently stored in k[i]
+                //HYPRE_ParVectorScale(10.0, k[i]); // TODO : Hack for testing; set initial guess to something dumb
+                
+                // Point member variables to local variables so mass solver can access them
+                m_x = k[i]; // RHS of linear system is used as the initial guess at the solution
+                m_b = b;
+                
+                // Solve the system!
+                SolveMassMatrix();
+                
+                // Ensure desired tolerance was reached if using iterative solver, otherwise quit
+                if (m_iterative) {
+                    solve_count += 1;
+                    avg_iters   += (double) m_num_iters;
+                    // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
+                    if (m_res_norm > m_solver_parameters.tol) {
+                        if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+                        if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                        if (m_globRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+                        MPI_Finalize();
+                        exit(1);
+                    }
+                }
+            }
         }
 
         // Sum solution
-        for (int i = 0; i < m_s_butcher; i++)  {
+        for (int i = 0; i < m_s_butcher; i++) {
             double temp = m_dt * m_b_butcher[i];
             if (temp != 0.0) HYPRE_ParVectorAxpy(temp, k[i], u); // u <- u + dt*k[i]*k[i]; 
         }
         t += m_dt; // Increment time
     }
 
+
+    // Print statistics about average iteration counts and convergence factor across whole time interval
+    if (m_M_exists && m_iterative) {
+        if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+            std::cout << "=============================================\n";
+            std::cout << "Summary of linear solves during time stepping\n";
+            std::cout << "---------------------------------------------\n";
+            std::cout << "Number of systems solved = " << solve_count << '\n';
+            std::cout << "Average number of iterations = " << avg_iters/solve_count << '\n';
+            std::cout << "***TODO***: Average convergence factor = ..." << '\n';
+            //hypre_BoomerAMGGetRelResidualNorm(m_solver, &rel_res_norm);
+        }
+    }
 
     /* ---------------------------------------------------------- */
     /* ------------------------ Clean up ------------------------ */
@@ -613,13 +726,85 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
         HYPRE_IJVectorDestroy(vectorsij[i]);
     }
     if (step > 0) {
-        HYPRE_IJVectorDestroy(gij);
-        HYPRE_IJMatrixDestroy(Lij);
+        if (gij) HYPRE_IJVectorDestroy(gij);
+        if (Lij) HYPRE_IJMatrixDestroy(Lij);
+        if (Mij) HYPRE_IJMatrixDestroy(Mij);
     }
 
     // Assign final solution to member variable for saving etc.
     m_xij = uij;
 }
+
+
+/* Assemble the mass matrix as a HYPRE matrix for the purpose of inverting it
+
+NOTE: 
+    -We know the rows owned by the current process by previously assembling 
+        the spatial discretization whose rows are distributed the same way
+    -If the mass matrix has been lumped to a diagonal matrix then this function 
+        will store its inverse.
+*/
+void SpaceTimeMatrix::GetHypreMassMatrix(HYPRE_ParCSRMatrix &M,
+                                         HYPRE_IJMatrix     &Mij,
+                                         int                 ilower, 
+                                         int                 iupper) 
+{
+    int      onProcSize;
+    int *    M_rowptr;
+    int *    M_colinds;
+    int *    M_rows;
+    int *    M_cols_per_row;
+    double * M_data;
+    
+    // Get mass matrix components and assemble as the HYPRE matrix M
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    
+    
+    onProcSize = iupper - ilower + 1; // Number of rows on process
+    
+    // If mass matrix is diagonal then invert it so its inverse is stored
+    if (m_solver_parameters.lump_mass) {
+        if (m_globRank == 0) std::cout << "WARNING: Mass matrix is lumped to be diagonal; storing its inverse in place of it" << '\n';
+        
+        int nnzM = M_rowptr[onProcSize] - M_rowptr[0]; // nnz(M) on process
+        for (int i = 0; i < nnzM; i++) {
+            // TODO : Is this a silly check? Is it impossible that M could become singular after lumping?
+            if (std::abs(M_data[i]) < 1e-14) {
+                std::cout << "WARNING: Mass matrix appears to be singular after lumping!" << '\n';
+                MPI_Finalize();
+                exit(1);
+            }
+            M_data[i] = 1/M_data[i];
+        }
+    }
+    
+    // Initialize matrix
+    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &Mij);
+    HYPRE_IJMatrixSetObjectType(Mij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(Mij);
+    
+    // Set matrix coefficients
+    M_rows         = new int[onProcSize];
+    M_cols_per_row = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        M_rows[i] = ilower + i;
+        M_cols_per_row[i] = M_rowptr[i+1] - M_rowptr[i];
+    }
+    HYPRE_IJMatrixSetValues(Mij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_data);
+    
+    // Finalize construction
+    HYPRE_IJMatrixAssemble(Mij);
+    HYPRE_IJMatrixGetObject(Mij, (void **) &M);
+    
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_rows;
+    delete[] M_cols_per_row;
+    delete[] M_data;
+}
+
+
+
 
 
 /* Get initial condition, u0, as a HYPRE vector */
@@ -755,8 +940,8 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationG(HYPRE_ParVector   &g,
 
 /* Get solution-dependent component of spatial discretization, the matrix L, as a HYPRE matrix */
 void SpaceTimeMatrix::GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
-                                                        HYPRE_IJMatrix    &Lij,
-                                                        double             t)  
+                                                        HYPRE_IJMatrix  &Lij,
+                                                        double           t)  
 {
     // Free matrix if currently allocated memory
     if (Lij) HYPRE_IJMatrixDestroy(Lij); 
@@ -1215,9 +1400,10 @@ void SpaceTimeMatrix::SetSolverParametersDefaults() {
     m_solver_parameters.AMGiters     = 10;
     m_solver_parameters.gmres_AMG_printLevel = 1;
     
-    m_solver_parameters.binv_scale   = true;
-    
     m_solver_parameters.rebuildRate  = 0;
+    
+    m_solver_parameters.binv_scale   = false;
+    m_solver_parameters.lump_mass    = true;
 }
 
 
@@ -1401,6 +1587,9 @@ void SpaceTimeMatrix::SolveAMG()
 {
     if (!m_solver) m_rebuildSolver = true; // Ensure that if solver not build previously then it is built now
     
+    // TODO : What does this code mean? Does it scale the whole matrix by inverse of block diagonal mass matrix? 
+    // If so, when do we want to do this? Oh, maybe if solving the space-time problem with explicit time stepping to make the 
+    // Space-time matrix lower triangular...
     if (m_solver_parameters.binv_scale) {
         HYPRE_ParCSRMatrix A_s;
         hypre_ParcsrBdiagInvScal(m_A, m_bsize, &A_s);
@@ -1447,7 +1636,7 @@ void SpaceTimeMatrix::SolveAMG()
 
 
 
-/* Initialize GMRES solver based on parameters in m_solver_options struct. */
+/* Initialize GMRES solver based on parameters in m_solver_parameters struct. */
 void SpaceTimeMatrix::SetGMRESOptions() {
     // If GMRES solver exists and underlying preconditioner not being rebuilt then return
     if (m_gmres && !m_rebuildSolver){
@@ -1534,6 +1723,74 @@ void SpaceTimeMatrix::SolveGMRES()
         // TODO : wrap solve timer around this block
         // Solve linear system based on current values of A,b,x
         HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
+    }
+}
+
+
+
+/* Initialize (unpreconditioned) PCG based on parameters in m_solver_parameters struct. */
+void SpaceTimeMatrix::SetPCGOptions() {
+    // Create solver object
+    
+    if (m_pcg) return;
+    
+    HYPRE_ParCSRPCGCreate(m_globComm, &m_pcg);
+
+    HYPRE_PCGSetTwoNorm(m_pcg, 1); // Base convergence on two-norm (I guess otherwise this is A-norm? Hard to find in docs...)
+    HYPRE_PCGSetMaxIter(m_pcg, m_solver_parameters.maxiter);
+    HYPRE_PCGSetTol(m_pcg, m_solver_parameters.tol);
+    HYPRE_PCGSetPrintLevel(m_pcg, m_solver_parameters.printLevel);
+    HYPRE_PCGSetLogging(m_pcg, 1);
+}
+
+
+/* Solve the linear system m_A*m_x = m_b where m_A is the mass matrix 
+
+Options:
+    1. M not lumped, and don't scale by block inverse: Solve iteratively with CG
+    2. M lumped to be diagonal: Multiply by its inverse
+    3. Option set to scale by block inverse of M: Multiply by its inverse
+*/
+void SpaceTimeMatrix::SolveMassMatrix() 
+{
+    // Use unpreconditioned CG if not exactly inverting linear system
+    if (!m_solver_parameters.lump_mass && !m_solver_parameters.binv_scale) {
+        m_iterative = true;
+        
+        // Setup solver if hasn't been done previously
+        if (!m_pcg) {
+            if (m_globRank == 0) std::cout << "Building solver" << '\n';
+            SetPCGOptions();
+            HYPRE_ParCSRPCGSetup(m_pcg, m_A, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
+            if (m_globRank == 0) std::cout << "Solver assembled" << '\n';
+        }
+        
+        // Solve linear system
+        HYPRE_ParCSRPCGSolve(m_pcg, m_A, m_b, m_x);
+        
+        // Get convergence statistics
+        HYPRE_PCGGetNumIterations(m_pcg, &m_num_iters);
+        HYPRE_PCGGetFinalRelativeResidualNorm(m_pcg, &m_res_norm);
+        
+    // Mass matrix is lumped to be diagonal: Directly multiply by its inverse!
+    // Note: The inverse of the mass matrix was stored rather than the mass matrix itself
+    } else if (m_solver_parameters.lump_mass) {
+        m_iterative = false;
+        hypre_ParCSRMatrixMatvec(1.0, m_A, m_b, 0.0, m_x); // x <- 1.0*A*b + 0.0*x
+        
+    // Mass matrix is block diagonal and we directly invert it
+    } else {
+        m_iterative = false;
+        
+        // Ensure that block size has been set to something meaningful
+        if (m_bsize <= 1)  {
+            if (m_globRank == 0) std::cout << "Block diagonal mass matrix must have block size > 1 to invert by scaling by block inverse!" << '\n';
+            MPI_Finalize();
+            exit(1);
+        }
+        
+        // Scale RHS by mass inverse
+        hypre_ParvecBdiagInvScal(m_b, m_bsize, &m_x, m_A); // x <- inv(A) * b
     }
 }
 

@@ -47,9 +47,10 @@ struct Solver_parameters {
     int    AMGiters;            /* Number of AMG iterations to precondition a GMRES iteration by, if preconditioning by GMRES */
     int    gmres_AMG_printLevel;/* Print level for BoomerAMG if used as a preconditioner */
     
-    bool   binv_scale;          /* Scale by block inverse if mass matrix is block diagonal */
-    
     int    rebuildRate;         /* Time-stepping: Rate solver is rebuilt */
+    
+    bool   binv_scale;          /* Scale by block inverse if mass matrix is block diagonal */
+    bool   lump_mass;           /* Lump mass matrix so that it's diagonal */
 };
 
 
@@ -93,6 +94,7 @@ private:
     MPI_Comm            m_globComm;
     HYPRE_Solver        m_solver;
     HYPRE_Solver        m_gmres;
+    HYPRE_Solver        m_pcg;
     HYPRE_ParCSRMatrix  m_A;
     HYPRE_IJMatrix      m_Aij;
     HYPRE_ParVector     m_b;
@@ -101,12 +103,17 @@ private:
     HYPRE_IJVector      m_xij;
     AMG_parameters      m_AMG_parameters;
     Solver_parameters   m_solver_parameters;
-
+    bool                m_iterative;            /* Indicating whether an iterative or direct solver is used */
+    int                 m_num_iters;            /* Number of iterations solver took */
+    double              m_convergence_factor;   /* Average convergence factor during solve */
+    double              m_res_norm;             /* Residual norm after solve */
+    
     
     /* --- Identity-mass-matrix related --- */
     int  m_M_localMinRow;
     int  m_M_localMaxRow;
     bool m_rebuildMass;
+    int  m_spatialDOFs; // Hack...
     
     
     int     m_bsize;                /* DG specific variable... */
@@ -126,6 +133,7 @@ private:
     void GetMatrix_ntGT1();
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);
     void SetGMRESOptions();
+    void SetPCGOptions();
 
 
     // Not using spatial parallelism
@@ -200,11 +208,12 @@ private:
     
     /* ------ Sequential time integration routines ------ */
     void ERKTimeSteppingSolve();  /* General purpose ERK solver */
-    void ERKSolveWithMass();      /* General purpose ERK solver that can invert mass matrices */
     void DIRKTimeSteppingSolve(); /* General purpose DIRK solver */
     
     void GetHypreInitialCondition(HYPRE_ParVector  &u0, 
                                     HYPRE_IJVector &u0ij); 
+                                    
+                                    
     
     void InitializeHypreVectors(HYPRE_ParVector                  &u0, 
                                     HYPRE_IJVector               &u0ij, 
@@ -219,9 +228,15 @@ private:
     void GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
                                             HYPRE_IJMatrix &Lij,
                                             double          t);
+                                            
+    void GetHypreMassMatrix(HYPRE_ParCSRMatrix &M,
+                            HYPRE_IJMatrix     &Mij,
+                            int                 ilower, 
+                            int                 iupper);                                             
     
     void SolveAMG();
     void SolveGMRES();
+    void SolveMassMatrix();
     
     void BuildSpaceTimeMatrix();
     

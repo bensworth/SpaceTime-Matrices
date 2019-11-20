@@ -52,10 +52,11 @@ int main(int argc, char *argv[])
     int gmres_preconditioner = 1;
     int gmres_AMG_printLevel = 1;
     
-    int binv_scale   = 0;
+    int rebuildRate  = 0; 
     
-    int rebuildRate  = 0; /* Time-stepping: Rate at which solver is rebuilt */
-
+    int binv_scale   = 0;
+    int lump_mass    = 1;
+    
 
     /* --- Spatial discretization parameters --- */
     int spatialDisc  = 1;
@@ -65,14 +66,11 @@ int main(int argc, char *argv[])
     int FD_ProblemID = 1;
     int px = -1;
     int py = -1;
-    
-    // Finite-element specific
-    int lump_mass    = true;
 
 
     // Initialize solver options struct with default parameters */
     Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, 
-                                    AMGiters, gmres_AMG_printLevel, bool(binv_scale), rebuildRate};
+                                    AMGiters, gmres_AMG_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass)};
 
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
@@ -106,6 +104,10 @@ int main(int argc, char *argv[])
                   "Print level of BoomerAMG when preconditioning GMRES.");
     args.AddOption(&(solver.rebuildRate), "-rebuild", "--rebuild-rate",
                    "Frequency at which AMG solver is rebuilt during time stepping (-1=never rebuild, 0=rebuild every opportunity, x>0=after x time steps");              
+    args.AddOption(&lump_mass, "-lump", "--lump-mass",
+                  "Lump mass matrix to be diagonal.");  
+    args.AddOption(&binv_scale, "-binv", "--scale-binv",
+                  "Scale linear system by inverse of mass diagonal blocks.");                
                   
     /* Spatial discretization */
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
@@ -121,10 +123,7 @@ int main(int argc, char *argv[])
     args.AddOption(&px, "-px", "--procx",
                   "Number of procs in x-direction.");
     args.AddOption(&py, "-py", "--procy",
-                  "Number of procs in y-direction.");
-                  
-    args.AddOption(&lump_mass, "-lump", "--lump-mass",
-                  "Lump mass matrix to be diagonal.");              
+                  "Number of procs in y-direction.");                          
 
     /* --- Text output of solution etc --- */              
     args.AddOption(&out, "-out", "--out",
@@ -160,8 +159,10 @@ int main(int argc, char *argv[])
     args.Parse();
     
     
-    // Fix-up options that cannot be passed by the options parser
-    solver.use_gmres = bool(use_gmres);
+    // Fix-up boolean options that cannot be passed by the options parser
+    solver.use_gmres  = bool(use_gmres);
+    solver.binv_scale = bool(binv_scale);
+    solver.lump_mass  = bool(lump_mass);
     
     AMG.prerelax = std::string(temp_prerelax);
     AMG.postrelax = std::string(temp_postrelax);
@@ -293,8 +294,7 @@ int main(int argc, char *argv[])
         STmatrix.SetAIRHyperbolic();
         // Solve PDE
         STmatrix.Solve();
-        
-        
+                
         if (save_sol) {
             std::string filename;
             if (std::string(out) == "") {
