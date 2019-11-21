@@ -79,15 +79,23 @@ private:
     
     /* Runge-Kutta Butcher tableaux variables */
     bool    m_RK;                   /* Runge-Kutta time integration */
-    bool    m_is_ERK;               /* Explicit Runge-Kutta */
-    bool    m_is_DIRK;              /* Diagonally implicit Runge-Kutta */
-    bool    m_is_SDIRK;             /* Singly diagonally Runge-Kutta */
+    bool    m_ERK;               /* Explicit Runge-Kutta */
+    bool    m_DIRK;              /* Diagonally implicit Runge-Kutta */
+    bool    m_SDIRK;             /* Singly diagonally Runge-Kutta */
     int                              m_s_butcher; /* Number of stages in RK scheme */
     std::vector<std::vector<double>> m_A_butcher; /* Coefficients in RK Butcher tableaux */
     std::vector<double>              m_b_butcher; /* Coefficients in RK Butcher tableaux */
     std::vector<double>              m_c_butcher; /* Coefficients in RK Butcher tableaux */
 
-    bool    m_BDF;                  /* BDF time integration */
+    bool                m_multi;   /* Multistep time integration */
+    bool                m_AB;      /* Adams--Bashforth time integration */
+    bool                m_AM;      /* Adams--Moulton time integration */
+    bool                m_BDF;     /* BDF time integration */
+    int                 m_s_multi; /* Number of steps in multistep scheme */
+    int                 m_shat_multi; /* Number of previous time points new solution dependes on */
+    std::vector<double> m_a_multi; /* Coefficients in multistep scheme */
+    std::vector<double> m_b_multi; /* Coefficients in multistep scheme */
+    
 
 
     /* --- Relating to HYPRE solution of linear systems --- */
@@ -130,6 +138,9 @@ private:
     int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
 
     void GetButcherTableaux();
+    void GetABTableaux();
+    void GetAMTableaux();
+    void GetBDFTableaux();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);

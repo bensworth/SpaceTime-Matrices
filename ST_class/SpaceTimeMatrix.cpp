@@ -172,7 +172,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
       m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
       m_iterative(true), 
-      m_RK(false), m_BDF(false), m_is_ERK(false), m_is_DIRK(false), m_is_SDIRK(false),
+      m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
+      m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
       m_bsize(1), m_hmin(-1), m_hmax(-1),
@@ -189,10 +190,35 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     if (m_timeDisc >= 111 && m_timeDisc < 300) {
         m_RK = true;
         GetButcherTableaux(); // Get RK Butcher tabelaux
+        
+    // Adams--Bashforth time integration
+    } else if (m_timeDisc >= 10 && m_timeDisc < 20) {
+        m_multi = true;
+        m_AB = true;
+        GetABTableaux(); // Get AB coefficients
+        
+    // Adams--Moulton time integration
+    } else if (m_timeDisc >= 20 && m_timeDisc < 30) {
+        m_multi = true;
+        m_AM = true;
+        GetAMTableaux(); // Get AM coefficients
+        
+    // BDF time integration    
+    } else if (m_timeDisc >= 30 && m_timeDisc < 40) {
+        m_multi = true;
+        m_BDF = true;
+        GetBDFTableaux(); // Get BDF coefficients
+        
     } else {
-        if (m_globRank == 0) std::cout << "Temporal-discretization format is invalid!\n";   
+        if (m_globRank == 0) std::cout << "Format of temporal-discretization '"<< m_timeDisc <<"' is invalid!\n";   
+        MPI_Finalize();
+        exit(1);
     }
     
+    
+    if (m_globRank == 0) std::cout << "duuuuuuuhhhh  Format of temporal-discretization '"<< m_timeDisc <<"' is invalid!\n";   
+    MPI_Finalize();
+    exit(1);
     
     /* ---------------------------------------------- */
     /* ------ Solving global space-time system ------ */
@@ -268,6 +294,91 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 }
 
 
+void SpaceTimeMatrix::GetABTableaux()
+{
+    m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
+    m_shat_multi = std::max(1, m_s_multi);
+    m_a_multi.resize(m_s_multi + 1);
+    m_b_multi.resize(m_s_multi + 1);
+    
+    m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
+    m_a_multi[m_s_multi-1] = -1.0;
+    
+    // All but the last two a coefficients are zero
+    for (std::vector<int>::size_type i = 0; i < m_a_multi.size()-1; i++) m_a_multi[i] = 0.0;
+    
+    m_b_multi[m_s_multi] = 0.0;
+    
+    if (m_timeDisc == 11) {
+        
+    } else if (m_timeDisc == 12) {
+        
+    } else if (m_timeDisc == 13) {
+        
+    } else if (m_timeDisc == 14) {
+        
+    } else {
+        std::cout << "WARNING: Adams--Bashforth scheme '" << m_timeDisc << "'not recognised!\n";
+        MPI_Finalize();
+        exit(1);
+    }
+}
+
+void SpaceTimeMatrix::GetAMTableaux()
+{
+    m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
+    m_shat_multi = std::max(1, m_s_multi);
+    m_a_multi.resize(m_s_multi + 1);
+    m_b_multi.resize(m_s_multi + 1);
+    
+    m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
+    m_a_multi[m_s_multi-1] = -1.0;
+    // All but the last two a coefficients are zero
+    for (std::vector<int>::size_type i = 0; i < m_a_multi.size(); i++) m_a_multi[i] = 0.0;
+    
+    if (m_timeDisc == 20) {
+        
+    } else if (m_timeDisc == 21) {
+        
+    } else if (m_timeDisc == 22) {
+        
+    } else if (m_timeDisc == 23) {
+        
+    } else {
+        std::cout << "WARNING: Adams--Moulton scheme '" << m_timeDisc << "'not recognised!\n";
+        MPI_Finalize();
+        exit(1);
+    }
+}
+
+void SpaceTimeMatrix::GetBDFTableaux()
+{
+    m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
+    m_shat_multi = std::max(1, m_s_multi);
+    m_a_multi.resize(m_s_multi + 1);
+    m_b_multi.resize(m_s_multi + 1);
+    
+    m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
+    
+    // All but the last b coefficient is zero
+    for (std::vector<int>::size_type i = 0; i < m_b_multi.size(); i++) m_b_multi[i] = 0.0;
+    
+    if (m_timeDisc == 31) {
+        
+    } else if (m_timeDisc == 32) {
+        
+    } else if (m_timeDisc == 33) {
+        
+    } else if (m_timeDisc == 34) {
+        
+    } else {
+        std::cout << "WARNING: BDF scheme '" << m_timeDisc << "'not recognised!\n";
+        MPI_Finalize();
+        exit(1);
+    }
+}
+
+
 SpaceTimeMatrix::~SpaceTimeMatrix()
 {    
     if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
@@ -317,9 +428,9 @@ void SpaceTimeMatrix::TimeSteppingSolve()
         m_x   = u0;
         m_xij = u0ij;
         
-        if (m_is_ERK) {
+        if (m_ERK) {
             ERKTimeSteppingSolve();
-        } else if (m_is_DIRK) {
+        } else if (m_DIRK) {
             DIRKTimeSteppingSolve();
         }
     }
@@ -391,7 +502,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
 
 
     // Is it necessary to build spatial discretization matrix/DIRK matrix more than once?
-    bool rebuildMatrix = ((m_L_isTimedependent) || (!m_is_SDIRK));
+    bool rebuildMatrix = ((m_L_isTimedependent) || (!m_SDIRK));
 
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
@@ -473,7 +584,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
             HYPRE_ParVectorScale(temp, b2); // b2 <- b2/(dt*a_ii)
             
             // Rescale mass matrix data by 1/dt*a_ii; only need to do this once if using SDIRK 
-            if (!m_is_SDIRK || ((step == 0) && (i == 0))) {
+            if (!m_SDIRK || ((step == 0) && (i == 0))) {
                 for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
                     M_scaled_data[dataInd] = temp * M_data[dataInd]; // M <- M / (dt*a_ii)
                 }
@@ -1029,9 +1140,13 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
 }
 
 
-// timeDisc with "1" as 1st digit are ERK, timeDisc with "2" as 1st digit are DIRK
-// 2nd digit == number of stages
-// 3rd digit == order of method
+/* 
+timeDisc is a 3 digit integer
+
+timeDisc with "1" as 1st digit are ERK, timeDisc with "2" as 1st digit are DIRK
+2nd digit == number of stages
+3rd digit == order of method
+*/
 void SpaceTimeMatrix::GetButcherTableaux() {
 
     m_s_butcher = m_timeDisc / 10 % 10; //  Extract number of stages; assumes number has 3 digits    
@@ -1043,7 +1158,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
     if (m_timeDisc == 111) {
-        m_is_ERK             = true;
+        m_ERK             = true;
         m_s_butcher       = 1;
         m_A_butcher[0][0] = 0.0;
         m_b_butcher[0]    = 1.0; 
@@ -1051,7 +1166,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     
     // 2nd-order Heun's method    
     } else if (m_timeDisc == 122) {
-        m_is_ERK             = true;
+        m_ERK             = true;
         m_s_butcher       = 2;
         m_A_butcher[0][0] = 0.0;
         m_A_butcher[1][0] = 1.0;
@@ -1064,7 +1179,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 3rd-order optimal SSPERK
     } else if (m_timeDisc == 133) {
-        m_is_ERK             = true;
+        m_ERK             = true;
         m_s_butcher       = 3;
         m_A_butcher[0][0] = 0.0; // 1st col
         m_A_butcher[1][0] = 1.0;
@@ -1084,7 +1199,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
 
     // Classical 4th-order ERK
     } else if (m_timeDisc == 144){
-        m_is_ERK             = true;
+        m_ERK             = true;
         m_s_butcher       = 4;
         m_A_butcher[0][0] = 0.0; // 1st col
         m_A_butcher[1][0] = 1.0/2.0;
@@ -1115,8 +1230,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- SDIRK tables --- */
     // Backward Euler, 1st-order
     } else if (m_timeDisc == 211) {
-        m_is_DIRK            = true;
-        m_is_SDIRK           = true;
+        m_DIRK            = true;
+        m_SDIRK           = true;
         m_s_butcher       = 1;
         m_A_butcher[0][0] = 1.0;
         m_b_butcher[0]    = 1.0; 
@@ -1125,8 +1240,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
     } else if (m_timeDisc == 222) {
         double sqrt2      = 1.414213562373095;
-        m_is_DIRK            = true;
-        m_is_SDIRK           = true;
+        m_DIRK            = true;
+        m_SDIRK           = true;
         m_s_butcher       = 2;
         m_A_butcher[0][0] = 1.0 - sqrt2/2.0;
         m_A_butcher[1][0] = sqrt2 - 1.0;
@@ -1144,8 +1259,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         double beta       =  0.5*(1.0 - zeta); 
         double gamma      = -3.0/2.0*zeta*zeta + 4.0*zeta - 0.25;
         double epsilon    =  3.0/2.0*zeta*zeta - 5.0*zeta + 1.25;
-        m_is_DIRK            =  true;
-        m_is_SDIRK           =  true;
+        m_DIRK            =  true;
+        m_SDIRK           =  true;
         m_s_butcher       =  3;
         m_A_butcher[0][0] =  zeta; // 1st col
         m_A_butcher[1][0] =  beta;
@@ -1165,8 +1280,8 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 4th-order (5-stage) L-stable SDIRK (see Wanner's & Hairer's, Solving ODEs II, 1996, eq. 6.16)
     } else if (m_timeDisc == 254) {
-        m_is_DIRK            =  true;
-        m_is_SDIRK           =  true;
+        m_DIRK            =  true;
+        m_SDIRK           =  true;
         m_s_butcher       =  5;
         // 1st col of A
         m_A_butcher[0][0] =  1.0/4.0; 
