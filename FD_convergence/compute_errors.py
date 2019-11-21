@@ -18,7 +18,6 @@ from mpl_toolkits.mplot3d import Axes3D
 
 from sys import argv
 
-import pdb
 from numpy.linalg import norm
 from scipy.sparse import load_npz
 import os.path
@@ -42,13 +41,18 @@ with open(filenameIN) as f:
 params["pit"]             = int(params["pit"])
 params["P"]               = int(params["P"])
 params["nt"]              = int(params["nt"])
-params["s"]               = int(params["s"])
 params["dt"]              = float(params["dt"])
 params["problemID"]       = int(params["problemID"])
 params["nx"]              = int(params["nx"])
 params["space_dim"]       = int(params["space_dim"])
 params["space_refine"]    = int(params["space_refine"])
 params["spatialParallel"] = int(params["spatialParallel"])
+
+# If not using RK scheme set s=1 so data can be read in by common method
+if "s" in params:
+    params["s"] = int(params["s"])
+else:
+    params["s"] = 1
 
 # Total number of DOFS in space
 if params["space_dim"] == 1:
@@ -129,14 +133,14 @@ if (params["pit"] == 1):
     ### --- SPATIAL PARALLELISM: Work out which processors uT lives on extract it from them ---  ###
     # Note that ordering is preserved...
     else:
-        params["np_xTotal"] = int(params["np_xTotal"])
+        params["p_xTotal"] = int(params["p_xTotal"])
         
         # Index of proc holding first component of uT
-        PuT0 = (params["nt"]-1) * params["s"] * params["np_xTotal"]     
+        PuT0 = (params["nt"]-1) * params["s"] * params["p_xTotal"]     
         
         # Get names of all procs holding uT data
         PuT = []
-        for P in range(PuT0, PuT0 + params["np_xTotal"]):
+        for P in range(PuT0, PuT0 + params["p_xTotal"]):
             PuT.append(filenameIN + "." + "0" * (5-len(str(P))) + str(P))
         
         uT = np.zeros(NX)
@@ -182,9 +186,9 @@ else:
     
     
 
-### -------------------------------------------- ###
-### --- PLOTTING: uT against exact solution ---  ###
-### -------------------------------------------- ###
+### ---------------------------------------------------- ###
+### --- COMPUTE ERRORS OF UT AGAINST EXACT SOLUTION ---  ###
+### ---------------------------------------------------- ###
 
 ### ----------------------------------- ###
 ### --------------- 1D  --------------- ###
@@ -215,20 +219,6 @@ if params["space_dim"] == 1:
     # Compute errors and save them
     e = uT_exact-uT
     save_error(e)
-
-    
-    # plt.semilogy(x, abs(e), "-o")
-    # plt.title(nx)
-    # plt.show()
-
-    # plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
-    # plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
-    # 
-    # fs = 18
-    # plt.legend(fontsize = fs)
-    # plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    # plt.xlabel("$x$", fontsize = fs)
-    # plt.show()
     
     
 ### ----------------------------------- ###
@@ -248,15 +238,15 @@ if params["space_dim"] == 2:
     # are blocked by proc, with procs in row-wise lexicographic order and DOFs on proc ordered
     # in row-wise lexicographic order
     if (params["spatialParallel"]):
-        params["np_xTotal"] = int(params["np_xTotal"])
+        params["p_xTotal"] = int(params["p_xTotal"])
         perm = np.zeros(nx*ny, dtype = "int32")
         # Extract dimensions of processor grid if they were given
-        if ("np_x0" in params):
-            npInX = int(params["np_x0"])
-            npInY = int(params["np_x1"])
+        if ("p_x0" in params):
+            npInX = int(params["p_x0"])
+            npInY = int(params["p_x1"])
         # Otherwise assume square processor grid
         else:
-            npInX = int(np.sqrt(params["np_xTotal"])) 
+            npInX = int(np.sqrt(params["p_xTotal"])) 
             npInY = npInX 
         count = 0
         
@@ -315,49 +305,7 @@ if params["space_dim"] == 2:
             #uT_exact[i,j] = uexact(x[i],y[j],T)
             uT_exact[j,i] = uexact(x[i],y[j],T)
 
-    # Compare uT against the exact solution
-    #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.max(np.abs(uT_exact - uT))))
-    
+
     # Compute errors and save them
     e = uT_exact-uT
     save_error(e)
-
-    # fs = 18
-    # cmap = plt.cm.get_cmap("coolwarm")
-    # # ax = fig.gca(projection='3d') 
-    # # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
-    # 
-    # ### --- Numerical solution --- ###
-    # fig = plt.figure(1)
-    # levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 20)
-    # plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
-    # plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
-    # 
-    # plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), fontsize = fs)
-    # plt.xlabel("$x$", fontsize = fs)
-    # plt.ylabel("$y$", fontsize = fs)
-    # 
-    # ### --- Analytical solution --- ###
-    # fig = plt.figure(2)
-    # levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 20)
-    # plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
-    # plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
-    # 
-    # plt.title("$u(x,y,{:.2f})$".format(T), fontsize = fs)
-    # plt.xlabel("$x$", fontsize = fs)
-    # plt.ylabel("$y$", fontsize = fs)
-    # 
-    # # fig = plt.figure(2)
-    # # ax = fig.gca(projection='3d') 
-    # # surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
-    # # plt.title("uTexact", fontsize = fs)
-    # # plt.xlabel("$x$", fontsize = fs)
-    # # plt.ylabel("$y$", fontsize = fs)
-    # plt.show()    
-    
-    # plt.title("UW2-2D: u(x,y, t = {:.2f})".format(t[-1]), fontsize = 15)
-    # plt.xlabel("x", fontsize = 15)
-    # plt.ylabel("y", fontsize = 15)
-
-

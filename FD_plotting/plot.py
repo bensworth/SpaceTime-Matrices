@@ -1,3 +1,10 @@
+# ---------------------------------- #
+# -------------- README ------------ #
+# ---------------------------------- #
+# Compute errors between  numerical and exact solutions of FD advection problems,
+# can also plot both the numerical and  exact solutions at the final time
+
+
 import numpy as np
 
 import matplotlib
@@ -9,43 +16,34 @@ from mpl_toolkits.mplot3d import Axes3D
 from sys import argv
 from numpy.linalg import norm
 
-# Plot solution to 1D  test  problems  for advection
+import pprint
 
-# Sit there here to enable latex-style font in plots...
-plt.rcParams['font.family'] = 'serif'
-#plt.rcParams['text.usetex'] = True
-
-fs = {"fontsize": 18, "usetex": True}
 
 # plt.rc("font", family="serif")
 # plt.rc("text", usetex=True)
 #matplotlib.rcParams["font.size"] = (9)
 
-# Run me like << python plot.py <<path to file with solution information>>
-# File should contain a list of (at least) the following parameters:
-# pit
-# P
-# nt
-# dt
-# s
-# problemID
-# space_dim
-# spaceParallel
-# nx
-
-# if len(argv) > 1:
-#     filename = argv[1]
-# else:
-#     raise ValueError("A filename must be passed through command line!")
-
 
 # Pass a 1 for PIT, or a 0 for sequential...
+# Additionally, pass a second argument as a 1 or 0 for the solution to be plotted or not
 if len(argv) > 1:
     suff = argv[1]
+    if len(argv) > 2:
+        doaplot = bool(int(argv[2]))
+    else:
+        doaplot = False
 else:
     suff = 0
 filename = "../ST_class/data/U" + str(suff)
+print("============================================")
 print("Reading data from: " + filename)
+if doaplot: 
+    print("PLOTTING DATA...")
+    # Sit there here to enable latex-style font in plots...
+    plt.rcParams['font.family'] = 'serif'
+    #plt.rcParams['text.usetex'] = True
+    fs = {"fontsize": 18, "usetex": True}
+if not doaplot: print("NOT PLOTTING DATA...")
 
 # Read data in and store in dictionary
 params = {}
@@ -58,12 +56,17 @@ with open(filename) as f:
 params["pit"]             = int(params["pit"])
 params["P"]               = int(params["P"])
 params["nt"]              = int(params["nt"])
-params["s"]               = int(params["s"])
 params["dt"]              = float(params["dt"])
 params["problemID"]       = int(params["problemID"])
 params["nx"]              = int(params["nx"])
 params["space_dim"]       = int(params["space_dim"])
 params["spatialParallel"] = int(params["spatialParallel"])
+
+# If not using RK scheme set s=1 so data can be read in by common method
+if "s" in params:
+    params["s"] = int(params["s"])
+else:
+    params["s"] = 1
 
 # Total number of DOFS in space
 if params["space_dim"] == 1:
@@ -71,7 +74,9 @@ if params["space_dim"] == 1:
 elif params["space_dim"] == 2:
     NX = params["nx"] ** 2
     #NX = params["nx"] * (params["nx"] + 7)
-
+    
+print("--INPUT--")
+pprint.pprint(params)
 
 #############################
 #  --- Parallel in time --- #
@@ -105,14 +110,14 @@ if (params["pit"] == 1):
     ### --- SPATIAL PARALLELISM: Work out which processors uT lives on extract it from them ---  ###
     # Note that ordering is preserved...
     else:
-        params["np_xTotal"] = int(params["np_xTotal"])
+        params["p_xTotal"] = int(params["p_xTotal"])
         
         # Index of proc holding first component of uT
-        PuT0 = (params["nt"]-1) * params["s"] * params["np_xTotal"]     
+        PuT0 = (params["nt"]-1) * params["s"] * params["p_xTotal"]     
         
         # Get names of all procs holding uT data
         PuT = []
-        for P in range(PuT0, PuT0 + params["np_xTotal"]):
+        for P in range(PuT0, PuT0 + params["p_xTotal"]):
             PuT.append(filename + "." + "0" * (5-len(str(P))) + str(P))
         
         uT = np.zeros(NX)
@@ -167,9 +172,10 @@ else:
 ### ----------------------------------- ###
 if params["space_dim"] == 1:
     nx = NX
+    nt = params["nt"]
     x = np.linspace(-1, 1, nx+1)
     x = x[:-1] # nx points in [-1, 1)
-    T = params["dt"]  * (params["nt"] - 1)
+    T = params["dt"]  * (nt - 1)
 
     # The exact solutions for the test problems
     def uexact(x,t):
@@ -187,16 +193,19 @@ if params["space_dim"] == 1:
         uT_exact[i] = uexact(x[i],T)
 
     # Compare uT against the exact solution
-    print("nx = {}, |uNum - uExact|_inf = {:.16e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    #print("(nt,nx) = ({},{}), |uNum - uExact| = {:.4e}".format(params["nt"], nx, np.sqrt(2/nx) * np.linalg.norm(uT_exact - uT, 2)))
+    print("--------------------------------------------")
+    print("|uNum - uExact|_inf = {:.16e}".format(np.linalg.norm(uT_exact - uT, np.inf)))
+    print("--------------------------------------------")
 
-    plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
-    plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
-    
-    plt.legend(fontsize = fs["fontsize"]-2)
-    plt.title("$\\rm{{P}}_{{\\rm{{ID}}}}$={}:\t(RK, U-order, $n_x$, $T_{{\\rm{{f}}}}$)=({}, {}, {}, {:.2f})".format(params["problemID"], params["timeDisc"], params["space_order"], nx, T), **fs)
-    plt.xlabel("$x$", **fs)
-    plt.show()
+    # Plot data if requested...
+    if doaplot:
+        plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
+        plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
+        
+        plt.legend(fontsize = fs["fontsize"]-2)
+        plt.title("$u(x,{:.2f})$".format(T), **fs)
+        plt.xlabel("$x$", **fs)
+        plt.show()
     
     
 ### ----------------------------------- ###
@@ -205,26 +214,27 @@ if params["space_dim"] == 1:
 if params["space_dim"] == 2:
     nx = params["nx"]
     ny = params["nx"]
+    nt = params["nt"]
     x = np.linspace(-1, 1, nx+1)
     y = np.linspace(-1, 1, ny+1)
     x = x[:-1] # nx points in [-1, 1)
     y = y[:-1] # ny points in [-1, 1)
     [X, Y] = np.meshgrid(x, y)
-    T = params["dt"]  * (params["nt"] - 1)
+    T = params["dt"]  * (nt - 1)
 
     # If used spatial parallelism, DOFs are not ordered in row-wise lexicographic, but instead
     # are blocked by proc, with procs in row-wise lexicographic order and DOFs on proc ordered
     # in row-wise lexicographic order
     if (params["spatialParallel"]):
-        params["np_xTotal"] = int(params["np_xTotal"])
+        params["p_xTotal"] = int(params["p_xTotal"])
         perm = np.zeros(nx*ny, dtype = "int32")
         # Extract dimensions of processor grid if they were given
-        if ("np_x0" in params):
-            npInX = int(params["np_x0"])
-            npInY = int(params["np_x1"])
+        if ("p_x0" in params):
+            npInX = int(params["p_x0"])
+            npInY = int(params["p_x1"])
         # Otherwise assume square processor grid
         else:
-            npInX = int(np.sqrt(params["np_xTotal"])) 
+            npInX = int(np.sqrt(params["p_xTotal"])) 
             npInY = npInX 
         count = 0
         
@@ -284,43 +294,48 @@ if params["space_dim"] == 2:
             uT_exact[j,i] = uexact(x[i],y[j],T)
 
     # Compare uT against the exact solution
-    #print("nx = {}, |uNum - uExact| = {:.4e}".format(nx, np.linalg.norm(uT_exact - uT, np.inf)))
-    print("nx = {}, |uNum - uExact| = {:.16e}".format(nx, np.max(np.abs(uT_exact - uT))))
-
-    cmap = plt.cm.get_cmap("coolwarm")
-    # ax = fig.gca(projection='3d') 
-    # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
-    
-    ### --- Numerical solution --- ###
-    fig = plt.figure(1)
-    levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 20)
-    plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
-    plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
-    
-    plt.title("$u_{{\\rm{{num}}}}: $(RK,U,$n_x$,$T_{{\\rm{{f}}}}$)=({},{},{},{:.2f})".format(params["timeDisc"], params["space_order"], nx, T), **fs)
-    plt.xlabel("$x$", **fs)
-    plt.ylabel("$y$", **fs)
-    
-    ### --- Analytical solution --- ###
-    fig = plt.figure(2)
-    levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 20)
-    plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
-    plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
-    
-    plt.title("$u(x,y,{:.2f})$".format(T), **fs)
-    plt.xlabel("$x$", **fs)
-    plt.ylabel("$y$", **fs)
-    
-    # fig = plt.figure(2)
-    # ax = fig.gca(projection='3d') 
-    # surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
-    # plt.title("uTexact", fontsize = fs)
-    # plt.xlabel("$x$", fontsize = fs)
-    # plt.ylabel("$y$", fontsize = fs)
-    plt.show()    
-    
-    # plt.title("UW2-2D: u(x,y, t = {:.2f})".format(t[-1]), fontsize = 15)
-    # plt.xlabel("x", fontsize = 15)
-    # plt.ylabel("y", fontsize = 15)
+    print("--------------------------------------------")
+    print("|uNum - uExact|_inf = {:.16e}".format(np.max(np.abs(uT_exact - uT))))
+    print("--------------------------------------------")
 
 
+    # Plot data if requested...
+    if doaplot:
+        cmap = plt.cm.get_cmap("coolwarm")
+        # ax = fig.gca(projection='3d') 
+        # surf = ax.plot_surface(X, Y, uT, cmap = cmap)
+        
+        ### --- Numerical solution --- ###
+        fig = plt.figure(1)
+        levels = np.linspace(np.amin(uT, axis = (0,1)), np.amax(uT, axis = (0,1)), 20)
+        plt.contourf(X, Y, uT, levels=levels,cmap=cmap)
+        plt.colorbar(ticks=np.linspace(np.amin(uT), np.amax(uT), 7), format='%0.1f')	
+        
+        plt.title("$u_{{\\rm{{num}}}}(x,y,{:.2f})$".format(T), **fs)
+        plt.xlabel("$x$", **fs)
+        plt.ylabel("$y$", **fs)
+        
+        ### --- Analytical solution --- ###
+        fig = plt.figure(2)
+        levels = np.linspace(np.amin(uT_exact, axis = (0,1)), np.amax(uT_exact, axis = (0,1)), 20)
+        plt.contourf(X, Y, uT_exact, levels=levels,cmap=cmap)
+        plt.colorbar(ticks=np.linspace(np.amin(uT_exact), np.amax(uT_exact), 7), format='%0.1f')	
+        
+        plt.title("$u_{{\\rm exact}}(x,y,{:.2f})$".format(T), **fs)
+        plt.xlabel("$x$", **fs)
+        plt.ylabel("$y$", **fs)
+        
+        # fig = plt.figure(2)
+        # ax = fig.gca(projection='3d') 
+        # surf = ax.plot_surface(X, Y, uT_exact, cmap = cmap)
+        # plt.title("uTexact", fontsize = fs)
+        # plt.xlabel("$x$", fontsize = fs)
+        # plt.ylabel("$y$", fontsize = fs)
+        plt.show()    
+        
+        # plt.title("UW2-2D: u(x,y, t = {:.2f})".format(t[-1]), fontsize = 15)
+        # plt.xlabel("x", fontsize = 15)
+        # plt.ylabel("y", fontsize = 15)
+
+
+print("============================================\n")
