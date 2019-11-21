@@ -174,6 +174,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
       m_iterative(true), 
       m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
       m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
+      m_a_multi({}), m_b_multi({}),
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
       m_bsize(1), m_hmin(-1), m_hmax(-1),
@@ -215,6 +216,14 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
         exit(1);
     }
     
+    if (!m_a_multi.empty()) {
+        std::cout << "a = " << '\n';
+        for (std::vector<int>::size_type i = 0; i < m_a_multi.size(); i++) std::cout << m_a_multi[i] << '\n';
+    }
+    if (!m_b_multi.empty()) {
+        std::cout << "b = " << '\n';
+        for (std::vector<int>::size_type i = 0; i < m_b_multi.size(); i++) std::cout << m_b_multi[i] << '\n';
+    }
     
     if (m_globRank == 0) std::cout << "duuuuuuuhhhh  Format of temporal-discretization '"<< m_timeDisc <<"' is invalid!\n";   
     MPI_Finalize();
@@ -298,25 +307,22 @@ void SpaceTimeMatrix::GetABTableaux()
 {
     m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_shat_multi = std::max(1, m_s_multi);
-    m_a_multi.resize(m_s_multi + 1);
-    m_b_multi.resize(m_s_multi + 1);
+    m_b_multi.resize(m_s_multi); // No need to store the s+1th 0 coefficient
     
-    m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
-    m_a_multi[m_s_multi-1] = -1.0;
-    
-    // All but the last two a coefficients are zero
-    for (std::vector<int>::size_type i = 0; i < m_a_multi.size()-1; i++) m_a_multi[i] = 0.0;
-    
-    m_b_multi[m_s_multi] = 0.0;
-    
-    if (m_timeDisc == 11) {
-        
-    } else if (m_timeDisc == 12) {
-        
-    } else if (m_timeDisc == 13) {
-        
-    } else if (m_timeDisc == 14) {
-        
+    if (m_timeDisc == 11) {         // 1st-order
+        m_b_multi[0] = +1.0;
+    } else if (m_timeDisc == 12) {  // 2nd-order
+        m_b_multi[0] = -1.0/2.0;
+        m_b_multi[1] = +3.0/2.0;
+    } else if (m_timeDisc == 13) {  // 3rd-order
+        m_b_multi[0] = +5.0/12.0;
+        m_b_multi[1] = -16.0/12.0;
+        m_b_multi[2] = +23.0/12.0;
+    } else if (m_timeDisc == 14) {  // 4th-order
+        m_b_multi[0] = -9.0/24.0;
+        m_b_multi[1] = +37.0/24.0;
+        m_b_multi[2] = -59.0/24.0;
+        m_b_multi[3] = +55.0/24.0;
     } else {
         std::cout << "WARNING: Adams--Bashforth scheme '" << m_timeDisc << "'not recognised!\n";
         MPI_Finalize();
@@ -328,22 +334,22 @@ void SpaceTimeMatrix::GetAMTableaux()
 {
     m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_shat_multi = std::max(1, m_s_multi);
-    m_a_multi.resize(m_s_multi + 1);
-    m_b_multi.resize(m_s_multi + 1);
+    m_b_multi.resize(m_s_multi + 1); 
     
-    m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
-    m_a_multi[m_s_multi-1] = -1.0;
-    // All but the last two a coefficients are zero
-    for (std::vector<int>::size_type i = 0; i < m_a_multi.size(); i++) m_a_multi[i] = 0.0;
-    
-    if (m_timeDisc == 20) {
-        
-    } else if (m_timeDisc == 21) {
-        
-    } else if (m_timeDisc == 22) {
-        
-    } else if (m_timeDisc == 23) {
-        
+    if (m_timeDisc == 20) {         // 1st-order
+        m_b_multi[0] = +1.0;
+    } else if (m_timeDisc == 21) {  // 2nd-order
+        m_b_multi[0] = +1.0/2.0;
+        m_b_multi[1] = +1.0/2.0;
+    } else if (m_timeDisc == 22) {  // 3rd-order
+        m_b_multi[0] = -1.0/12.0;
+        m_b_multi[1] = +8.0/12.0;
+        m_b_multi[2] = +5.0/12.0;
+    } else if (m_timeDisc == 23) {  // 4th-order
+        m_b_multi[0] = +1.0/24.0;
+        m_b_multi[1] = -5.0/24.0;
+        m_b_multi[2] = +19.0/24.0;
+        m_b_multi[3] = +9.0/24.0;
     } else {
         std::cout << "WARNING: Adams--Moulton scheme '" << m_timeDisc << "'not recognised!\n";
         MPI_Finalize();
@@ -355,22 +361,33 @@ void SpaceTimeMatrix::GetBDFTableaux()
 {
     m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_shat_multi = std::max(1, m_s_multi);
-    m_a_multi.resize(m_s_multi + 1);
-    m_b_multi.resize(m_s_multi + 1);
+    m_a_multi.resize(m_s_multi); // No need to store the s+1th coefficient that's 1
+    m_b_multi.resize(1); // There is a single non-zero b coefficient
     
     m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
     
-    // All but the last b coefficient is zero
-    for (std::vector<int>::size_type i = 0; i < m_b_multi.size(); i++) m_b_multi[i] = 0.0;
-    
-    if (m_timeDisc == 31) {
+    if (m_timeDisc == 31) {         // 1st-order
+        m_a_multi[0] = -1.0;
         
-    } else if (m_timeDisc == 32) {
+        m_b_multi[0] = +1.0;
+    } else if (m_timeDisc == 32) {  // 2nd-order
+        m_a_multi[0] = +1.0/3.0;
+        m_a_multi[1] = -4.0/3.0;
         
-    } else if (m_timeDisc == 33) {
+        m_b_multi[0] = +2.0/3.0;
+    } else if (m_timeDisc == 33) {  // 3rd-order
+        m_a_multi[0] = -2.0/11.0;
+        m_a_multi[1] = +9.0/11.0;
+        m_a_multi[2] = -18.0/11.0;
         
-    } else if (m_timeDisc == 34) {
+        m_b_multi[0] = +6.0/11.0;
+    } else if (m_timeDisc == 34) {  // 4th-order
+        m_a_multi[0] = +3.0/25.0;
+        m_a_multi[1] = -16.0/25.0;
+        m_a_multi[2] = +36.0/25.0;
+        m_a_multi[3] = -48.0/25.0;
         
+        m_b_multi[0] = +12.0/25.0;
     } else {
         std::cout << "WARNING: BDF scheme '" << m_timeDisc << "'not recognised!\n";
         MPI_Finalize();
