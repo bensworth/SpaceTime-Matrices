@@ -1,3 +1,5 @@
+#! /bin/bash
+
 # Run the "driver" executable in ../ST_class for many different spatial refinements, nx.
 # Then run the Python script "compute_errors.py" for each solve to compute the numerical errors.
 # The solution information, including the errors, will be combined for all nx into one .npy file
@@ -14,7 +16,7 @@ date
 np=4            # Number of processes
 FD=2            # ID of problem to be solved
 min_refine=1    # Minimum spatial refinement
-max_refine=6    # Maximum spatial refinement nx == 2^(2+refine)
+max_refine=2    # Maximum spatial refinement nx == 2^(2+refine)
 pit=0           # Parallel-in-time flag
 dim=2
 

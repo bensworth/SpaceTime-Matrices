@@ -71,7 +71,7 @@ filenameOUT = filenameIN.replace("_l"+str(params["space_refine"]), "") + ".npy"
 
 # If output filenameIN exists, open it, otherwise create it
 if os.path.isfile(filenameOUT):
-    globalList = list(np.load(filenameOUT))
+    globalList = list(np.load(filenameOUT, allow_pickle = True))
     print("The file '" + filenameOUT + "' already exists, I'm appending to it...")
 else:
     globalList = list([])

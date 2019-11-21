@@ -1,9 +1,4 @@
 #include "FDadvection.hpp"
-#include <cstdio>
-#include <vector>
-#include <algorithm>
-#include <iostream>
-#include <functional>
 
 /* TODO : 
 -getSpatialDiscretizationG and getInitialCondition are the same functions except 

@@ -2,6 +2,11 @@
 	#include "SpaceTimeMatrix.hpp"
 #endif
 
+#include <cstdio>
+#include <vector>
+#include <algorithm>
+#include <iostream>
+#include <functional>
 #include <vector>
 
 #define PI 3.14159265358979323846
