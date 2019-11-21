@@ -6,11 +6,19 @@
 #include "mfem.hpp"
 using namespace mfem;
 
-// Dummy test for Slack integration with GitHub v2
 // Sample command line:
 //  srun -n 240 ./driver -s 2 -l 6 -nt 40 -t 31 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.0025 -lump 0
-// mpirun -np 4 ./driver -s 1 -l 2 -nt 12 -t 11 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.01 -lump 0
 
+/* Some examples for solving 2nd-order, 2D finite difference problems
+---IMPLICIT TIME-STEPPING:
+mpirun -np 4 ./driver -pit 0 -s 3 -d 2 -t 222 -o 2 -l 4 -p 2 -gmres 1 -rebuild -1 -ppre -1 -tol 1e-5 -FD 2 -saveX 1
+---IMPLICIT SPACE-TIME:
+mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -t 222 -o 2 -l 4 -p 2 -gmres 1 -rebuild -1 -ppre 1 -tol 1e-5 -FD 2 -saveX 1
+---EXPLICIT TIME-STEPPING:
+mpirun -np 4 ./driver -pit 0 -s 3 -d 2 -t 122 -o 2 -l 4 -p 2 -FD 2 -saveX 1
+---EXPLICIT SPACE-TIME:
+mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -t 122 -o 2 -l 4 -p 2 -gmres 1 -ppre 1 -tol 1e-5 -FD 2 -saveX 1
+*/
 
 int main(int argc, char *argv[])
 {
@@ -50,7 +58,7 @@ int main(int argc, char *argv[])
     int use_gmres    = 0;
     int AMGiters     = 1;
     int gmres_preconditioner = 1;
-    int gmres_AMG_printLevel = 1;
+    int precon_printLevel = 1;
     
     int rebuildRate  = 0; 
     
@@ -59,7 +67,7 @@ int main(int argc, char *argv[])
     
 
     /* --- Spatial discretization parameters --- */
-    int spatialDisc  = 1;
+    int spatialDisc  = 3;
     int refLevels    = 1;
 
     // Finite-difference specific parameters
@@ -70,7 +78,7 @@ int main(int argc, char *argv[])
 
     // Initialize solver options struct with default parameters */
     Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, 
-                                    AMGiters, gmres_AMG_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass)};
+                                    AMGiters, precon_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass)};
 
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
@@ -100,8 +108,8 @@ int main(int argc, char *argv[])
                   "Type of preconditioning for GMRES.");                     
     args.AddOption(&AMGiters, "-amgi", "--amg-iters",
                   "Number of BoomerAMG iterations to precondition one GMRES step.");       
-    args.AddOption(&(solver.gmres_AMG_printLevel), "-pamg", "--AMG-print-level",
-                  "Print level of BoomerAMG when preconditioning GMRES.");
+    args.AddOption(&(solver.precon_printLevel), "-ppre", "--preconditioner-print-level",
+                  "Print level of preconditioner when using one.");
     args.AddOption(&(solver.rebuildRate), "-rebuild", "--rebuild-rate",
                    "Frequency at which AMG solver is rebuilt during time stepping (-1=never rebuild, 0=rebuild every opportunity, x>0=after x time steps");              
     args.AddOption(&lump_mass, "-lump", "--lump-mass",
@@ -313,7 +321,7 @@ int main(int argc, char *argv[])
                 space_info["space_refine"]    = std::to_string(refLevels);
                 space_info["problemID"]       = std::to_string(FD_ProblemID);
                 for(int d = 0; d < n_px.size(); d++) {
-                    space_info[std::string("np_x") + std::to_string(d)] = std::to_string(n_px[d]);
+                    space_info[std::string("p_x") + std::to_string(d)] = std::to_string(n_px[d]);
                 }
                 STmatrix.SaveSolInfo(filename, space_info);    
             }

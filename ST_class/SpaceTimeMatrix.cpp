@@ -269,11 +269,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 
 
 SpaceTimeMatrix::~SpaceTimeMatrix()
-{
-    if (m_M_rowptr)  delete[] m_M_rowptr;
-    if (m_M_colinds) delete[] m_M_colinds;
-    if (m_M_data)    delete[] m_M_data;
-    
+{    
     if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
     if (m_gmres)  HYPRE_ParCSRGMRESDestroy(m_gmres);
     if (m_pcg)    HYPRE_ParCSRPCGDestroy(m_pcg); 
@@ -510,23 +506,19 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
             // Solve linear system and get convergence statistics
             if (m_solver_parameters.use_gmres) {
                 SolveGMRES();
-                HYPRE_GMRESGetNumIterations(m_gmres, &num_iters);
-                HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &rel_res_norm);
             } else {
                 SolveAMG();
-                HYPRE_BoomerAMGGetNumIterations(m_solver, &num_iters);
-                HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &rel_res_norm);
             }
             solve_count += 1;
-            avg_iters   += (double) num_iters;
+            avg_iters   += (double) m_num_iters;
             // avg_convergence_rate += ...; // TODO : Not sure how to do
             
                 
             // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
-            if (rel_res_norm > m_solver_parameters.tol) {
+            if (m_res_norm > m_solver_parameters.tol) {
                 if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
                 if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
-                if (m_globRank == 0) std::cout << "Tol after " << num_iters << " iters (max iterations) = " << rel_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+                if (m_globRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
                 MPI_Finalize();
                 exit(1);
             }
@@ -999,16 +991,8 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
 }
 
 
-
-
 void SpaceTimeMatrix::BuildSpaceTimeMatrix()
 {
-    // Check not using time stepping, since this doesn't make sense!
-    if (!m_pit) {
-        std::cout << "WARNING: BuildSpaceTimeMatrix() only available when solving space-time system!" << '\n';
-        MPI_Finalize();
-        exit(1);        
-    }
     if (m_globRank == 0) std::cout << "Building space-time matrix\n";
     if (m_useSpatialParallel) GetMatrix_ntLE1();
     else GetMatrix_ntGT1();
@@ -1032,7 +1016,7 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
     solinfo << "dt " << m_dt << "\n";
     solinfo << "timeDisc " << m_timeDisc << "\n";
     solinfo << "spatialParallel " << int(m_useSpatialParallel) << "\n";
-    if (m_useSpatialParallel) solinfo << "np_xTotal " << m_spatialCommSize << "\n";
+    if (m_useSpatialParallel) solinfo << "p_xTotal " << m_spatialCommSize << "\n";
     if (m_RK) solinfo << "s " << m_s_butcher << "\n";
     
     // Print out contents from additionalInfo to file too
@@ -1398,7 +1382,7 @@ void SpaceTimeMatrix::SetSolverParametersDefaults() {
     m_solver_parameters.use_gmres    = 1;
     m_solver_parameters.gmres_preconditioner = 1;
     m_solver_parameters.AMGiters     = 10;
-    m_solver_parameters.gmres_AMG_printLevel = 1;
+    m_solver_parameters.precon_printLevel = 1;
     
     m_solver_parameters.rebuildRate  = 0;
     
@@ -1611,7 +1595,7 @@ void SpaceTimeMatrix::SolveAMG()
         
         // TODO : wrap solve timer around this block
         // Solve linear system based on current values of A,b,x 
-        HYPRE_BoomerAMGSolve(m_solver, A_s, b_s, m_x);
+        m_hypre_ierr = HYPRE_BoomerAMGSolve(m_solver, A_s, b_s, m_x);
         
         // TODO : What happens to A_s and b_s here? Don't they need to be free'd? Or are they just copies?
     }
@@ -1630,8 +1614,12 @@ void SpaceTimeMatrix::SolveAMG()
         
         // TODO : wrap solve timer around this block
         // Solve linear system based on current values of A,b,x 
-        HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
+        m_hypre_ierr = HYPRE_BoomerAMGSolve(m_solver, m_A, m_b, m_x);
     }
+    
+    // Get convergence statistics
+    HYPRE_BoomerAMGGetNumIterations(m_solver, &m_num_iters);
+    HYPRE_BoomerAMGGetFinalRelativeResidualNorm(m_solver, &m_res_norm);
 }
 
 
@@ -1652,7 +1640,7 @@ void SpaceTimeMatrix::SetGMRESOptions() {
         // AMG preconditioning 
         if (m_solver_parameters.gmres_preconditioner == 1) {
             // Setup boomerAMG with zero halting tolerance so we can do a fixed number of AMG iterations
-            SetBoomerAMGOptions(m_solver_parameters.gmres_AMG_printLevel, m_solver_parameters.AMGiters, 0.0);
+            SetBoomerAMGOptions(m_solver_parameters.precon_printLevel, m_solver_parameters.AMGiters, 0.0);
             HYPRE_GMRESSetPrecond(m_gmres, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve,
                               (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, m_solver);
         }
@@ -1702,9 +1690,9 @@ void SpaceTimeMatrix::SolveGMRES()
         
         // TODO : wrap solve timer around this block
         // Solve linear system based on current values of A,b,x
-        HYPRE_ParCSRGMRESSolve(m_gmres, A_s, b_s, m_x);
+        m_hypre_ierr = HYPRE_ParCSRGMRESSolve(m_gmres, A_s, b_s, m_x);
         
-        // TODO : What happens to A_s and b_s here? Don't they need to be free'd? Or are they just copies?
+        // TODO : What happens to A_s and b_s here? I think they likely need to be free'd? 
     }
     else 
     {
@@ -1722,13 +1710,22 @@ void SpaceTimeMatrix::SolveGMRES()
         
         // TODO : wrap solve timer around this block
         // Solve linear system based on current values of A,b,x
-        HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
+        m_hypre_ierr = HYPRE_ParCSRGMRESSolve(m_gmres, m_A, m_b, m_x);
     }
+    
+    // Get convergence statistics
+    HYPRE_GMRESGetNumIterations(m_gmres, &m_num_iters);
+    HYPRE_GMRESGetFinalRelativeResidualNorm(m_gmres, &m_res_norm);
 }
 
 
 
-/* Initialize (unpreconditioned) PCG based on parameters in m_solver_parameters struct. */
+/* Initialize (unpreconditioned) PCG based on parameters in m_solver_parameters struct. 
+
+NOTE:
+    -No attention paid to m_rebuildSolver here since the mass matrix will not change 
+        over the life-time of the solve
+*/
 void SpaceTimeMatrix::SetPCGOptions() {
     // Create solver object
     
@@ -1750,6 +1747,10 @@ Options:
     1. M not lumped, and don't scale by block inverse: Solve iteratively with CG
     2. M lumped to be diagonal: Multiply by its inverse
     3. Option set to scale by block inverse of M: Multiply by its inverse
+    
+NOTE:
+    -No attention paid to m_rebuildSolver here since the mass matrix will not change 
+        over the life-time of the solve
 */
 void SpaceTimeMatrix::SolveMassMatrix() 
 {
@@ -1766,7 +1767,7 @@ void SpaceTimeMatrix::SolveMassMatrix()
         }
         
         // Solve linear system
-        HYPRE_ParCSRPCGSolve(m_pcg, m_A, m_b, m_x);
+        m_hypre_ierr = HYPRE_ParCSRPCGSolve(m_pcg, m_A, m_b, m_x);
         
         // Get convergence statistics
         HYPRE_PCGGetNumIterations(m_pcg, &m_num_iters);

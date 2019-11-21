@@ -44,8 +44,8 @@ struct Solver_parameters {
     
     bool   use_gmres;           /* Use preconditioned GMRES as solver */
     int    gmres_preconditioner;/* Preconditioner for GMRES */
-    int    AMGiters;            /* Number of AMG iterations to precondition a GMRES iteration by, if preconditioning by GMRES */
-    int    gmres_AMG_printLevel;/* Print level for BoomerAMG if used as a preconditioner */
+    int    AMGiters;            /* Number of AMG iterations to precondition a GMRES iteration by (if using AMG) */
+    int    precon_printLevel;   /* Print level for preconditioner (if using one) */
     
     int    rebuildRate;         /* Time-stepping: Rate solver is rebuilt */
     
@@ -107,6 +107,7 @@ private:
     int                 m_num_iters;            /* Number of iterations solver took */
     double              m_convergence_factor;   /* Average convergence factor during solve */
     double              m_res_norm;             /* Residual norm after solve */
+    int                 m_hypre_ierr;           /* Generic error flag for HYPRE functions */
     
     
     /* --- Identity-mass-matrix related --- */
