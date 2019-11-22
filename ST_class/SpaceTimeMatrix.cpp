@@ -171,7 +171,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                                     int timeDisc, int nt, double dt)
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
       m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
-      m_iterative(true), 
+      m_Mij(NULL), m_iterative(true), 
       m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
       m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
       m_a_multi({}), m_b_multi({}),
@@ -196,19 +196,19 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     } else if (m_timeDisc >= 10 && m_timeDisc < 20) {
         m_multi = true;
         m_AB = true;
-        GetABTableaux(); // Get AB coefficients
+        SetABTableaux(); // Get AB coefficients
         
     // Adams--Moulton time integration
     } else if (m_timeDisc >= 20 && m_timeDisc < 30) {
         m_multi = true;
         m_AM = true;
-        GetAMTableaux(); // Get AM coefficients
+        SetAMTableaux(); // Get AM coefficients
         
     // BDF time integration    
     } else if (m_timeDisc >= 30 && m_timeDisc < 40) {
         m_multi = true;
         m_BDF = true;
-        GetBDFTableaux(); // Get BDF coefficients
+        SetBDFTableaux(); // Get BDF coefficients
         
     } else {
         if (m_globRank == 0) std::cout << "Format of temporal-discretization '"<< m_timeDisc <<"' is invalid!\n";   
@@ -216,18 +216,22 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
         exit(1);
     }
     
-    if (!m_a_multi.empty()) {
-        std::cout << "a = " << '\n';
-        for (std::vector<int>::size_type i = 0; i < m_a_multi.size(); i++) std::cout << m_a_multi[i] << '\n';
-    }
-    if (!m_b_multi.empty()) {
-        std::cout << "b = " << '\n';
-        for (std::vector<int>::size_type i = 0; i < m_b_multi.size(); i++) std::cout << m_b_multi[i] << '\n';
-    }
+    // if (!m_a_multi.empty()) {
+    //     std::cout << "a = " << '\n';
+    //     for (std::vector<int>::size_type i = 0; i < m_a_multi.size(); i++) std::cout << m_a_multi[i] << '\n';
+    // }
+    // if (!m_b_multi.empty()) {
+    //     std::cout << "b = " << '\n';
+    //     for (std::vector<int>::size_type i = 0; i < m_b_multi.size(); i++) std::cout << m_b_multi[i] << '\n';
+    // }
     
-    if (m_globRank == 0) std::cout << "duuuuuuuhhhh  Format of temporal-discretization '"<< m_timeDisc <<"' is invalid!\n";   
-    MPI_Finalize();
-    exit(1);
+    // MULTISTEP: Ensure number of time steps is at least number of starting values 
+    // We do m_nt-1 steps from t=0, and require m_shat_multi starting values
+    if (m_multi && m_nt < m_s_multi) {
+        std::cout << "WARNING: Cannot integrate'" << m_nt-1 << "' steps from t=0 with a multistep scheme requiring '" << m_shat_multi << "' starting values\n";
+        MPI_Finalize();
+        exit(1);
+    }
     
     /* ---------------------------------------------- */
     /* ------ Solving global space-time system ------ */
@@ -277,6 +281,10 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 m_nDOFPerProc = (m_nt * m_s_butcher) / m_numProc; // Number of temporal DOFs per proc, be they solution and/or stage DOFs
                 m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
             }
+        } else {
+            std::cout << "WARNING: Only RK space-time system implemented" << '\n';
+            MPI_Finalize();
+            exit(1);
         }
     
     
@@ -303,7 +311,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 }
 
 
-void SpaceTimeMatrix::GetABTableaux()
+void SpaceTimeMatrix::SetABTableaux()
 {
     m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_shat_multi = std::max(1, m_s_multi);
@@ -330,7 +338,7 @@ void SpaceTimeMatrix::GetABTableaux()
     }
 }
 
-void SpaceTimeMatrix::GetAMTableaux()
+void SpaceTimeMatrix::SetAMTableaux()
 {
     m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_shat_multi = std::max(1, m_s_multi);
@@ -357,7 +365,7 @@ void SpaceTimeMatrix::GetAMTableaux()
     }
 }
 
-void SpaceTimeMatrix::GetBDFTableaux()
+void SpaceTimeMatrix::SetBDFTableaux()
 {
     m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_shat_multi = std::max(1, m_s_multi);
@@ -425,6 +433,11 @@ void SpaceTimeMatrix::Solve() {
     } else {
         TimeSteppingSolve();
     }
+    
+    
+    std::cout << "Thru Solve()..." << '\n';
+    MPI_Finalize();
+    exit(1);
 }
 
 
@@ -450,7 +463,144 @@ void SpaceTimeMatrix::TimeSteppingSolve()
         } else if (m_DIRK) {
             DIRKTimeSteppingSolve();
         }
+        
+        
+    /* Multistep routines: Need to initialize first few values using Runge-Kutta 
+    integration, then integrate up to t_{nt-1} */
+    } else if (m_multi) {
+        std::cout << "commence multi" << '\n';        
+        
+        // Temporarily store variables while they're reset for use in RK routines
+        int timeDisc = m_timeDisc; 
+        int nt       = m_nt;
+        
+        // Get initial condition for time-integration 
+        HYPRE_ParVector u0;   
+        HYPRE_IJVector  u0ij;
+        GetHypreInitialCondition(u0, u0ij);
+        
+        // Starting-values for multistep methods
+        std::vector<HYPRE_ParVector> u;
+        std::vector<HYPRE_IJVector>  uij;
+        
+        // We need to store m_shat_multi u, but will explicitly insert initial conditon below 
+        u.resize(m_shat_multi - 1);
+        uij.resize(m_shat_multi - 1);
+        InitializeHypreVectors(u0, u0ij, u, uij);
+        
+        // Insert initial condition at front of starting values vector
+        u.insert(u.begin(), u0); // TODO : Is this really inefficient???
+        uij.insert(uij.begin(), u0ij);
+        
+        // Set global starting time to 0
+        m_t0 = 0.0; 
+        
+        /* If we need more starting values obtain them via sequential RK integration */
+        if (SetMultiRKPairing()) {
+            m_nt = 2; // We take only a single step at a time (RK routines take m_nt-1 steps)
+            
+            // Get the remaining shat-1 starting values, u_n
+            for (int n = 1; n < m_shat_multi; n++) {
+                
+                // Copy initial starting values into correct location such that RK routines will overwrite with solution
+                HYPRE_ParVectorCopy(u[n-1], u[n]); // u[n] <- u[n-1]
+                
+                // Copy initial value into member vector so that RK routines can access it
+                m_x   = u[n];
+                m_xij = uij[n];
+                
+                // Call appropriate RK solver
+                if (m_ERK) {
+                    ERKTimeSteppingSolve();
+                } else if (m_DIRK) {
+                    DIRKTimeSteppingSolve();
+                }
+                
+                m_t0 += m_dt; // Update "starting time" of integration
+            }
+            
+            
+        }
+        
+        
+        // Reset total number of steps to original value
+        m_nt = nt;
+            
+        /* Call appropiate multstep routine */
+        if (m_AB) {
+            ABTimeSteppingSolve();
+        } else if (m_AM) {
+            AMTimeSteppingSolve();
+        } else if (m_BDF) {
+            BDFTimeSteppingSolve();
+        }
+        
+        
+        // TODO: Free left-over vectors and point member vector to solution at final time
     }
+}
+
+
+void SpaceTimeMatrix::ABTimeSteppingSolve() {
+
+}
+
+void SpaceTimeMatrix::AMTimeSteppingSolve() {
+
+}
+
+void SpaceTimeMatrix::BDFTimeSteppingSolve() {
+
+}
+
+
+
+/* Get Runge-Kutta tableaux that's compatible 
+with underlying multistep scheme 
+
+NOTE:
+    -If we do not need to do RK integration (as when doing 1st-order 
+    integration then return false)
+*/
+bool SpaceTimeMatrix::SetMultiRKPairing() 
+{
+    // Adams--Bashforth: Use order s_multi ERK time-stepping
+    if (m_AB) {
+        // Higher than 1st-order integration requires starting values
+        if (m_timeDisc != 11) {
+            if      (m_timeDisc == 12) m_timeDisc = 122; // 2nd-order
+            else if (m_timeDisc == 13) m_timeDisc = 133; // 3rd-order
+            else if (m_timeDisc == 14) m_timeDisc = 144; // 4th-order
+        // 1st-order only needs initial condition
+        } else {
+            return false;
+        }
+        
+    // Adams--Moulton: Use order s_multi+1 DIRK time-stepping
+    } else if (m_AM) {
+        // Higher than 1st-order integration requires starting values
+        if (m_timeDisc != 20) {
+            if      (m_timeDisc == 21) m_timeDisc = 222; // 2nd-order
+            else if (m_timeDisc == 22) m_timeDisc = 233; // 3rd-order
+            else if (m_timeDisc == 23) m_timeDisc = 254; // 4th-order
+        } else {
+            return false;
+        }
+        
+    // BDF: Use order s_multi DIRK time-stepping
+    } else if (m_BDF) {
+        // Higher than 1st-order integration requires starting values
+        if (m_timeDisc != 31) {
+            if      (m_timeDisc == 32) m_timeDisc = 222; // 2nd-order
+            else if (m_timeDisc == 33) m_timeDisc = 233; // 3rd-order
+            else if (m_timeDisc == 34) m_timeDisc = 254; // 4th-order
+        } else {
+            return false;
+        }
+    }
+    
+    GetButcherTableaux();   
+    return true;
 }
 
 
@@ -484,7 +634,9 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     int numVectors = m_s_butcher + 2; // Have s stage vectors + 2 temporary vectors
 
     // Get initial condition and initialize place-holder vectors
-    InitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
+    vectors.resize(numVectors);
+    vectorsij.resize(numVectors);
+    InitializeHypreVectors(u, uij, vectors, vectorsij);
 
     // Shallow copy vectors into variables with meaningful names
     HYPRE_ParVector              b1   = vectors[0];  // Temporary vector
@@ -721,7 +873,9 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     int numVectors = m_s_butcher + 1; // Have s stage vectors + 1 temporary vector
 
     // Get initial condition and initialize place-holder vectors
-    InitializeHypreVectors(u, uij, numVectors, vectors, vectorsij);
+    vectors.resize(numVectors);
+    vectorsij.resize(numVectors);
+    InitializeHypreVectors(u, uij, vectors, vectorsij);
 
     // Shallow copy place-holder vectors into vectors with meaningful names
     HYPRE_ParVector              b   = vectors[0];  // Temporary vector
@@ -966,49 +1120,49 @@ void SpaceTimeMatrix::GetHypreInitialCondition(HYPRE_ParVector &u0,
     delete[] U;
 }
 
-/* Initialize all the HYPRE vectors in "vectors" to the same values as in u */
+/* Initialize all the HYPRE vectors in "vectors" to the same values as in u 
+
+NOTE: Size of vectors must have been set, using the resize function, for example.
+*/
 void SpaceTimeMatrix::InitializeHypreVectors(HYPRE_ParVector                 &u, 
                                                 HYPRE_IJVector               &uij, 
-                                                int                           numVectors,
                                                 std::vector<HYPRE_ParVector> &vectors, 
                                                 std::vector<HYPRE_IJVector>  &vectorsij) 
 {
-    int      ilower;
-    int      iupper;
-    int      onProcSize;
-    double * U;
-    int    * rows;
-    
-    // Get range of rows owned by current process
-    HYPRE_IJVectorGetLocalRange(uij, &ilower, &iupper);
-    
-    // Get rows owned by current process
-    onProcSize = iupper - ilower + 1; // Number of rows on current process
-    rows       = new int[onProcSize];
-    for (int i = 0; i < onProcSize; i++) {
-        rows[i] = ilower + i;
+    if (vectors.size() > 0) {    
+        int      ilower;
+        int      iupper;
+        int      onProcSize;
+        double * U;
+        int    * rows;
+        
+        // Get range of rows owned by current process
+        HYPRE_IJVectorGetLocalRange(uij, &ilower, &iupper);
+        
+        // Get rows owned by current process
+        onProcSize = iupper - ilower + 1; // Number of rows on current process
+        rows       = new int[onProcSize];
+        for (int i = 0; i < onProcSize; i++) {
+            rows[i] = ilower + i;
+        }
+        
+        // Get entries owned by current process
+        U = new double[onProcSize];
+        HYPRE_IJVectorGetValues(uij, onProcSize, rows, U);
+        
+        // Create and initialize all vectors in vectorsij, setting their values to those of u
+        for (int i = 0; i < vectors.size(); i++) {
+            HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &vectorsij[i]);
+            HYPRE_IJVectorSetObjectType(vectorsij[i], HYPRE_PARCSR);
+            HYPRE_IJVectorInitialize(vectorsij[i]);
+            HYPRE_IJVectorSetValues(vectorsij[i], onProcSize, rows, U);
+            HYPRE_IJVectorAssemble(vectorsij[i]);
+            HYPRE_IJVectorGetObject(vectorsij[i], (void **) &vectors[i]);
+        }
+        
+        delete[] rows;
+        delete[] U;
     }
-    
-    // Get entries owned by current process
-    U = new double[onProcSize];
-    HYPRE_IJVectorGetValues(uij, onProcSize, rows, U);
-    
-    // Reserve space for the specified number of vectors
-    vectors.reserve(numVectors);
-    vectorsij.reserve(numVectors);
-    
-    // Create and initialize all vectors in vectorsij, setting their values to those of u
-    for (int i = 0; i < numVectors; i++) {
-        HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &vectorsij[i]);
-        HYPRE_IJVectorSetObjectType(vectorsij[i], HYPRE_PARCSR);
-        HYPRE_IJVectorInitialize(vectorsij[i]);
-        HYPRE_IJVectorSetValues(vectorsij[i], onProcSize, rows, U);
-        HYPRE_IJVectorAssemble(vectorsij[i]);
-        HYPRE_IJVectorGetObject(vectorsij[i], (void **) &vectors[i]);
-    }
-
-    delete[] rows;
-    delete[] U;
 }
 
 

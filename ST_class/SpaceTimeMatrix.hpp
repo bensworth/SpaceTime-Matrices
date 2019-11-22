@@ -103,6 +103,8 @@ private:
     HYPRE_Solver        m_solver;
     HYPRE_Solver        m_gmres;
     HYPRE_Solver        m_pcg;
+    HYPRE_ParCSRMatrix  m_M;
+    HYPRE_IJMatrix      m_Mij;
     HYPRE_ParCSRMatrix  m_A;
     HYPRE_IJMatrix      m_Aij;
     HYPRE_ParVector     m_b;
@@ -138,9 +140,10 @@ private:
     int     m_timeInd; // TODO: remove this. It no longer applies. Variable below makes more sense.
 
     void GetButcherTableaux();
-    void GetABTableaux();
-    void GetAMTableaux();
-    void GetBDFTableaux();
+    void SetABTableaux();
+    void SetAMTableaux();
+    void SetBDFTableaux();
+    bool SetMultiRKPairing();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);
@@ -219,17 +222,17 @@ private:
 
     
     /* ------ Sequential time integration routines ------ */
-    void ERKTimeSteppingSolve();  /* General purpose ERK solver */
-    void DIRKTimeSteppingSolve(); /* General purpose DIRK solver */
+    void ERKTimeSteppingSolve();    /* General purpose ERK solver */
+    void DIRKTimeSteppingSolve();   /* General purpose DIRK solver */
+    void ABTimeSteppingSolve();     /* General purpose Adams--Bashforth solver */
+    void AMTimeSteppingSolve();     /* General purpose Adams--Moulton solver */
+    void BDFTimeSteppingSolve();    /* General purpose BDF solver */
     
     void GetHypreInitialCondition(HYPRE_ParVector  &u0, 
                                     HYPRE_IJVector &u0ij); 
-                                    
-                                    
     
     void InitializeHypreVectors(HYPRE_ParVector                  &u0, 
                                     HYPRE_IJVector               &u0ij, 
-                                    int                           numVectors,
                                     std::vector<HYPRE_ParVector> &z, 
                                     std::vector<HYPRE_IJVector>  &zij); 
                                     
