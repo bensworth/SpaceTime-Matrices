@@ -105,6 +105,8 @@ private:
     HYPRE_Solver        m_pcg;
     HYPRE_ParCSRMatrix  m_M;
     HYPRE_IJMatrix      m_Mij;
+    HYPRE_ParCSRMatrix  m_invM;                 /* If M is lumped to be diagonal, we may store its inverse */
+    HYPRE_IJMatrix      m_invMij; 
     HYPRE_ParCSRMatrix  m_A;
     HYPRE_IJMatrix      m_Aij;
     HYPRE_ParVector     m_b;
@@ -244,14 +246,15 @@ private:
                                             HYPRE_IJMatrix &Lij,
                                             double          t);
                                             
-    void GetHypreMassMatrix(HYPRE_ParCSRMatrix &M,
-                            HYPRE_IJMatrix     &Mij,
-                            int                 ilower, 
-                            int                 iupper);                                             
+    void SetHypreMassMatrix(int  ilower, 
+                            int  iupper);
+                            
+    void SetHypreInvMassMatrix(int  ilower, 
+                               int  iupper);                                             
     
     void SolveAMG();
     void SolveGMRES();
-    void SolveMassMatrix();
+    void SolveMassSystem();
     
     void BuildSpaceTimeMatrix();
     

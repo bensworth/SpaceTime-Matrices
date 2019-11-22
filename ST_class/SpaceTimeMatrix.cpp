@@ -171,7 +171,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                                     int timeDisc, int nt, double dt)
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
       m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
-      m_Mij(NULL), m_iterative(true), 
+      m_Mij(NULL), m_invMij(NULL), m_iterative(true), 
       m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
       m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
       m_a_multi({}), m_b_multi({}),
@@ -412,6 +412,8 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
     if (m_Aij)    HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
     if (m_bij)    HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
     if (m_xij)    HYPRE_IJVectorDestroy(m_xij);
+    if (m_Mij)    HYPRE_IJMatrixDestroy(m_Mij);   
+    if (m_invMij) HYPRE_IJMatrixDestroy(m_invMij);   
     
     // TODO : destroy mass matrix member variables here...
 }
@@ -645,8 +647,8 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     HYPRE_IJVector               b2ij = vectorsij[1];
     std::vector<HYPRE_ParVector> k; // Stage vectors
     std::vector<HYPRE_IJVector>  kij;    
-    k.reserve(m_s_butcher);
-    kij.reserve(m_s_butcher);
+    k.resize(m_s_butcher);
+    kij.resize(m_s_butcher);
     for (int i = 0; i < m_s_butcher; i++) {
         kij[i] = vectorsij[i+2];
         k[i]   = vectors[i+2];
@@ -864,8 +866,6 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     HYPRE_IJVector     gij = NULL;
     HYPRE_ParCSRMatrix L   = NULL; // Spatial discretization matrix  
     HYPRE_IJMatrix     Lij = NULL;
-    HYPRE_ParCSRMatrix M   = NULL; // Mass matrix
-    HYPRE_IJMatrix     Mij = NULL;
 
     // Place-holder vectors
     std::vector<HYPRE_ParVector> vectors;
@@ -940,8 +940,12 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
                     int ilower, iupper, jdummy1, jdummy2;
                     HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
                     //setIdentityMassLocalRange(ilower, iupper); // TODO : Hack for testing when I don't have a mass matrix but want to invert whatever is provided by getMassMatrix()
-                    GetHypreMassMatrix(M, Mij, ilower, iupper);
-                    m_A = M; // Set member matrix to mass matrix so mass solver has access to it
+                    // Store inverse of M if it's lumped since we only need mass matrix for purposes of inverting it
+                    if (!m_solver_parameters.lump_mass) {
+                        SetHypreMassMatrix(ilower, iupper);
+                    } else {
+                        SetHypreInvMassMatrix(ilower, iupper);
+                    }
                 }
                 
                 /* --- Solve --- */
@@ -953,7 +957,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
                 m_b = b;
                 
                 // Solve the system!
-                SolveMassMatrix();
+                SolveMassSystem(); 
                 
                 // Ensure desired tolerance was reached if using iterative solver, otherwise quit
                 if (m_iterative) {
@@ -1002,7 +1006,6 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     if (step > 0) {
         if (gij) HYPRE_IJVectorDestroy(gij);
         if (Lij) HYPRE_IJMatrixDestroy(Lij);
-        if (Mij) HYPRE_IJMatrixDestroy(Mij);
     }
 
     // Assign final solution to member variable for saving etc.
@@ -1010,19 +1013,30 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
 }
 
 
-/* Assemble the mass matrix as a HYPRE matrix for the purpose of inverting it
+/* Assemble the inverse of a diagonally lumped mass matrix as a HYPRE matrix
 
 NOTE: 
     -We know the rows owned by the current process by previously assembling 
         the spatial discretization whose rows are distributed the same way
-    -If the mass matrix has been lumped to a diagonal matrix then this function 
-        will store its inverse.
+    -If the mass matrix has been lumped to a diagonal this function will 
+        store its inverse 
 */
-void SpaceTimeMatrix::GetHypreMassMatrix(HYPRE_ParCSRMatrix &M,
-                                         HYPRE_IJMatrix     &Mij,
-                                         int                 ilower, 
-                                         int                 iupper) 
+void SpaceTimeMatrix::SetHypreInvMassMatrix(int  ilower, 
+                                            int  iupper)
 {
+    // Just check not already set!
+    if (m_invM) {
+        std::cout << "WARNING: The inverse of mass matrix has already been set! Cannot be reset" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    if (!m_solver_parameters.lump_mass) {
+        std::cout << "WARNING: I can only compute the inverse of a diagaonally lumped mass matrix!" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
     int      onProcSize;
     int *    M_rowptr;
     int *    M_colinds;
@@ -1033,29 +1047,23 @@ void SpaceTimeMatrix::GetHypreMassMatrix(HYPRE_ParCSRMatrix &M,
     // Get mass matrix components and assemble as the HYPRE matrix M
     getMassMatrix(M_rowptr, M_colinds, M_data);
     
-    
     onProcSize = iupper - ilower + 1; // Number of rows on process
     
-    // If mass matrix is diagonal then invert it so its inverse is stored
-    if (m_solver_parameters.lump_mass) {
-        if (m_globRank == 0) std::cout << "WARNING: Mass matrix is lumped to be diagonal; storing its inverse in place of it" << '\n';
-        
-        int nnzM = M_rowptr[onProcSize] - M_rowptr[0]; // nnz(M) on process
-        for (int i = 0; i < nnzM; i++) {
-            // TODO : Is this a silly check? Is it impossible that M could become singular after lumping?
-            if (std::abs(M_data[i]) < 1e-14) {
-                std::cout << "WARNING: Mass matrix appears to be singular after lumping!" << '\n';
-                MPI_Finalize();
-                exit(1);
-            }
-            M_data[i] = 1/M_data[i];
+    int nnzM = M_rowptr[onProcSize] - M_rowptr[0]; // nnz(M) on process
+    for (int i = 0; i < nnzM; i++) {
+        // TODO : Is this a silly check? Is it impossible that M could become singular after lumping?
+        if (std::abs(M_data[i]) < 1e-14) {
+            std::cout << "WARNING: Mass matrix appears to be singular after lumping!" << '\n';
+            MPI_Finalize();
+            exit(1);
         }
+        M_data[i] = 1/M_data[i];
     }
     
     // Initialize matrix
-    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &Mij);
-    HYPRE_IJMatrixSetObjectType(Mij, HYPRE_PARCSR);
-    HYPRE_IJMatrixInitialize(Mij);
+    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &m_invMij);
+    HYPRE_IJMatrixSetObjectType(m_invMij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(m_invMij);
     
     // Set matrix coefficients
     M_rows         = new int[onProcSize];
@@ -1064,11 +1072,66 @@ void SpaceTimeMatrix::GetHypreMassMatrix(HYPRE_ParCSRMatrix &M,
         M_rows[i] = ilower + i;
         M_cols_per_row[i] = M_rowptr[i+1] - M_rowptr[i];
     }
-    HYPRE_IJMatrixSetValues(Mij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_data);
+    HYPRE_IJMatrixSetValues(m_Mij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_data);
     
     // Finalize construction
-    HYPRE_IJMatrixAssemble(Mij);
-    HYPRE_IJMatrixGetObject(Mij, (void **) &M);
+    HYPRE_IJMatrixAssemble(m_invMij);
+    HYPRE_IJMatrixGetObject(m_invMij, (void **) &m_invM);
+    
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_rows;
+    delete[] M_cols_per_row;
+    delete[] M_data;
+}
+
+
+/* Assemble mass matrix as a HYPRE matrix
+
+NOTE: 
+    -We know the rows owned by the current process by previously assembling 
+        the spatial discretization whose rows are distributed the same way
+*/
+void SpaceTimeMatrix::SetHypreMassMatrix(int  ilower, 
+                                         int  iupper)
+{
+    // Just check not already set!
+    if (m_M) {
+        std::cout << "WARNING: The mass matrix has already been set! Cannot be reset" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    
+    int      onProcSize;
+    int *    M_rowptr;
+    int *    M_colinds;
+    int *    M_rows;
+    int *    M_cols_per_row;
+    double * M_data;
+    
+    // Get mass matrix components and assemble as the HYPRE matrix M
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    
+    onProcSize = iupper - ilower + 1; // Number of rows on process
+    
+    // Initialize matrix
+    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &m_Mij);
+    HYPRE_IJMatrixSetObjectType(m_Mij, HYPRE_PARCSR);
+    HYPRE_IJMatrixInitialize(m_Mij);
+    
+    // Set matrix coefficients
+    M_rows         = new int[onProcSize];
+    M_cols_per_row = new int[onProcSize];
+    for (int i = 0; i < onProcSize; i++) {
+        M_rows[i] = ilower + i;
+        M_cols_per_row[i] = M_rowptr[i+1] - M_rowptr[i];
+    }
+    HYPRE_IJMatrixSetValues(m_Mij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_data);
+    
+    // Finalize construction
+    HYPRE_IJMatrixAssemble(m_Mij);
+    HYPRE_IJMatrixGetObject(m_Mij, (void **) &m_M);
     
     delete[] M_rowptr;
     delete[] M_colinds;
@@ -2038,7 +2101,7 @@ NOTE:
     -No attention paid to m_rebuildSolver here since the mass matrix will not change 
         over the life-time of the solve
 */
-void SpaceTimeMatrix::SolveMassMatrix() 
+void SpaceTimeMatrix::SolveMassSystem() 
 {
     // Use unpreconditioned CG if not exactly inverting linear system
     if (!m_solver_parameters.lump_mass && !m_solver_parameters.binv_scale) {
@@ -2048,22 +2111,28 @@ void SpaceTimeMatrix::SolveMassMatrix()
         if (!m_pcg) {
             if (m_globRank == 0) std::cout << "Building solver" << '\n';
             SetPCGOptions();
-            HYPRE_ParCSRPCGSetup(m_pcg, m_A, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
+            HYPRE_ParCSRPCGSetup(m_pcg, m_M, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
             if (m_globRank == 0) std::cout << "Solver assembled" << '\n';
         }
         
         // Solve linear system
-        m_hypre_ierr = HYPRE_ParCSRPCGSolve(m_pcg, m_A, m_b, m_x);
+        m_hypre_ierr = HYPRE_ParCSRPCGSolve(m_pcg, m_M, m_b, m_x);
         
         // Get convergence statistics
         HYPRE_PCGGetNumIterations(m_pcg, &m_num_iters);
         HYPRE_PCGGetFinalRelativeResidualNorm(m_pcg, &m_res_norm);
         
     // Mass matrix is lumped to be diagonal: Directly multiply by its inverse!
-    // Note: The inverse of the mass matrix was stored rather than the mass matrix itself
+    // Note: The inverse of the mass matrix must already be stored here!
     } else if (m_solver_parameters.lump_mass) {
+            if (!m_invMij) {
+                std::cout << "WARNING: A diagonally lumped mass matrix is inverted directly, but m_invM doesn't exist! You must create this first" << '\n';
+                MPI_Finalize();
+                exit(1);
+            }
+        
         m_iterative = false;
-        hypre_ParCSRMatrixMatvec(1.0, m_A, m_b, 0.0, m_x); // x <- 1.0*A*b + 0.0*x
+        hypre_ParCSRMatrixMatvec(1.0, m_invM, m_b, 0.0, m_x); // x <- 1.0*inv(M)*b + 0.0*x
         
     // Mass matrix is block diagonal and we directly invert it
     } else {
@@ -2077,7 +2146,7 @@ void SpaceTimeMatrix::SolveMassMatrix()
         }
         
         // Scale RHS by mass inverse
-        hypre_ParvecBdiagInvScal(m_b, m_bsize, &m_x, m_A); // x <- inv(A) * b
+        hypre_ParvecBdiagInvScal(m_b, m_bsize, &m_x, m_M); // x <- inv(A) * b
     }
 }
 

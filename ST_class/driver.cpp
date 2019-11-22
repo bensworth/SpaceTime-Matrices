@@ -231,6 +231,8 @@ int main(int argc, char *argv[])
         double CFL_fraction;
         double CFLlim;
         // Set CFL number 
+        
+        // Explicit Runge-Kutta
         if (timeDisc > 100 && timeDisc < 200) {
             // These limits apply for ERKp+Up schemes
             CFL_fraction = 0.85;
@@ -245,8 +247,26 @@ int main(int argc, char *argv[])
             } else if  (order == 5) {
                 CFLlim = 1.96583;
             }
-        // Implicit schemes
+        // Implicit Runge-Kutta
         } else if (timeDisc > 200 && timeDisc < 300) {
+            CFLlim = 1.0;
+            CFL_fraction = 1.0; // Use a CFL number of ...
+        
+        // TODO: 
+        //--- Work out what sensible CFLs look like for multistep schemes!  ------
+        
+        // Adams--Bashforth (explicit)
+        } else if  (timeDisc >= 10 && timeDisc < 20) {
+            CFLlim = 1.0;
+            CFL_fraction = 0.85; // Use a CFL number of ...
+            
+        // Adams--Moulton (implcit)
+        } else if  (timeDisc >= 20 && timeDisc < 30) {
+            CFLlim = 1.0;
+            CFL_fraction = 1.0; // Use a CFL number of ...
+            
+        // BDF (implicit)
+        } else if  (timeDisc >= 30 && timeDisc < 40) {
             CFLlim = 1.0;
             CFL_fraction = 1.0; // Use a CFL number of ...
         }
