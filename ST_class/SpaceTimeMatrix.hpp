@@ -113,7 +113,7 @@ private:
     HYPRE_IJVector      m_bij;
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
-    std::vector<HYPRE_ParVector> m_u_multi;     /* The s variables needed to be stored for multistep time-stepping */
+    std::vector<HYPRE_ParVector> m_u_multi;     /* Starting values for multistep time-stepping */
     std::vector<HYPRE_IJVector>  m_u_multi_ij;
     AMG_parameters      m_AMG_parameters;
     Solver_parameters   m_solver_parameters;
@@ -146,6 +146,7 @@ private:
     void SetAMTableaux();
     void SetBDFTableaux();
     bool SetMultiRKPairing();
+    void SetMultistepStartValues();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);
@@ -154,12 +155,38 @@ private:
 
 
     // Not using spatial parallelism
-    void RKSpaceTimeBlock(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    void RKSpaceTimeBlock(int    * &rowptr, 
+                          int    * &colinds, 
+                          double * &data, 
+                          double * &B,
+                          double * &X, 
+                          int      &localMinRow, 
+                          int      &localMaxRow, 
+                          int      &spatialDOFs);
+              
+    void BDFSpaceTimeBlock(int    * &rowptr, 
+                           int    * &colinds, 
+                           double * &data, 
+                           double * &B,
+                           double * &X, 
+                           int      &localMinRow, 
+                           int      &localMaxRow, 
+                           int      &spatialDOFs);
     
     // Using spatial parallelism
-    void RKSpaceTimeBlock(int* &rowptr, int* &colinds, double* &data, double* &B, 
-              double* &X, int &onProcSize);
+    void RKSpaceTimeBlock(int    * &rowptr, 
+                          int    * &colinds, 
+                          double * &data, 
+                          double * &B, 
+                          double * &X, 
+                          int      &onProcSize);
+              
+    void BDFSpaceTimeBlock(int    * &rowptr, 
+                           int    * &colinds, 
+                           double * &data, 
+                           double * &B, 
+                           double * &X, 
+                           int      &onProcSize);
               
               
     //  TODO : remove these functions...          
@@ -189,26 +216,43 @@ private:
     // over processors each time called, e.g., first processor in communicator gets
     // first 10 spatial DOFs, second processor next 10, and so on. 
     
-    virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
-                                            int &localMinRow, int &localMaxRow,
-                                            int &spatialDOFs, double t);                                   
-    virtual void getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
-                                            int* &A_colinds, double* &A_data,
-                                            double* &U0, bool getU0, 
-                                            int &localMinRow, int &localMaxRow, 
-                                            int &spatialDOFs,
-                                            double t, int &bsize);                                            
+    virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
+                                           double * &G, 
+                                           int      &localMinRow, 
+                                           int      &localMaxRow,
+                                           int      &spatialDOFs, 
+                                           double    t);                                   
+    virtual void getSpatialDiscretizationL(const MPI_Comm &spatialComm, 
+                                           int    * &A_rowptr, 
+                                           int    * &A_colinds, 
+                                           double * &A_data,
+                                           double * &U0, 
+                                           bool      getU0, 
+                                           int      &localMinRow, 
+                                           int      &localMaxRow, 
+                                           int      &spatialDOFs,
+                                           double    t, 
+                                           int      &bsize);                                            
                                           
                                           
     // Spatial discretization on one processor                                  
-    virtual void getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t);
-    virtual void getSpatialDiscretizationL(int* &A_rowptr, int* &A_colinds, double* &A_data,
-                                          double* &U0, bool getU0, int &spatialDOFs,
-                                          double t, int &bsize);                                            
+    virtual void getSpatialDiscretizationG(double * &G, 
+                                           int      &spatialDOFs, 
+                                           double     t);
+    virtual void getSpatialDiscretizationL(int    * &A_rowptr, 
+                                           int    * &A_colinds, 
+                                           double * &A_data,
+                                           double * &U0, 
+                                           bool      getU0, 
+                                           int      &spatialDOFs,
+                                           double    t, 
+                                           int      &bsize);                                            
         
                                                                             
     // Get mass matrix for time integration; only for finite element discretizations.
-    virtual void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);
+    virtual void getMassMatrix(int    * &M_rowptr, 
+                               int    * &M_colinds, 
+                               double * &M_data);
     // Helper function to setup identity mass matrix when not using finite-element discretization
     void setIdentityMassLocalRange(int localMinRow, int localMaxRow);
     
@@ -230,21 +274,21 @@ private:
     void AMTimeSteppingSolve();     /* General purpose Adams--Moulton solver */
     void BDFTimeSteppingSolve();    /* General purpose BDF solver */
     
-    void GetHypreInitialCondition(HYPRE_ParVector  &u0, 
-                                    HYPRE_IJVector &u0ij); 
+    void GetHypreInitialCondition(HYPRE_ParVector &u0, 
+                                  HYPRE_IJVector  &u0ij); 
     
-    void InitializeHypreVectors(HYPRE_ParVector                  &u0, 
-                                    HYPRE_IJVector               &u0ij, 
-                                    std::vector<HYPRE_ParVector> &z, 
-                                    std::vector<HYPRE_IJVector>  &zij); 
+    void InitializeHypreVectors(HYPRE_ParVector              &u0, 
+                                HYPRE_IJVector               &u0ij, 
+                                std::vector<HYPRE_ParVector> &z, 
+                                std::vector<HYPRE_IJVector>  &zij); 
                                     
-    void GetHypreSpatialDiscretizationG(HYPRE_ParVector    &g,
-                                            HYPRE_IJVector &gij,
-                                            double          t);
+    void GetHypreSpatialDiscretizationG(HYPRE_ParVector &g,
+                                        HYPRE_IJVector  &gij,
+                                        double           t);
                                                     
     void GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
-                                            HYPRE_IJMatrix &Lij,
-                                            double          t);
+                                        HYPRE_IJMatrix     &Lij,
+                                        double              t);
                                             
     void SetHypreMassMatrix(int  ilower, 
                             int  iupper);
