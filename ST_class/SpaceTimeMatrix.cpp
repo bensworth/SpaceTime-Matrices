@@ -170,7 +170,7 @@ void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, int &spatialDOFs, do
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists, 
                                     int timeDisc, int nt, double dt)
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
-      m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_solverComm(NULL), m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
       m_u_multi({}), m_u_multi_ij({}),
       m_Mij(NULL), m_invMij(NULL), m_iterative(true), 
       m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
@@ -253,6 +253,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     /* ------ Solving global space-time system ------ */
     /* ---------------------------------------------- */
     if (m_pit) {
+        m_solverComm = m_globComm; // All solves are done on global communicator
         
         /* ------------------------------------ */
         /* --- Runge-Kutta time integration --- */
@@ -279,7 +280,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 m_DOFInd = m_globRank / m_Np_x;
                 MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
                 MPI_Comm_rank(m_spatialComm, &m_spatialRank);
-                MPI_Comm_size(m_spatialComm, &m_spCommSize);
+                MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
             }
             
             /* ------ Temporal parallelism only ------ */
@@ -330,7 +331,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 // m_DOFInd = m_globRank / m_Np_x;
                 // MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
                 // MPI_Comm_rank(m_spatialComm, &m_spatialRank);
-                // MPI_Comm_size(m_spatialComm, &m_spCommSize);
+                // MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
             }
             
             /* ------ Temporal parallelism only ------ */
@@ -350,6 +351,15 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 }
                 m_nDOFPerProc = (m_nt-1-m_s_butcher) / m_numProc; // Number of temporal DOFs per proc
                 m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
+                
+                /* Setup spatial communicator to be accesses by sequential time-stepping routines 
+                used to generate starting values can access it. Since there is no spatial parallelism, the 
+                spatial communicator has only a single process on it. Need to do this because HYPRE matrices
+                are distributed on spatial communicator in those routines */
+                MPI_Comm_split(m_globComm, m_globRank, 0, &m_spatialComm);
+                MPI_Comm_rank(m_spatialComm, &m_spatialRank);
+                MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
+                std::cout << "my m_spatialRank = " << m_spatialRank << '\n';
             }
             
         } else {
@@ -363,17 +373,21 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     /* ------ Sequential time stepping ------ */
     /* -------------------------------------- */
     } else {
+        // Set spatial communicator to be the same as global communicator.
+        // Note: This is for the purposes of distributing HYPRE matrices during time-stepping (even when there is no spatiall parallelism, i.e. a single process)
+        m_spatialComm     = m_globComm;
+        m_spatialRank     = m_globRank;
+        m_spatialCommSize = m_numProc;
+        m_Np_x = m_spatialCommSize; // TODO delete...
+        
+        m_solverComm = m_spatialComm; // All solves are done on spatial communicator
+        
         if (m_numProc > 1)  {
             if (m_globRank == 0) {
                 std::cout << "Time-stepping: Spatial parallelism!\n";    
             }
             m_useSpatialParallel = true;
             
-            // Update spatial communicator variable to be those of global communicator.
-            m_spatialComm     = m_globComm;
-            m_spatialRank     = m_globRank;
-            m_spatialCommSize = m_numProc;
-            m_Np_x = m_spatialCommSize; // TODO delete...
         } else {
             std::cout << "Time-stepping: No parallelism!\n";    
             m_useSpatialParallel = false;
@@ -404,7 +418,19 @@ void SpaceTimeMatrix::Solve() {
     
     // Solve space-time system
     if (m_pit) {
-        BuildSpaceTimeMatrix(); // Build space-time system
+        // Build space-time system
+        if (m_RK) {
+            BuildSpaceTimeMatrix(); 
+        // Get the s starting values for processes owning DOFs that depend on them
+        } else if (m_BDF) {
+            m_solverComm = m_spatialComm; // Solves during time-stepping phase must be done on spatial communicator
+            SetMultistepStartValues();
+            m_solverComm = m_globComm; // Space-time solve phase must be done on global communicator
+            std::cout << "I quit...." << '\n';
+            MPI_Finalize();
+            exit(1);
+        }
+        
         // Call appropiate solver
         if (m_solver_parameters.use_gmres) {
             SolveGMRES(); 
@@ -620,7 +646,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     int step = step0;
     for (step = step0; step < m_nt-1; step++) {
         /* -------------- Build RHS vector, b, in linear system (M+b_s*dt*L)*u[n+1]=b[n+1] -------------- */
-        if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+        if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
             std::cout << "Time step " << step+1 << "/" << m_nt-1 << "\n";
             std::cout << "-----------------------------------------\n\n";
         }
@@ -733,9 +759,9 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         
         // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
         if (m_res_norm > m_solver_parameters.tol) {
-            if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
-            if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << "\n";
-            if (m_globRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+            if (m_spatialRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+            if (m_spatialRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << "\n";
+            if (m_spatialRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
             MPI_Finalize();
             exit(1);
         }
@@ -749,7 +775,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
 
 
     // Print statistics about average iteration counts and convergence factor across whole time interval
-    if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+    if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
         std::cout << "=============================================\n";
         std::cout << "Summary of linear solves during time stepping\n";
         std::cout << "---------------------------------------------\n";
@@ -906,7 +932,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     for (step = 0; step < m_nt-1; step++) {
         /* -------------- Build RHS vector, b2, in linear system (M+a_ii*dt*L)*k[i]=b2 -------------- */
         for (int i = 0; i < m_s_butcher; i++) {
-            if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+            if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
                 std::cout << "-----------------------------------------\n\n";
             }
@@ -1020,9 +1046,9 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
                 
             // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
             if (m_res_norm > m_solver_parameters.tol) {
-                if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
-                if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
-                if (m_globRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+                if (m_spatialRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+                if (m_spatialRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                if (m_spatialRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
                 MPI_Finalize();
                 exit(1);
             }
@@ -1038,7 +1064,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
 
 
     // Print statistics about average iteration counts and convergence factor across whole time interval
-    if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+    if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
         std::cout << "=============================================\n";
         std::cout << "Summary of linear solves during time stepping\n";
         std::cout << "---------------------------------------------\n";
@@ -1127,7 +1153,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
         
         // Build ith stage vector, k[i]
         for (int i = 0; i < m_s_butcher; i++) {
-            if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+            if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
                 std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
                 std::cout << "-----------------------------------------\n\n";
             }
@@ -1187,9 +1213,9 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
                     avg_iters   += (double) m_num_iters;
                     // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
                     if (m_res_norm > m_solver_parameters.tol) {
-                        if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
-                        if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
-                        if (m_globRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+                        if (m_spatialRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+                        if (m_spatialRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << ": Solving for stage " << i+1 << "/" << m_s_butcher << '\n';
+                        if (m_spatialRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
                         MPI_Finalize();
                         exit(1);
                     }
@@ -1208,7 +1234,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
 
     // Print statistics about average iteration counts and convergence factor across whole time interval
     if (m_M_exists && m_iterative) {
-        if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+        if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
             std::cout << "=============================================\n";
             std::cout << "Summary of linear solves during time stepping\n";
             std::cout << "---------------------------------------------\n";
@@ -1285,7 +1311,7 @@ void SpaceTimeMatrix::SetHypreInvMassMatrix(int  ilower,
     }
     
     // Initialize matrix
-    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &m_invMij);
+    HYPRE_IJMatrixCreate(m_spatialComm, ilower, iupper, ilower, iupper, &m_invMij);
     HYPRE_IJMatrixSetObjectType(m_invMij, HYPRE_PARCSR);
     HYPRE_IJMatrixInitialize(m_invMij);
     
@@ -1340,7 +1366,7 @@ void SpaceTimeMatrix::SetHypreMassMatrix(int  ilower,
     onProcSize = iupper - ilower + 1; // Number of rows on process
     
     // Initialize matrix
-    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &m_Mij);
+    HYPRE_IJMatrixCreate(m_spatialComm, ilower, iupper, ilower, iupper, &m_Mij);
     HYPRE_IJMatrixSetObjectType(m_Mij, HYPRE_PARCSR);
     HYPRE_IJMatrixInitialize(m_Mij);
     
@@ -1396,7 +1422,7 @@ void SpaceTimeMatrix::GetHypreInitialCondition(HYPRE_ParVector &u0,
         rows[i] = ilower + i;
     }
 
-    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &u0ij);
+    HYPRE_IJVectorCreate(m_spatialComm, ilower, iupper, &u0ij);
     HYPRE_IJVectorSetObjectType(u0ij, HYPRE_PARCSR);
     HYPRE_IJVectorInitialize(u0ij);
     HYPRE_IJVectorSetValues(u0ij, onProcSize, rows, U);
@@ -1439,7 +1465,7 @@ void SpaceTimeMatrix::InitializeHypreVectors(HYPRE_ParVector                 &u,
         
         // Create and initialize all vectors in vectorsij, setting their values to those of u
         for (int i = 0; i < vectors.size(); i++) {
-            HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &vectorsij[i]);
+            HYPRE_IJVectorCreate(m_spatialComm, ilower, iupper, &vectorsij[i]);
             HYPRE_IJVectorSetObjectType(vectorsij[i], HYPRE_PARCSR);
             HYPRE_IJVectorInitialize(vectorsij[i]);
             HYPRE_IJVectorSetValues(vectorsij[i], onProcSize, rows, U);
@@ -1486,7 +1512,7 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationG(HYPRE_ParVector   &g,
     }
     
     // Create HYPRE vector
-    HYPRE_IJVectorCreate(m_globComm, ilower, iupper, &gij);
+    HYPRE_IJVectorCreate(m_spatialComm, ilower, iupper, &gij);
     HYPRE_IJVectorSetObjectType(gij, HYPRE_PARCSR);
     HYPRE_IJVectorInitialize(gij);
     HYPRE_IJVectorSetValues(gij, onProcSize, G_rows, G);
@@ -1534,7 +1560,7 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
 
     // Initialize matrix
     onProcSize = iupper - ilower + 1; // Number of rows on process
-    HYPRE_IJMatrixCreate(m_globComm, ilower, iupper, ilower, iupper, &Lij);
+    HYPRE_IJMatrixCreate(m_spatialComm, ilower, iupper, ilower, iupper, &Lij);
     HYPRE_IJMatrixSetObjectType(Lij, HYPRE_PARCSR);
     HYPRE_IJMatrixInitialize(Lij);
 
@@ -2327,7 +2353,7 @@ void SpaceTimeMatrix::SetGMRESOptions() {
         if (m_gmres) HYPRE_ParCSRGMRESDestroy(m_gmres);
     
         // Create solver object
-        HYPRE_ParCSRGMRESCreate(m_globComm, &m_gmres);
+        HYPRE_ParCSRGMRESCreate(m_solverComm, &m_gmres);
     
         // AMG preconditioning 
         if (m_solver_parameters.gmres_preconditioner == 1) {
@@ -2423,7 +2449,7 @@ void SpaceTimeMatrix::SetPCGOptions() {
     
     if (m_pcg) return;
     
-    HYPRE_ParCSRPCGCreate(m_globComm, &m_pcg);
+    HYPRE_ParCSRPCGCreate(m_solverComm, &m_pcg);
 
     HYPRE_PCGSetTwoNorm(m_pcg, 1); // Base convergence on two-norm (I guess otherwise this is A-norm? Hard to find in docs...)
     HYPRE_PCGSetMaxIter(m_pcg, m_solver_parameters.maxiter);
@@ -2452,10 +2478,10 @@ void SpaceTimeMatrix::SolveMassSystem()
         
         // Setup solver if hasn't been done previously
         if (!m_pcg) {
-            if (m_globRank == 0) std::cout << "Building solver" << '\n';
+            if (m_spatialRank == 0) std::cout << "Building solver" << '\n';
             SetPCGOptions();
             HYPRE_ParCSRPCGSetup(m_pcg, m_M, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
-            if (m_globRank == 0) std::cout << "Solver assembled" << '\n';
+            if (m_spatialRank == 0) std::cout << "Solver assembled" << '\n';
         }
         
         // Solve linear system
@@ -2483,7 +2509,7 @@ void SpaceTimeMatrix::SolveMassSystem()
         
         // Ensure that block size has been set to something meaningful
         if (m_bsize <= 1)  {
-            if (m_globRank == 0) std::cout << "Block diagonal mass matrix must have block size > 1 to invert by scaling by block inverse!" << '\n';
+            if (m_spatialRank == 0) std::cout << "Block diagonal mass matrix must have block size > 1 to invert by scaling by block inverse!" << '\n';
             MPI_Finalize();
             exit(1);
         }

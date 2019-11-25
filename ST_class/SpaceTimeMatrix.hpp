@@ -65,7 +65,7 @@ private:
     int     m_nt;                   /* Number of time point/solution DOFs. We do Nt-1 time steps */
 
     int     m_DOFInd;               /* Index of DOF that spatial comm group belongs to */
-    int     m_nDOFPerProc;          /* Number of temporal DOFs per proc, be they solution variables and/or stage variables */
+    int     m_nDOFPerProc;          /* Number of temporal DOFs per proc (in general, solution variables, but for Runge-Kutta, includes stage variables too) */
     
     int     m_globRank;             /* Rank in global communicator */
     int     m_numProc;              /* Total number of procs; TODO : Change to "m_globCommSize" */
@@ -99,7 +99,8 @@ private:
 
 
     /* --- Relating to HYPRE solution of linear systems --- */
-    MPI_Comm            m_globComm;
+    MPI_Comm            m_globComm;            /* Global communicator */
+    MPI_Comm            m_solverComm;          /* Communicator used for solvers; this may be globComm, spatialComm, or may swap between the two */
     HYPRE_Solver        m_solver;
     HYPRE_Solver        m_gmres;
     HYPRE_Solver        m_pcg;
