@@ -50,7 +50,7 @@ colours = ["g", "r", "b", "c"]
 for count, filename in enumerate(filenames):
     # If output filename exists, open it, otherwise create it
     if os.path.isfile(filename):
-        globalList = list(np.load(filename))
+        globalList = list(np.load(filename, allow_pickle = True))
     else:
         print("What are you doing?! I don't know what this ('{}') file is".format(filename))
 
@@ -84,7 +84,7 @@ for count, filename in enumerate(filenames):
     
     # Plot errors for given solves and line indicating expected asymptotic convergence rate
     plt.loglog(nx, 0.5*e[-1]*(nx/float(nx[-1]))**(-order), linestyle = '--', color = 'k')
-    plt.loglog(nx, e, label = "RK{}+U{}".format(globalList[0]["timeDisc"], order), marker = "o", color = colours[count], basex = 2)
+    plt.loglog(nx, e, label = "T{}+U{}".format(globalList[0]["timeDisc"], order), marker = "o", color = colours[count], basex = 2)
 
 
 axes = plt.gca()
@@ -109,21 +109,22 @@ if globalList[0]["pit"]:
 else:
     title = "Time-stepping:\t"
 
-title += str(globalList[0]["space_dim"]) + "D, $T\\approx{:.2f}$".format(T)
+title += str(globalList[0]["space_dim"]) + "D, $T_{{\\rm f}}\\approx{:.2f}$".format(T)
 plt.title(title, **fs)
 
 # Generate name to save figure with...
-filenameOUT = "plots/"
+filenameOUT = "plots/" + globalList[0]["time"] + "/"
 if globalList[0]["pit"]:
     filenameOUT += "spaceTime_"
 else:
     filenameOUT += "timeStepping_"
-if int(globalList[0]["timeDisc"]) < 200:
-    filenameOUT += "explicit"
-else:
-    filenameOUT += "implicit"    
 
-filenameOUT += "_d" + str(globalList[0]["space_dim"]) + "_FD" + str(globalList[0]["problemID"])
+if int(globalList[0]["implicit"]):
+    filenameOUT += "implicit_"
+else:
+    filenameOUT += "explicit_"    
+
+filenameOUT += "d" + str(globalList[0]["space_dim"]) + "_FD" + str(globalList[0]["problemID"])
 #plt.savefig('{}.pdf'.format(filenameOUT), bbox_inches='tight')
 plt.show()  
 

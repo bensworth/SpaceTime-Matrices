@@ -76,9 +76,10 @@ private:
     
     /* --- The time-integration scheme --- */
     int     m_timeDisc;             /* ID of time-integration scheme */
+    bool    m_implicit;             /* Flag for explicit/implicit time integration */
     
     /* Runge-Kutta Butcher tableaux variables */
-    bool    m_RK;                   /* Runge-Kutta time integration */
+    bool    m_RK;                /* Runge-Kutta time integration */
     bool    m_ERK;               /* Explicit Runge-Kutta */
     bool    m_DIRK;              /* Diagonally implicit Runge-Kutta */
     bool    m_SDIRK;             /* Singly diagonally Runge-Kutta */
@@ -92,7 +93,6 @@ private:
     bool                m_AM;      /* Adams--Moulton time integration */
     bool                m_BDF;     /* BDF time integration */
     int                 m_s_multi; /* Number of steps in multistep scheme */
-    int                 m_shat_multi; /* Number of previous time points new solution dependes on */
     std::vector<double> m_a_multi; /* Coefficients in multistep scheme */
     std::vector<double> m_b_multi; /* Coefficients in multistep scheme */
     
@@ -113,6 +113,8 @@ private:
     HYPRE_IJVector      m_bij;
     HYPRE_ParVector     m_x;
     HYPRE_IJVector      m_xij;
+    std::vector<HYPRE_ParVector> m_u_multi;     /* The s variables needed to be stored for multistep time-stepping */
+    std::vector<HYPRE_IJVector>  m_u_multi_ij;
     AMG_parameters      m_AMG_parameters;
     Solver_parameters   m_solver_parameters;
     bool                m_iterative;            /* Indicating whether an iterative or direct solver is used */
@@ -126,8 +128,6 @@ private:
     int  m_M_localMinRow;
     int  m_M_localMaxRow;
     bool m_rebuildMass;
-    int  m_spatialDOFs; // Hack...
-    
     
     int     m_bsize;                /* DG specific variable... */
 

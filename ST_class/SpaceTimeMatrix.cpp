@@ -171,10 +171,11 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                                     int timeDisc, int nt, double dt)
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
       m_solver(NULL), m_gmres(NULL), m_pcg(NULL), m_bij(NULL), m_xij(NULL), m_Aij(NULL),
+      m_u_multi({}), m_u_multi_ij({}),
       m_Mij(NULL), m_invMij(NULL), m_iterative(true), 
       m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
       m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
-      m_a_multi({}), m_b_multi({}),
+      m_a_multi({}), m_b_multi({}), 
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
       m_bsize(1), m_hmin(-1), m_hmax(-1),
@@ -185,6 +186,13 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     // Get number of processes
     MPI_Comm_rank(m_globComm, &m_globRank);
     MPI_Comm_size(m_globComm, &m_numProc);
+
+
+    // Swap AM0 to BDF1 to simplify implementation of AM schemes.
+    if (m_timeDisc == 20) {
+        m_timeDisc = 31;
+        std::cout << "WARNING: 1st-order Adams--Moulton is equivalent to BDF1 and so a BDF1 implementation will be used!\n";
+    }
 
 
     // Runge-Kutta time integration
@@ -226,9 +234,9 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     // }
     
     // MULTISTEP: Ensure number of time steps is at least number of starting values 
-    // We do m_nt-1 steps from t=0, and require m_shat_multi starting values
+    // We do m_nt-1 steps from t=0, and require s starting values
     if (m_multi && m_nt < m_s_multi) {
-        std::cout << "WARNING: Cannot integrate'" << m_nt-1 << "' steps from t=0 with a multistep scheme requiring '" << m_shat_multi << "' starting values\n";
+        std::cout << "WARNING: Cannot integrate'" << m_nt-1 << "' steps from t=0 with a multistep scheme requiring '" << m_s_multi << "' starting values\n";
         MPI_Finalize();
         exit(1);
     }
@@ -313,8 +321,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 
 void SpaceTimeMatrix::SetABTableaux()
 {
-    m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
-    m_shat_multi = std::max(1, m_s_multi);
+    m_implicit = false;
+    m_s_multi  = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_b_multi.resize(m_s_multi); // No need to store the s+1th 0 coefficient
     
     if (m_timeDisc == 11) {         // 1st-order
@@ -340,13 +348,11 @@ void SpaceTimeMatrix::SetABTableaux()
 
 void SpaceTimeMatrix::SetAMTableaux()
 {
-    m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
-    m_shat_multi = std::max(1, m_s_multi);
+    m_implicit = true;
+    m_s_multi  = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_b_multi.resize(m_s_multi + 1); 
     
-    if (m_timeDisc == 20) {         // 1st-order
-        m_b_multi[0] = +1.0;
-    } else if (m_timeDisc == 21) {  // 2nd-order
+    if (m_timeDisc == 21) {  // 2nd-order
         m_b_multi[0] = +1.0/2.0;
         m_b_multi[1] = +1.0/2.0;
     } else if (m_timeDisc == 22) {  // 3rd-order
@@ -367,12 +373,10 @@ void SpaceTimeMatrix::SetAMTableaux()
 
 void SpaceTimeMatrix::SetBDFTableaux()
 {
-    m_s_multi    = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
-    m_shat_multi = std::max(1, m_s_multi);
+    m_implicit = true;
+    m_s_multi  = m_timeDisc % 10; // Extract 2nd digit of two-digit integer
     m_a_multi.resize(m_s_multi); // No need to store the s+1th coefficient that's 1
     m_b_multi.resize(1); // There is a single non-zero b coefficient
-    
-    m_a_multi[m_s_multi]   = 1.0; // Satisfied by all multistep methods
     
     if (m_timeDisc == 31) {         // 1st-order
         m_a_multi[0] = -1.0;
@@ -435,11 +439,6 @@ void SpaceTimeMatrix::Solve() {
     } else {
         TimeSteppingSolve();
     }
-    
-    
-    std::cout << "Thru Solve()..." << '\n';
-    MPI_Finalize();
-    exit(1);
 }
 
 
@@ -467,14 +466,13 @@ void SpaceTimeMatrix::TimeSteppingSolve()
         }
         
         
-    /* Multistep routines: Need to initialize first few values using Runge-Kutta 
+    /* Multistep routines: Need to initialize first few s steps using Runge-Kutta 
     integration, then integrate up to t_{nt-1} */
-    } else if (m_multi) {
-        std::cout << "commence multi" << '\n';        
-        
+    } else if (m_multi) {     
         // Temporarily store variables while they're reset for use in RK routines
-        int timeDisc = m_timeDisc; 
-        int nt       = m_nt;
+        int timeDisc_temp  = m_timeDisc; 
+        int nt_temp        = m_nt;
+        bool implicit_temp = m_implicit;
         
         // Get initial condition for time-integration 
         HYPRE_ParVector u0;   
@@ -482,34 +480,31 @@ void SpaceTimeMatrix::TimeSteppingSolve()
         GetHypreInitialCondition(u0, u0ij);
         
         // Starting-values for multistep methods
-        std::vector<HYPRE_ParVector> u;
-        std::vector<HYPRE_IJVector>  uij;
-        
-        // We need to store m_shat_multi u, but will explicitly insert initial conditon below 
-        u.resize(m_shat_multi - 1);
-        uij.resize(m_shat_multi - 1);
-        InitializeHypreVectors(u0, u0ij, u, uij);
+        // We need to store s starting values of u, but will explicitly insert initial conditon below 
+        m_u_multi.resize(m_s_multi - 1);
+        m_u_multi_ij.resize(m_s_multi - 1);
+        InitializeHypreVectors(u0, u0ij, m_u_multi, m_u_multi_ij);
         
         // Insert initial condition at front of starting values vector
-        u.insert(u.begin(), u0); // TODO : Is this really inefficient???
-        uij.insert(uij.begin(), u0ij);
+        m_u_multi.insert(m_u_multi.begin(), u0); // TODO : Is this really inefficient???
+        m_u_multi_ij.insert(m_u_multi_ij.begin(), u0ij);
         
         // Set global starting time to 0
         m_t0 = 0.0; 
         
         /* If we need more starting values obtain them via sequential RK integration */
         if (SetMultiRKPairing()) {
-            m_nt = 2; // We take only a single step at a time (RK routines take m_nt-1 steps)
+            m_nt = 2; // We take only a single step at a time (RK routines are hard-codes to take m_nt-1 steps)
             
-            // Get the remaining shat-1 starting values, u_n
-            for (int n = 1; n < m_shat_multi; n++) {
+            // Get the remaining s-1 starting values, u_n
+            for (int n = 1; n < m_s_multi; n++) {
                 
-                // Copy initial starting values into correct location such that RK routines will overwrite with solution
-                HYPRE_ParVectorCopy(u[n-1], u[n]); // u[n] <- u[n-1]
+                // Copy initial starting values into a location such that RK routines will overwrite them with solution at the end of 1 time step
+                HYPRE_ParVectorCopy(m_u_multi[n-1], m_u_multi[n]); // u[n] <- u[n-1]
                 
                 // Copy initial value into member vector so that RK routines can access it
-                m_x   = u[n];
-                m_xij = uij[n];
+                m_x   = m_u_multi[n];
+                m_xij = m_u_multi_ij[n];
                 
                 // Call appropriate RK solver
                 if (m_ERK) {
@@ -520,13 +515,13 @@ void SpaceTimeMatrix::TimeSteppingSolve()
                 
                 m_t0 += m_dt; // Update "starting time" of integration
             }
-            
-            
         }
         
+        // Reset variables to their original values
+        m_timeDisc = timeDisc_temp;
+        m_nt       = nt_temp;
+        m_implicit = implicit_temp;
         
-        // Reset total number of steps to original value
-        m_nt = nt;
             
         /* Call appropiate multstep routine */
         if (m_AB) {
@@ -536,23 +531,264 @@ void SpaceTimeMatrix::TimeSteppingSolve()
         } else if (m_BDF) {
             BDFTimeSteppingSolve();
         }
-        
-        
-        // TODO: Free left-over vectors and point member vector to solution at final time
     }
 }
 
 
+/* Sequential time-stepping routine for arbitrary Adams--Bashforth schemes */
 void SpaceTimeMatrix::ABTimeSteppingSolve() {
-
+    
 }
 
+/* Sequential time-stepping routine for arbitrary Adams--Moulton schemes */
 void SpaceTimeMatrix::AMTimeSteppingSolve() {
-
+// TODO: Free left-over vectors and point member vector to solution at final time
 }
 
-void SpaceTimeMatrix::BDFTimeSteppingSolve() {
+/* Sequential time-stepping routine for arbitrary BDF schemes 
 
+NOTE:
+    -m_x_multi must contain the s starting values required to initiate s-step BDF; 
+    that is, m_x_multi==[u(t_0),...,u(t_{s-1})], s>=1.
+*/
+void SpaceTimeMatrix::BDFTimeSteppingSolve() 
+{
+    /* ---------------------------------------------------------------------- */
+    /* ------------------------ Setup/initialization ------------------------ */
+    /* ---------------------------------------------------------------------- */
+    double t = m_t0;        // Initial time to integrate from
+    
+    // Check that solution vector has been initialized!
+    if (m_u_multi_ij.empty()) {
+        std::cout << "WARNING: Global solution vector must be allocated before beginning BDF time stepping" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    
+    int headptr = m_s_multi - 1;    // Pointer to solution at most recent time, u(t_n)
+    int tailptr = 0;                // Pointer to solution at last required time, u(t_{n+1-s})
+    
+    // TODO : Should rename m_x to m_u...
+    // Shallow copy starting values into vectors with more meaningful names
+    std::vector<HYPRE_ParVector> u   = m_u_multi;   // Initial solution vector to integrate from
+    std::vector<HYPRE_IJVector>  uij = m_u_multi_ij;
+    
+    HYPRE_ParVector    g             = NULL; // Spatial discretization vector
+    HYPRE_IJVector     gij           = NULL;
+    HYPRE_ParCSRMatrix L             = NULL; // Spatial discretization matrix  
+    HYPRE_IJMatrix     Lij           = NULL;
+    HYPRE_ParCSRMatrix BDF_matrix    = NULL; // Matrix to be inverted in linear solve
+    HYPRE_IJMatrix     BDF_matrixij  = NULL;
+
+    // Place-holder vectors
+    std::vector<HYPRE_ParVector> vectors;
+    std::vector<HYPRE_IJVector>  vectorsij;
+    int numVectors = 1; // We only need a single temporary vector (to store RHS of the linear system)
+
+    // Initialize place-holder vectors
+    vectors.resize(numVectors);
+    vectorsij.resize(numVectors);
+    InitializeHypreVectors(u[0], uij[0], vectors, vectorsij);
+
+    // Shallow copy vectors into variables with meaningful names
+    HYPRE_ParVector b   = vectors[0];  // Temporary vector
+    HYPRE_IJVector  bij = vectorsij[0];
+
+    // Mass matrix components
+    int    * M_rowptr;
+    int    * M_colinds;
+    double * M_data;
+    double * M_scaled_data;
+    int    * M_rows;
+    int    * M_cols_per_row;
+    int      ilower;
+    int      iupper;
+    int      onProcSize;
+
+    // For monitoring convergence of linear solver
+    int    num_iters;
+    double rel_res_norm;
+    double avg_iters;
+    double avg_convergence_rate;
+
+
+    // Is it necessary to build spatial discretization matrix/BDF matrix more than once?
+    bool rebuildMatrix = m_L_isTimedependent;
+
+    /* ------------------------------------------------------------ */
+    /* ------------------------ Time march ------------------------ */
+    /* ------------------------------------------------------------ */
+    // Take nt-1 steps
+    int solve_count = 0; // Number of linear solves
+    int step0 = m_s_multi - 1;
+    int step = step0;
+    for (step = step0; step < m_nt-1; step++) {
+        /* -------------- Build RHS vector, b, in linear system (M+b_s*dt*L)*u[n+1]=b[n+1] -------------- */
+        if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+            std::cout << "Time step " << step+1 << "/" << m_nt-1 << "\n";
+            std::cout << "-----------------------------------------\n\n";
+        }
+        
+        // Compute spatial discretization at t + dt
+        // Solution-independent term
+        if (m_g_isTimedependent || step == step0) {
+            GetHypreSpatialDiscretizationG(g, gij, t + m_dt);
+        }
+        // Solution-dependent term
+        if (rebuildMatrix || step0) {
+            GetHypreSpatialDiscretizationL(L, Lij, t + m_dt);
+        } 
+        
+
+
+        
+        // Assemble intermediate variable w, w == \sum_{j=1}^s a[s-j] * u[n+1-j], this is stored in u[tail]
+        for (int j = m_s_multi-1; j >= 0; j--) { // Start sum from u[n+1-s] since  this is overwritten
+            if (j == m_s_multi-1) {
+                HYPRE_ParVectorScale(m_a_multi[0], u[tailptr]); // u[n+1-s] <- a[0] * u[n+1-s]
+            } else {
+                HYPRE_ParVectorAxpy(m_a_multi[m_s_multi-1 - j], u[(tailptr + m_s_multi-1 - j) % m_s_multi], u[tailptr]); // u[n+1-s] <- u[n+1-s] + a[s-j]*u[n+1-j]
+            }
+        }
+        
+        // Multiply w by mass matrix and add g. Note for BDF schemes, m_b_multi stores only b_s!
+        if (m_M_exists)  {
+            // Assemble as HYPRE matrix to compute MATVECS  
+            if (step == step0) {
+                int ilower, iupper, jdummy1, jdummy2;
+                HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
+                SetHypreMassMatrix(ilower, iupper);
+            }
+            hypre_ParCSRMatrixMatvecOutOfPlace(-1.0, m_M, u[tailptr], m_dt*m_b_multi[0], g, b); // b <- -M*w + dt*b_s*g
+        // Add g to w
+        } else {
+            HYPRE_ParVectorCopy(u[tailptr], b); // b <- u[tail]
+            HYPRE_ParVectorScale(-1.0, b); // b <- -b
+            HYPRE_ParVectorAxpy(m_dt*m_b_multi[0], g, b); // b <- b + dt*b_s*g
+        }
+        
+        // Set inital guess at solution to be the RHS of the system
+        HYPRE_ParVectorCopy(b, u[tailptr]); 
+        
+        
+        /* -------------- Solve linear system, (M+b_s*dt*L)*u[n+1]=b -------------- */
+        // Get components of mass matrix only after spatial discretization has been assembled for the first time
+        // Mass matrix is NOT time dependent: Only needs to be assembled once
+        if (step == step0) {
+            // Get rows this process owns of M assuming rows of M and L are partitioned the same in memory
+            int jdummy1, jdummy2;
+            HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
+            
+            // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
+            if (!m_M_exists) setIdentityMassLocalRange(ilower, iupper);
+            
+            getMassMatrix(M_rowptr, M_colinds, M_data);
+            onProcSize     = iupper - ilower + 1;
+            M_rows         = new int[onProcSize];
+            M_cols_per_row = new int[onProcSize];
+            for (int rowIdx = 0; rowIdx < onProcSize; rowIdx++) {
+                M_rows[rowIdx]         = ilower + rowIdx;
+                M_cols_per_row[rowIdx] = M_rowptr[rowIdx+1] - M_rowptr[rowIdx];
+            }
+            M_scaled_data = new double[M_rowptr[onProcSize]]; // Temporary vector to use below...
+        }
+        
+        // Scale RHS vector by 1/dt*a_ii for the moment 
+        double temp = 1.0/(m_dt * m_b_multi[0]); 
+        HYPRE_ParVectorScale(temp, b); // b <- b/(dt*b_s)
+        
+        // Rescale mass matrix data by 1/dt*b_s; only need to do this once
+        if (step == m_s_multi - 1) {
+            for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
+                M_scaled_data[dataInd] = temp * M_data[dataInd]; // M <- M / (dt*b_s)
+            }
+        }
+        
+        // Get BDF matrix, BDF_matrix <- M + b_s*dt*L
+        // Build BDF matrix once only if L time independent
+        if (!rebuildMatrix) {
+            // Build BDF matrix on first iteration only
+            if (step == step0) { 
+                GetHypreSpatialDiscretizationL(BDF_matrix, BDF_matrixij, t + m_dt);
+                HYPRE_IJMatrixAddToValues(BDF_matrixij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+            }
+        // Reuse/update L since it's rebuilt at next iteration, BDF_matrix <- L <- M + b_s*dt*L    
+        } else {
+            HYPRE_IJMatrixAddToValues(Lij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+            BDF_matrix   = L;
+            BDF_matrixij = Lij;
+            
+            // BDF matrix has changed, check if AMG solver is due to be rebuild
+            // (m_rebuildSolver is reset to false when the solver (re)built)
+            if (m_solver_parameters.rebuildRate == 0 || (m_solver_parameters.rebuildRate > 0 && (step % m_solver_parameters.rebuildRate) == 0)) m_rebuildSolver = true; 
+        }
+        
+        // Point member variables to local variables so linear solver can access them
+        m_A = BDF_matrix;
+        m_x = u[tailptr]; 
+        m_b = b;
+        
+        // Solve linear system and get convergence statistics
+        if (m_solver_parameters.use_gmres) {
+            SolveGMRES();
+        } else {
+            SolveAMG();
+        }
+        solve_count += 1;
+        avg_iters   += (double) m_num_iters;
+        // avg_convergence_rate += ...; // TODO : Not sure how to do
+        
+        // Ensure desired tolerance was reached in allowable number of iterations, otherwise quit
+        if (m_res_norm > m_solver_parameters.tol) {
+            if (m_globRank == 0) std::cout << "=================================\n =========== WARNING ===========\n=================================\n";
+            if (m_globRank == 0) std::cout << "Time step " << step+1 << "/" << m_nt-1 << "\n";
+            if (m_globRank == 0) std::cout << "Tol after " << m_num_iters << " iters (max iterations) = " << m_res_norm << " > desired tol = " << m_solver_parameters.tol << "\n\n";
+            MPI_Finalize();
+            exit(1);
+        }
+
+        t += m_dt; // Increment time
+        
+        // Update tailptr and headptr for next iteration
+        headptr = tailptr;
+        tailptr = (tailptr + 1) % m_s_multi;
+    }
+
+
+    // Print statistics about average iteration counts and convergence factor across whole time interval
+    if ((m_solver_parameters.printLevel > 0) && (m_globRank == 0)) {
+        std::cout << "=============================================\n";
+        std::cout << "Summary of linear solves during time stepping\n";
+        std::cout << "---------------------------------------------\n";
+        std::cout << "Number of systems solved = " << solve_count << '\n';
+        std::cout << "Average number of iterations = " << avg_iters/solve_count << '\n';
+        std::cout << "***TODO***: Average convergence factor = ..." << '\n';
+        //hypre_BoomerAMGGetRelResidualNorm(m_solver, &rel_res_norm);
+    }
+
+    /* ---------------------------------------------------------- */
+    /* ------------------------ Clean up ------------------------ */
+    /* ---------------------------------------------------------- */
+    for (int i = 0; i < vectors.size(); i++) {
+        HYPRE_IJVectorDestroy(vectorsij[i]);
+    }
+    
+    if (step > step0) {
+        HYPRE_IJVectorDestroy(gij);
+        HYPRE_IJMatrixDestroy(Lij);
+        if (!rebuildMatrix) HYPRE_IJMatrixDestroy(BDF_matrixij); // Clean up extra matrix if we used it
+    }
+    
+    if (m_M) HYPRE_IJMatrixDestroy(m_Mij);
+
+    // Free all starting values except for the solution at the final time
+    for (int i = 0; i < uij.size(); i++) {
+        if (i != headptr) HYPRE_IJVectorDestroy(uij[i]);
+    }
+
+    // Assign final solution to member variable for saving etc.
+    m_xij = uij[headptr];
 }
 
 
@@ -561,8 +797,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve() {
 with underlying multistep scheme 
 
 NOTE:
-    -If we do not need to do RK integration (as when doing 1st-order 
-    integration then return false)
+    -If we do not need to do RK integration (as when doing 1st-order integration then return false)
 */
 bool SpaceTimeMatrix::SetMultiRKPairing() 
 {
@@ -580,15 +815,10 @@ bool SpaceTimeMatrix::SetMultiRKPairing()
         
     // Adams--Moulton: Use order s_multi+1 DIRK time-stepping
     } else if (m_AM) {
-        // Higher than 1st-order integration requires starting values
-        if (m_timeDisc != 20) {
-            if      (m_timeDisc == 21) m_timeDisc = 222; // 2nd-order
-            else if (m_timeDisc == 22) m_timeDisc = 233; // 3rd-order
-            else if (m_timeDisc == 23) m_timeDisc = 254; // 4th-order
-        } else {
-            return false;
-        }
-        
+        if      (m_timeDisc == 21) m_timeDisc = 222; // 2nd-order
+        else if (m_timeDisc == 22) m_timeDisc = 233; // 3rd-order
+        else if (m_timeDisc == 23) m_timeDisc = 254; // 4th-order
+
     // BDF: Use order s_multi DIRK time-stepping
     } else if (m_BDF) {
         // Higher than 1st-order integration requires starting values
@@ -606,7 +836,7 @@ bool SpaceTimeMatrix::SetMultiRKPairing()
 }
 
 
-/* Sequential time-stepping routine for general DIRK schemes */
+/* Sequential time-stepping routine for arbitrary DIRK schemes */
 void SpaceTimeMatrix::DIRKTimeSteppingSolve() 
 {   
     /* ---------------------------------------------------------------------- */
@@ -845,7 +1075,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
 }
 
 
-/* Sequential time-stepping routine for general ERK schemes */
+/* Sequential time-stepping routine for arbitrary ERK schemes */
 void SpaceTimeMatrix::ERKTimeSteppingSolve() 
 {        
     /* ---------------------------------------------------------------------- */
@@ -1004,8 +1234,10 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
         HYPRE_IJVectorDestroy(vectorsij[i]);
     }
     if (step > 0) {
-        if (gij) HYPRE_IJVectorDestroy(gij);
-        if (Lij) HYPRE_IJMatrixDestroy(Lij);
+        if (gij)      HYPRE_IJVectorDestroy(gij);
+        if (Lij)      HYPRE_IJMatrixDestroy(Lij);
+        if (m_Mij)    HYPRE_IJMatrixDestroy(m_Mij);
+        if (m_invMij) HYPRE_IJMatrixDestroy(m_invMij);
     }
 
     // Assign final solution to member variable for saving etc.
@@ -1359,10 +1591,25 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
     solinfo << "P " << m_numProc << "\n";
     solinfo << "nt " << m_nt << "\n";
     solinfo << "dt " << m_dt << "\n";
-    solinfo << "timeDisc " << m_timeDisc << "\n";
     solinfo << "spatialParallel " << int(m_useSpatialParallel) << "\n";
     if (m_useSpatialParallel) solinfo << "p_xTotal " << m_spatialCommSize << "\n";
-    if (m_RK) solinfo << "s " << m_s_butcher << "\n";
+    
+    // Time-discretization-specific information
+    solinfo << "timeDisc " << m_timeDisc << "\n";
+    solinfo << "implicit " << m_implicit << "\n";
+    if (m_RK) {
+        if (m_RK) solinfo << "s_rk " << m_s_butcher << "\n";
+        solinfo << "time " << "RK\n";
+    } else if (m_AB) {
+        solinfo << "time " << "AB\n";
+    } else if (m_AM) {
+        solinfo << "time " << "AM\n";
+    } else if (m_BDF) {
+        solinfo << "time " << "BDF\n";
+    }
+    
+    
+
     
     // Print out contents from additionalInfo to file too
     std::map<std::string, std::string>::iterator it;
@@ -1392,6 +1639,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- ERK tables --- */
     // Forward Euler: 1st-order
     if (m_timeDisc == 111) {
+        m_implicit        = false;
         m_ERK             = true;
         m_s_butcher       = 1;
         m_A_butcher[0][0] = 0.0;
@@ -1400,6 +1648,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     
     // 2nd-order Heun's method    
     } else if (m_timeDisc == 122) {
+        m_implicit        = false;
         m_ERK             = true;
         m_s_butcher       = 2;
         m_A_butcher[0][0] = 0.0;
@@ -1413,6 +1662,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 3rd-order optimal SSPERK
     } else if (m_timeDisc == 133) {
+        m_implicit        = true;
         m_ERK             = true;
         m_s_butcher       = 3;
         m_A_butcher[0][0] = 0.0; // 1st col
@@ -1433,6 +1683,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
 
     // Classical 4th-order ERK
     } else if (m_timeDisc == 144){
+        m_implicit        = false;
         m_ERK             = true;
         m_s_butcher       = 4;
         m_A_butcher[0][0] = 0.0; // 1st col
@@ -1464,6 +1715,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     /* --- SDIRK tables --- */
     // Backward Euler, 1st-order
     } else if (m_timeDisc == 211) {
+        m_implicit        = true;
         m_DIRK            = true;
         m_SDIRK           = true;
         m_s_butcher       = 1;
@@ -1474,6 +1726,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
     // 2nd-order L-stable SDIRK (there are a few different possibilities here. This is from the Dobrev et al.)
     } else if (m_timeDisc == 222) {
         double sqrt2      = 1.414213562373095;
+        m_implicit        = true;
         m_DIRK            = true;
         m_SDIRK           = true;
         m_s_butcher       = 2;
@@ -1493,6 +1746,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         double beta       =  0.5*(1.0 - zeta); 
         double gamma      = -3.0/2.0*zeta*zeta + 4.0*zeta - 0.25;
         double epsilon    =  3.0/2.0*zeta*zeta - 5.0*zeta + 1.25;
+        m_implicit        =  true;
         m_DIRK            =  true;
         m_SDIRK           =  true;
         m_s_butcher       =  3;
@@ -1514,6 +1768,7 @@ void SpaceTimeMatrix::GetButcherTableaux() {
         
     // 4th-order (5-stage) L-stable SDIRK (see Wanner's & Hairer's, Solving ODEs II, 1996, eq. 6.16)
     } else if (m_timeDisc == 254) {
+        m_implicit        =  true;
         m_DIRK            =  true;
         m_SDIRK           =  true;
         m_s_butcher       =  5;

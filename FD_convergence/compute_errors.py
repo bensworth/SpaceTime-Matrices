@@ -49,8 +49,8 @@ params["space_refine"]    = int(params["space_refine"])
 params["spatialParallel"] = int(params["spatialParallel"])
 
 # If not using RK scheme set s=1 so data can be read in by common method
-if "s" in params:
-    params["s"] = int(params["s"])
+if "s_rk" in params:
+    params["s"] = int(params["s_rk"])
 else:
     params["s"] = 1
 

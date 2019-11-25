@@ -16,34 +16,48 @@ date
 np=4            # Number of processes
 FD=2            # ID of problem to be solved
 min_refine=1    # Minimum spatial refinement
-max_refine=2    # Maximum spatial refinement nx == 2^(2+refine)
+max_refine=7    # Maximum spatial refinement nx == 2^(2+refine)
 pit=0           # Parallel-in-time flag
 dim=2
+rebuild=-1      # Rate at which AMG solver is rebuilt in time-stepping
 
 # Choose one of these space+time pairs...
 ### --- Explicit Runge-Kutta --- ###
-space=1
-RK=111
+#time_type=RK
+# space=1
+# time=111
 #space=2
-#RK=122
+#time=122
 #space=3
-#RK=133
+#time=133
 #space=4
-#RK=144
+#time=144
 
 ### --- Implicit Runge-Kutta --- ###
+#time_type=RK
 #space=1
-#RK=211
+#time=211
 #space=2
-#RK=222
+#time=222
 #space=3
-#RK=233
+#time=233
 #space=4
-#RK=254
+#time=254
+
+### --- BDF --- ###
+#time_type=BDF
+# space=1
+# time=31
+# space=2
+# time=32
+# space=3
+# time=33
+#space=4
+#time=34
 
 # Name of file to be output... "^REFINE^" will be replaced with the actual refinement...
-dir=data
-out=RK"$RK"_U"$space"_d"$dim"_l^REFINE^_FD"$FD"_pit"$pit"
+dir=data/"$time_type"
+out="$time"_U"$space"_d"$dim"_l^REFINE^_FD"$FD"_pit"$pit"
 
 # Run solves at different spatial refinements...
 echo "solving..."
@@ -58,7 +72,7 @@ do
     fi
 
     # Run solver at current spatial refinement
-    mpirun -np $np ./../ST_class/driver -s 3 -t $RK -o $space -l $l -d $dim -FD $FD -pit $pit -p 3 -saveX 1 -out $dir/U_${out/^REFINE^/$l} -tol 1e-10 -gmres 1 -maxit 40
+    mpirun -np $np ./../ST_class/driver -s 3 -t $time -o $space -l $l -d $dim -FD $FD -pit $pit -p 3 -saveX 1 -out $dir/U_${out/^REFINE^/$l} -tol 1e-8 -gmres 1 -maxit 40 -rebuild $rebuild
 
     # Compute errors...
     python compute_errors.py $dir/U_${out/^REFINE^/$l}
