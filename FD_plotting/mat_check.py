@@ -7,7 +7,8 @@ from numpy.linalg import norm
 from scipy.sparse import load_npz
 
 ###--- Make a heat map of the matrix output from HYPRE
-A_hypre_path = "../ST_class/A_FD.mm.00000" # The filename of the matrix
+#A_hypre_path = "../ST_class/A_FD.mm.00000" # The filename of the matrix
+A_hypre_path = "../ST_class/A.00000" # The filename of the matrix
 
 # Get row/col numbers from first line of HYPRE out file.
 with open(A_hypre_path) as f:

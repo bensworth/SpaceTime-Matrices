@@ -116,6 +116,7 @@ private:
     HYPRE_IJVector      m_xij;
     std::vector<HYPRE_ParVector> m_u_multi;     /* Starting values for multistep time-stepping */
     std::vector<HYPRE_IJVector>  m_u_multi_ij;
+    std::vector<double *> m_w_multi;            /* Solution-dependent RHS values needed for building multistep RHS vector */
     AMG_parameters      m_AMG_parameters;
     Solver_parameters   m_solver_parameters;
     bool                m_iterative;            /* Indicating whether an iterative or direct solver is used */
@@ -148,6 +149,7 @@ private:
     void SetBDFTableaux();
     bool SetMultiRKPairing();
     void SetMultistepStartValues();
+    void SetMultistepRHSValues();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);

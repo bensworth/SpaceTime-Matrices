@@ -64,9 +64,12 @@ params["spatialParallel"] = int(params["spatialParallel"])
 
 # If not using RK scheme set s=1 so data can be read in by common method
 if "s_rk" in params:
-    params["s"] = int(params["s_rk"])
+    params["s"]     = int(params["s_rk"])
+    using_multistep = False
 else:
     params["s"] = 1
+    using_multistep   = True
+    params["s_multi"] = int(params["s_multi"])
 
 # Total number of DOFS in space
 if params["space_dim"] == 1:
@@ -82,6 +85,10 @@ pprint.pprint(params)
 #  --- Parallel in time --- #
 #############################
 if (params["pit"] == 1):
+    # If using a multistep method, temporarily reset nt to nt-s_multi to read in data
+    if using_multistep:
+        params["nt"] -= params["s_multi"]
+    
     ### ----------------------------------------------------------------------------------- ###
     ### --- NO SPATIAL PARALLELISM: Work out which processor uT lives on and extract it --- ###
     if not params["spatialParallel"]:
@@ -134,6 +141,11 @@ if (params["pit"] == 1):
             DOFsOnProc = temp.shape[0]
             uT[ind:ind+DOFsOnProc] = temp
             ind += DOFsOnProc
+
+
+    # Reset nt to its real value
+    if using_multistep:
+        params["nt"] += params["s_multi"]
 
 
 ###############################

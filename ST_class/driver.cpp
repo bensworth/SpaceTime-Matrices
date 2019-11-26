@@ -291,6 +291,7 @@ int main(int argc, char *argv[])
         
         // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
         nt = ceil(T / dt);
+        nt = 6;
         //dt = T / (nt - 1);
         
         // Round up nt so that numProcess evenly divides it. Assuming time-only parallelism...
@@ -301,6 +302,8 @@ int main(int argc, char *argv[])
         
         // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
         dt = T / (nt - 1); 
+        
+        std::cout << "dt/dx=" << dt/(2.0 / pow(2.0, refLevels + 2)) << '\n';
         
         /* --- Get SPACETIMEMATRIX object --- */
         std::vector<int> n_px = {};
@@ -331,6 +334,9 @@ int main(int argc, char *argv[])
                 filename = out;
             }
             STmatrix.SaveX(filename);
+            STmatrix.SaveRHS("b");
+            STmatrix.SaveMatrix("A");
+            //STmatrix.SaveRHS(filename);
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
                 int nx = pow(2, refLevels+2);

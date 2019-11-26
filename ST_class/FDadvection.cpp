@@ -39,7 +39,8 @@ double FDadvection::WaveSpeed(double x, double t) {
     if (m_problemID == 1) {
         return 1.0;
     } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        return  cos( PI*(x-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
+        return cos( PI*(x-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
+        return 1.0;
     }  else  {
         return 0.0;
     }
