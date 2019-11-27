@@ -291,14 +291,16 @@ int main(int argc, char *argv[])
         
         // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
         nt = ceil(T / dt);
-        nt = 6;
+        //nt = 6;
         //dt = T / (nt - 1);
         
         // Round up nt so that numProcess evenly divides it. Assuming time-only parallelism...
         // NOTE: this will slightly change T... But actually, enforce this always so that 
         // tests are consistent accross time-stepping and space-time system
         int rem = nt % numProcess;
-        if (rem != 0) nt += (numProcess-rem);
+        if (rem != 0) nt += (numProcess-rem); 
+        
+        nt += 1; // Need to do this for space-time BDF at the moment...
         
         // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
         dt = T / (nt - 1); 

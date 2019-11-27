@@ -149,7 +149,7 @@ private:
     void SetBDFTableaux();
     bool SetMultiRKPairing();
     void SetMultistepStartValues();
-    void SetMultistepRHSValues();
+    void SetMultistepSpaceTimeRHSValues();
     void GetMatrix_ntLE1();
     void GetMatrix_ntGT1();
     void SetBoomerAMGOptions(int printLevel=3, int maxiter=250, double tol=1e-8);
@@ -276,6 +276,8 @@ private:
     void ABTimeSteppingSolve();     /* General purpose Adams--Bashforth solver */
     void AMTimeSteppingSolve();     /* General purpose Adams--Moulton solver */
     void BDFTimeSteppingSolve();    /* General purpose BDF solver */
+    
+    void DestroyHypreMemberVariables();
     
     void GetHypreInitialCondition(HYPRE_ParVector &u0, 
                                   HYPRE_IJVector  &u0ij); 
