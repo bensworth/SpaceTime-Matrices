@@ -300,7 +300,9 @@ int main(int argc, char *argv[])
         int rem = nt % numProcess;
         if (rem != 0) nt += (numProcess-rem); 
         
-        nt += 1; // Need to do this for space-time BDF at the moment...
+        //nt += 1; // Need to do this for space-time BDF at the moment...
+        //nt = 16;
+        //nt = 7;
         
         // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
         dt = T / (nt - 1); 
@@ -336,9 +338,8 @@ int main(int argc, char *argv[])
                 filename = out;
             }
             STmatrix.SaveX(filename);
-            STmatrix.SaveRHS("b");
-            STmatrix.SaveMatrix("A");
-            //STmatrix.SaveRHS(filename);
+            //STmatrix.SaveRHS("b");
+            //STmatrix.SaveMatrix("A");
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
                 int nx = pow(2, refLevels+2);

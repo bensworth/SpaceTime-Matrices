@@ -399,15 +399,17 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 
 
 SpaceTimeMatrix::~SpaceTimeMatrix()
-{    
-    if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
-    if (m_gmres)  HYPRE_ParCSRGMRESDestroy(m_gmres);
-    if (m_pcg)    HYPRE_ParCSRPCGDestroy(m_pcg); 
-    if (m_Aij)    HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
-    if (m_bij)    HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
-    if (m_xij)    HYPRE_IJVectorDestroy(m_xij);
-    if (m_Mij)    HYPRE_IJMatrixDestroy(m_Mij);   
-    if (m_invMij) HYPRE_IJMatrixDestroy(m_invMij);   
+{
+    DestroyHypreMemberVariables();
+        
+    // if (m_solver) HYPRE_BoomerAMGDestroy(m_solver);
+    // if (m_gmres)  HYPRE_ParCSRGMRESDestroy(m_gmres);
+    // if (m_pcg)    HYPRE_ParCSRPCGDestroy(m_pcg); 
+    // if (m_Aij)    HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
+    // if (m_bij)    HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
+    // if (m_xij)    HYPRE_IJVectorDestroy(m_xij);
+    // if (m_Mij)    HYPRE_IJMatrixDestroy(m_Mij);   
+    // if (m_invMij) HYPRE_IJMatrixDestroy(m_invMij);   
     
     // TODO : destroy mass matrix member variables here...
 }
@@ -422,7 +424,6 @@ void SpaceTimeMatrix::Solve() {
         // used to initialize multistep schemes.
         // Construct values to be inserted into RHS of space-time system to initialize a multistep scheme
         if (m_multi) {
-            
             // Only have processes that need starting values actually obtain them
             bool iNeedStartValues = false;
             if (m_useSpatialParallel) {
@@ -438,11 +439,12 @@ void SpaceTimeMatrix::Solve() {
                 std::cout << "P" << m_globRank << ":\tObtained starting values" << '\n';
                 SetMultistepSpaceTimeRHSValues();   // Construct values in space-time RHS vector from starting values
                 std::cout << "P" << m_globRank << ":\tSet RHS values" << '\n';
-                m_solverComm = m_globComm;          // Remaining space-time solve done on global communicator    
                 
                 // Esnure we free any member variables that we've used that may be used in the forthcoming space-time solve
                 DestroyHypreMemberVariables();
                 std::cout << "P" << m_globRank << ":\tDestroyed HYPRE member variables" << '\n';
+                
+                m_solverComm = m_globComm;          // Remaining space-time solve is done on global communicator    
             }
             
             
@@ -454,15 +456,17 @@ void SpaceTimeMatrix::Solve() {
             MPI_Barrier(m_globComm);
         }
         
-        // // Build the space-time matrix
-        // BuildSpaceTimeMatrix(); 
-        // 
-        // // Call appropiate solver
-        // if (m_solver_parameters.use_gmres) {
-        //     SolveGMRES(); 
-        // } else {
-        //     SolveAMG();
-        // }
+        // Build the space-time matrix
+        BuildSpaceTimeMatrix(); 
+        
+        // Call appropiate solver
+        if (m_solver_parameters.use_gmres) {
+            SolveGMRES(); 
+        } else {
+            SolveAMG();
+        }
+        
+        
     
     // sequential time-stepping
     } else {
@@ -481,48 +485,51 @@ TODO :
 void SpaceTimeMatrix::DestroyHypreMemberVariables() 
 {
     if (m_solver) {
-        std::cout << "m_solver = " << m_solver << '\n';
+        std::cout << "0" << '\n';
         HYPRE_BoomerAMGDestroy(m_solver);
         m_solver = NULL;
     }
     if (m_gmres) {
-        std::cout << "m_gmres = " << m_gmres << '\n';
+        std::cout << "1" << '\n';
         HYPRE_ParCSRGMRESDestroy(m_gmres);
         m_gmres = NULL;
     }
     if (m_pcg) {
-        std::cout << "m_pcg = " << m_pcg << '\n';
+        std::cout << "2" << '\n';
         HYPRE_ParCSRPCGDestroy(m_pcg); 
         m_pcg = NULL;
     }   
     if (m_Aij) {
-        std::cout << "m_Aij = " << m_Aij << '\n';
+        std::cout << "3" << '\n';
         HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
         m_Aij = NULL;
     }
     if (m_bij) {
-        std::cout << "m_bij = " << m_bij << '\n';
+        std::cout << "4" << '\n';
         HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
         m_bij = NULL;
     }
     if (m_xij) {
-        std::cout << "m_xij = " << m_xij << '\n';
+        std::cout << "5" << '\n';
         HYPRE_IJVectorDestroy(m_xij);
         m_xij = NULL;
     }
     if (m_Mij) {
-        std::cout << "m_Mij = " << m_Mij << '\n';
+        std::cout << "6" << '\n';
         HYPRE_IJMatrixDestroy(m_Mij);   
         m_Mij = NULL;
     }
     if (m_invMij) { 
-        std::cout << "m_invMij = " << m_invMij << '\n';
+        std::cout << "7" << '\n';
         HYPRE_IJMatrixDestroy(m_invMij);  
         m_invMij = NULL;
     }
     for (int i = 0; i < m_u_multi_ij.size(); i++) {
-        HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
-        m_u_multi_ij[i] = NULL;
+        if (m_u_multi_ij[i]) {
+            std::cout << "8,i = " << i << '\n';
+            HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
+            m_u_multi_ij[i] = NULL;
+        }
     }
 }
 
@@ -635,12 +642,10 @@ void SpaceTimeMatrix::TimeSteppingSolve()
             DIRKTimeSteppingSolve();
         }
         
-    /* Multistep routines: Need to initialize first few s steps using Runge-Kutta 
+    /* Multistep routines: Need to initialize first s steps using Runge-Kutta 
     integration, then integrate up to t_{nt-1} */
     } else if (m_multi) {     
-        
         // Populate member vectors with the s starting values we need
-        std::cout << "Initializing multistep starting values" << '\n';
         SetMultistepStartValues();
         
         /* Call appropiate multstep routine */
@@ -664,6 +669,8 @@ NOTE:
 */
 void SpaceTimeMatrix::SetMultistepStartValues() 
 {
+    if (m_globRank == 0) std::cout << "Initializing starting values for multistep time integration\n";
+    
     // Temporarily store variables while they're reset for use in RK routines
     int timeDisc_temp  = m_timeDisc; 
     int nt_temp        = m_nt;
@@ -920,17 +927,20 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
             if (m_solver_parameters.rebuildRate == 0 || (m_solver_parameters.rebuildRate > 0 && (step % m_solver_parameters.rebuildRate) == 0)) m_rebuildSolver = true; 
         }
         
-        // Point member variables to local variables so linear solver can access them
+        // Point member variables to local variables so appropiate linear solver can access them
         m_A = BDF_matrix;
         m_x = u[tailptr]; 
         m_b = b;
-        
         // Solve linear system and get convergence statistics
         if (m_solver_parameters.use_gmres) {
             SolveGMRES();
         } else {
             SolveAMG();
         }
+        // Reset member variables to NULL
+        m_A = NULL;
+        m_x = NULL;
+        m_b = NULL;
         solve_count += 1;
         avg_iters   += (double) m_num_iters;
         // avg_convergence_rate += ...; // TODO : Not sure how to do
@@ -968,19 +978,25 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     /* ---------------------------------------------------------- */
     for (int i = 0; i < vectors.size(); i++) {
         HYPRE_IJVectorDestroy(vectorsij[i]);
-        vectorsij[i] = NULL;
     }
-    // Remaining clean-up to be handled by deconstructor
-    // The exception is if L and BDF_matrix are not 
-    // the same, since then only DIRK_matrix (the one m_A points to) will be destroyed.
-    if (BDF_matrixij != Lij) {
-        HYPRE_IJMatrixDestroy(Lij);
-        Lij = NULL;
+    
+    if (Lij) HYPRE_IJMatrixDestroy(Lij);
+    if (BDF_matrixij && BDF_matrixij != Lij) HYPRE_IJMatrixDestroy(BDF_matrixij); // BDF_matrix is distinct from L
+
+    // Free all starting values except the one holding the solution at the final time
+    for (int i = 0; i < m_u_multi_ij.size(); i++) {
+        if (m_u_multi_ij[i] && i != headptr) {
+            HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
+            m_u_multi_ij[i] = NULL;
+        }
     }
 
-    // Assign x to head of list so it's more easily accessed.
+    // Point member variable x to final solution
     m_x   = u[headptr];
     m_xij = uij[headptr];
+    // Set corresponding u_multi element to NULL since x now "owns" this block of memory
+    m_u_multi[headptr]    = NULL;
+    m_u_multi_ij[headptr] = NULL;
 }
 
 
@@ -1207,17 +1223,20 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
                 if (m_solver_parameters.rebuildRate == 0 || (m_solver_parameters.rebuildRate > 0 && i == 0 && (step % m_solver_parameters.rebuildRate) == 0)) m_rebuildSolver = true; 
             }
             
-            // Point member variables to local variables so linear solver can access them
+            // Point member variables to local variables so appropiate linear solver can access them
             m_A = DIRK_matrix;
             m_x = k[i]; // Initial guess at solution is value from previous time step
             m_b = b2;
-            
             // Solve linear system and get convergence statistics
             if (m_solver_parameters.use_gmres) {
                 SolveGMRES();
             } else {
                 SolveAMG();
             }
+            // Reset member variables to NULL
+            m_A = NULL;
+            m_x = NULL;
+            m_b = NULL;  
             solve_count += 1;
             avg_iters   += (double) m_num_iters;
             // avg_convergence_rate += ...; // TODO : Not sure how to do
@@ -1258,15 +1277,17 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     /* ---------------------------------------------------------- */
     for (int i = 0; i < vectors.size(); i++) {
         HYPRE_IJVectorDestroy(vectorsij[i]);
-        vectorsij[i] = NULL;
     }
-    // Remaining clean-up to be handled by deconstructor
-    // The exception is if L and DIRK_matrix are not 
-    // the same, since then only DIRK_matrix (the one m_A points to) will be destroyed.
-    if (DIRK_matrixij != Lij) {
-        HYPRE_IJMatrixDestroy(Lij);
-        Lij = NULL;
-    } 
+    
+    if (gij) HYPRE_IJVectorDestroy(gij);
+    if (Lij) HYPRE_IJMatrixDestroy(Lij);
+    if (DIRK_matrixij && DIRK_matrixij != Lij)  HYPRE_IJMatrixDestroy(DIRK_matrixij); // DIRK matrix was distinct from L
+        
+        
+            
+    // Point member variable x to final solution
+    m_x   = u;
+    m_xij = uij;
 }
 
 
@@ -1386,9 +1407,11 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
                 // Point member variables to local variables so mass solver can access them
                 m_x = k[i]; // RHS of linear system is used as the initial guess at the solution
                 m_b = b;
-                
                 // Solve the system!
                 SolveMassSystem(); 
+                // Reset memeber variables to NULL
+                m_x = NULL;
+                m_b = NULL;
                 
                 // Ensure desired tolerance was reached if using iterative solver, otherwise quit
                 if (m_iterative) {
@@ -1434,10 +1457,15 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     /* ---------------------------------------------------------- */
     for (int i = 0; i < vectors.size(); i++) {
         HYPRE_IJVectorDestroy(vectorsij[i]);
-        vectorsij[i] = NULL;
     }
-    // Remaining clean-up to be handled by deconstructor
     
+    if (gij) HYPRE_IJVectorDestroy(gij);
+    if (Lij) HYPRE_IJMatrixDestroy(Lij);
+    
+    
+    // Point member variable x to final solution
+    m_x   = u;
+    m_xij = uij;
 }
 
 
@@ -2876,6 +2904,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     // No longer need the solution initialization information
     for (int i = 0; i < m_w_multi.size(); i++) {
         delete[] m_w_multi[i];
+        m_w_multi[i] = NULL;
     }
 }                                    
     
