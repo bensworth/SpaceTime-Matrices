@@ -3,6 +3,7 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <iostream>
 #include "HYPRE_IJ_mv.h"
 #include "HYPRE_parcsr_ls.h"
 #include "_hypre_parcsr_mv.h"
@@ -346,8 +347,9 @@ public:
     
     void PrintMeshData();
 
-    void SaveMatrix(const char* filename) { HYPRE_IJMatrixPrint (m_Aij, filename); }
-    void SaveRHS(std::string filename) { HYPRE_IJVectorPrint(m_bij, filename.c_str()); }
-    void SaveX(std::string filename) { HYPRE_IJVectorPrint(m_xij, filename.c_str()); }
+    // TODO : Ben, Why the different string formats for A, b, x?
+    void SaveMatrix(const char* filename) { if (m_Aij) HYPRE_IJMatrixPrint(m_Aij, filename); else std::cout << "WARNING: m_Aij == NULL, cannot be printed!\n"; }
+    void SaveRHS(std::string filename)    { if (m_bij) HYPRE_IJVectorPrint(m_bij, filename.c_str()); else std::cout << "WARNING: m_bij == NULL, cannot be printed!\n";  }
+    void SaveX(std::string filename)      { if (m_xij) HYPRE_IJVectorPrint(m_xij, filename.c_str()); else std::cout << "WARNING: m_xij == NULL, cannot be printed!\n";  }
     void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
 };
