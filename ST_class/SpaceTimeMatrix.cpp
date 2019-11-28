@@ -243,7 +243,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
     
     // MULTISTEP: Ensure number of time steps is at least number of starting values 
     // We do nt-1 steps from t=0 (integrate to u[nt-1]), and require s starting values
-    if (m_multi && m_nt < m_s_multi) {
+    if (m_multi && m_nt <= m_s_multi) {
         std::cout << "WARNING: Cannot integrate'" << m_nt-1 << "' steps from t=0 with a multistep scheme requiring '" << m_s_multi << "' starting values\n";
         MPI_Finalize();
         exit(1);
@@ -308,7 +308,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
         /* ---------------------------- */
         } else if (m_BDF) {
             /* ------ Temporal + spatial parallelism ------ */
-            if (m_numProc > m_nt-1-m_s_multi) {
+            if (m_numProc > m_nt-m_s_multi) {
                 std::cout << "WARNING: SPACE-TIME PARALLELISM NOT implemented FOR BDF METHODS (YET)" << '\n';
                 MPI_Finalize();
                 exit(1);
@@ -342,9 +342,9 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 }
                 
                 m_useSpatialParallel = false;
-                if ( (m_nt-m_s_multi) % m_numProc  != 0) {
+                if ( (m_nt-m_s_multi) % m_numProc != 0) {
                     if (m_globRank == 0) {
-                        std::cout << "Error: number of time points (" << m_nt << ") - number of starting values (" << m_s_butcher << ") == " << m_nt-m_s_multi << " does not divide number of processes " << m_numProc << "\n";
+                        std::cout << "Error: total DOFs (number of time points (" << m_nt << ") - number of starting values (" << m_s_butcher << ") == " << m_nt-m_s_multi << ") does not divide number of processes " << m_numProc << "\n";
                     }
                     MPI_Finalize();
                     exit(1);
@@ -352,7 +352,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 m_nDOFPerProc = (m_nt-m_s_multi) / m_numProc; // Number of temporal DOFs per proc
                 m_ntPerProc = m_nt / m_numProc; //  TOOD: delete... This variable is for the old implementation...     
                 
-                /* Setup spatial communicator to be accesses by sequential time-stepping routines 
+                /* Setup spatial communicator to be accessed by sequential time-stepping routines 
                 used to generate starting values can access it. Since there is no spatial parallelism, the 
                 spatial communicator has only a single process on it. Need to do this because HYPRE matrices
                 are distributed on spatial communicator in those routines */
@@ -436,14 +436,10 @@ void SpaceTimeMatrix::Solve() {
             if (iNeedStartValues) {                
                 m_solverComm = m_spatialComm;       // Solves during sequential time-stepping must be done on spatial communicator
                 SetMultistepStartValues();          // Get required starting values
-                std::cout << "P" << m_globRank << ":\tObtained starting values" << '\n';
                 SetMultistepSpaceTimeRHSValues();   // Construct values in space-time RHS vector from starting values
-                std::cout << "P" << m_globRank << ":\tSet RHS values" << '\n';
                 
                 // Esnure we free any member variables that we've used that may be used in the forthcoming space-time solve
                 DestroyHypreMemberVariables();
-                std::cout << "P" << m_globRank << ":\tDestroyed HYPRE member variables" << '\n';
-                
                 m_solverComm = m_globComm;          // Remaining space-time solve is done on global communicator    
             }
             
@@ -476,57 +472,44 @@ void SpaceTimeMatrix::Solve() {
 
 
 /* Destroy all HYPRE member variables; this is necessary if switching 
-    from time-stepping to space-time within an instance of the code
-
-TODO : 
-    -Make place call to this function in deconstructor?   
-    -Does HYPRE explicitly set free'd pointers to NULL? Doesn't look like it!
+    from time-stepping to space-time within an instance of the code.
  */
 void SpaceTimeMatrix::DestroyHypreMemberVariables() 
 {
     if (m_solver) {
-        std::cout << "0" << '\n';
         HYPRE_BoomerAMGDestroy(m_solver);
         m_solver = NULL;
     }
     if (m_gmres) {
-        std::cout << "1" << '\n';
         HYPRE_ParCSRGMRESDestroy(m_gmres);
         m_gmres = NULL;
     }
     if (m_pcg) {
-        std::cout << "2" << '\n';
         HYPRE_ParCSRPCGDestroy(m_pcg); 
         m_pcg = NULL;
     }   
     if (m_Aij) {
-        std::cout << "3" << '\n';
         HYPRE_IJMatrixDestroy(m_Aij);   // This destroys parCSR matrix too
         m_Aij = NULL;
     }
     if (m_bij) {
-        std::cout << "4" << '\n';
         HYPRE_IJVectorDestroy(m_bij);   // This destroys parVector too
         m_bij = NULL;
     }
     if (m_xij) {
-        std::cout << "5" << '\n';
         HYPRE_IJVectorDestroy(m_xij);
         m_xij = NULL;
     }
     if (m_Mij) {
-        std::cout << "6" << '\n';
         HYPRE_IJMatrixDestroy(m_Mij);   
         m_Mij = NULL;
     }
     if (m_invMij) { 
-        std::cout << "7" << '\n';
         HYPRE_IJMatrixDestroy(m_invMij);  
         m_invMij = NULL;
     }
     for (int i = 0; i < m_u_multi_ij.size(); i++) {
         if (m_u_multi_ij[i]) {
-            std::cout << "8,i = " << i << '\n';
             HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
             m_u_multi_ij[i] = NULL;
         }
@@ -554,12 +537,12 @@ void SpaceTimeMatrix::SetMultistepSpaceTimeRHSValues()
         
         // Compute vector that's multiplied by the mass matrix
         for (int n = 0; n <= m_s_multi - 1; n++) {            
-            // This linear combination overwrites the start value it uses first.
+            // This linear combination overwrites the start value it uses first, v[n]
             for (int j = m_s_multi; j >= n+1; j--) {
                 if (j == m_s_multi) {
-                    HYPRE_ParVectorScale(-m_a_multi[m_s_multi-j], m_u_multi[n]); // u[n] <- -a[0] * u[n]
+                    HYPRE_ParVectorScale(-m_a_multi[m_s_multi-j], m_u_multi[n]); // v[n] <- -a[0] * v[n]
                 } else {
-                    HYPRE_ParVectorAxpy(-m_a_multi[m_s_multi-j], m_u_multi[j-1], m_u_multi[n]); // u[n] <- u[n] + a[s-j] * u[j-1]
+                    HYPRE_ParVectorAxpy(-m_a_multi[m_s_multi-j], m_u_multi[n+m_s_multi-j], m_u_multi[n]); // v[n] <- v[n] + a[s-j] * v[j-1]
                 }
             }    
         }
@@ -576,6 +559,7 @@ void SpaceTimeMatrix::SetMultistepSpaceTimeRHSValues()
             //  Actually that's not true... We might have only setup initial condition, or  could have  been free'd by the time-stepping routine itself...
             // TODO: Use b if it exists, if it does not, then create and initialize a new HYPRE vector, 
             // whose  structure can mimic that of any vector in m_u_multi
+            // Actually, b probably does not exist here at all since it's free'd at the completion of the time-stepping...  
             if (!m_bij) {
                 std::cout << "WARNING: I require that m_x be initialized here!" << '\n';
                 MPI_Finalize();
@@ -614,7 +598,6 @@ void SpaceTimeMatrix::SetMultistepSpaceTimeRHSValues()
         HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
         m_u_multi_ij[i] = NULL;
     }
-    
     m_u_multi    = {};
     m_u_multi_ij = {};
 }
@@ -664,16 +647,15 @@ void SpaceTimeMatrix::TimeSteppingSolve()
 required to integrate with a multistep scheme 
 
 NOTE:
-    -This also adjusts the starting time, m_t0, so that it has the correct value
-        when accessed by the mutistep schemes.
+    -Resets the starting time m_t0 to 0, so multstep schemes must automatically start from the right time.
 */
 void SpaceTimeMatrix::SetMultistepStartValues() 
 {
     if (m_globRank == 0) std::cout << "Initializing starting values for multistep time integration\n";
     
     // Temporarily store variables while they're reset for use in RK routines
-    int timeDisc_temp  = m_timeDisc; 
-    int nt_temp        = m_nt;
+    int  timeDisc_temp = m_timeDisc; 
+    int  nt_temp       = m_nt;
     bool implicit_temp = m_implicit;
     
     // Get initial condition for time-integration 
@@ -723,7 +705,6 @@ void SpaceTimeMatrix::SetMultistepStartValues()
         m_x   = NULL;
         m_xij = NULL;
         
-        
         // Clear Runge-Kutta data structures so there's no possible confusion in future
         m_s_butcher = -1;
         m_c_butcher = {};
@@ -732,6 +713,7 @@ void SpaceTimeMatrix::SetMultistepStartValues()
     }
     
     // Reset variables to their original values
+    m_t0       = 0.0;
     m_timeDisc = timeDisc_temp;
     m_nt       = nt_temp;
     m_implicit = implicit_temp;
@@ -762,7 +744,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
     /* ---------------------------------------------------------------------- */
-    double t = m_t0;        // Initial time to integrate from
+    double t = (m_s_multi-1) * m_dt; // Initial time to integrate from. The current solution is known at t_{s-1}
     
     // Check that solution vector has been initialized!
     if (m_u_multi_ij.empty()) {
@@ -770,7 +752,6 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         MPI_Finalize();
         exit(1);
     }
-    
     
     int headptr = m_s_multi - 1;    // Pointer to solution at most recent time, u(t_n)
     int tailptr = 0;                // Pointer to solution at last required time, u(t_{n+1-s})
@@ -813,11 +794,11 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     int      onProcSize;
 
     // For monitoring convergence of linear solver
-    int    num_iters;
+    int    num_iters   = 0;
+    int    solve_count = 0; // Number of linear solves
     double rel_res_norm;
-    double avg_iters = 0;
+    double avg_iters   = 0;
     double avg_convergence_rate;
-
 
     // Is it necessary to build spatial discretization matrix/BDF matrix more than once?
     bool rebuildMatrix = m_L_isTimedependent;
@@ -825,24 +806,25 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
     /* ------------------------------------------------------------ */
-    // Take nt-1 steps
-    int solve_count = 0; // Number of linear solves
-    int step0 = m_s_multi - 1;
-    int step = step0;
-    for (step = step0; step < m_nt-1; step++) {
+    int step = 0; // Counter for how many time steps we take
+        
+    // Advance the solution from its known values at the current time, tInd*m_dt, to new time, (tInd+1)*dt.
+    // For a multistep scheme, the solution is initially known at (s-1)*dt (and the s-1 times before it)
+    // Solve up to time t == (m_nt-1)*dt
+    for (int tInd = m_s_multi-1; tInd < m_nt - 1; tInd++) {
         /* -------------- Build RHS vector, b, in linear system (M+b_s*dt*L)*u[n+1]=b[n+1] -------------- */
-        if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
-            std::cout << "Time step " << step+1 << "/" << m_nt-1 << "\n";
+        if (m_solver_parameters.printLevel > 0 && m_spatialRank == 0) {
+            std::cout << "\nSolving for time level " << tInd+1 << " of " << m_nt-1 << "\n"; 
             std::cout << "-----------------------------------------\n\n";
         }
         
         // Compute spatial discretization at t + dt
         // Solution-independent term
-        if (m_g_isTimedependent || step == step0) {
+        if (m_g_isTimedependent || step == 0) {
             GetHypreSpatialDiscretizationG(g, gij, t + m_dt);
         }
         // Solution-dependent term
-        if (rebuildMatrix || step == step0) {
+        if (rebuildMatrix || step == 0) {
             GetHypreSpatialDiscretizationL(L, Lij, t + m_dt);
         } 
         
@@ -858,7 +840,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         // Multiply w by mass matrix and add g. Note for BDF schemes, m_b_multi stores only b_s!
         if (m_M_exists)  {
             // Assemble as HYPRE matrix to compute MATVECS  
-            if (step == step0) {
+            if (step == 0) {
                 int ilower, iupper, jdummy1, jdummy2;
                 HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
                 SetHypreMassMatrix(ilower, iupper);
@@ -878,7 +860,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         /* -------------- Solve linear system, (M+b_s*dt*L)*u[n+1]=b -------------- */
         // Get components of mass matrix only after spatial discretization has been assembled for the first time
         // Mass matrix is NOT time dependent: Only needs to be assembled once
-        if (step == step0) {
+        if (step == 0) {
             // Get rows this process owns of M assuming rows of M and L are partitioned the same in memory
             int jdummy1, jdummy2;
             HYPRE_IJMatrixGetLocalRange(Lij, &ilower, &iupper, &jdummy1, &jdummy2);
@@ -902,7 +884,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         HYPRE_ParVectorScale(temp, b); // b <- b/(dt*b_s)
         
         // Rescale mass matrix data by 1/dt*b_s; only need to do this once
-        if (step == m_s_multi - 1) {
+        if (step == 0) {
             for (int dataInd = 0; dataInd < M_rowptr[onProcSize]; dataInd++) {
                 M_scaled_data[dataInd] = temp * M_data[dataInd]; // M <- M / (dt*b_s)
             }
@@ -912,9 +894,10 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         // Build BDF matrix once only if L time independent
         if (!rebuildMatrix) {
             // Build BDF matrix on first iteration only
-            if (step == step0) { 
+            if (step == 0) { 
                 GetHypreSpatialDiscretizationL(BDF_matrix, BDF_matrixij, t + m_dt);
                 HYPRE_IJMatrixAddToValues(BDF_matrixij, onProcSize, M_cols_per_row, M_rows, M_colinds, M_scaled_data);            
+                m_rebuildSolver = true; // Ensure solver rebuilt on first iteration (may not be depending on how initial values were obtained)
             }
         // Reuse/update L since it's rebuilt at next iteration, BDF_matrix <- L <- M + b_s*dt*L    
         } else {
@@ -954,7 +937,8 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
             exit(1);
         }
 
-        t += m_dt; // Increment time
+        t    += m_dt; // Increment time
+        step += 1;    // Increment step counter
         
         // Update tailptr and headptr for next iteration
         headptr = tailptr;
@@ -963,7 +947,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
 
 
     // Print statistics about average iteration counts and convergence factor across whole time interval
-    if ((m_solver_parameters.printLevel > 0) && (m_spatialRank == 0)) {
+    if (step > 0 && m_solver_parameters.printLevel > 0 && m_spatialRank == 0) {
         std::cout << "=============================================\n";
         std::cout << "Summary of linear solves during time stepping\n";
         std::cout << "---------------------------------------------\n";
@@ -1005,7 +989,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
 with underlying multistep scheme 
 
 NOTE:
-    -If we do not need to do RK integration (as when doing 1st-order integration then return false)
+    -If we do not need to do RK integration (as when doing 1st-order integration) then return false
 */
 bool SpaceTimeMatrix::SetMultiRKPairing() 
 {
@@ -2669,7 +2653,7 @@ void SpaceTimeMatrix::SetPCGOptions() {
 }
 
 
-/* Solve the linear system m_A*m_x = m_b where m_A is the mass matrix 
+/* Solve the linear system M*m_x = m_b where M is the mass matrix 
 
 Options:
     1. M not lumped, and don't scale by block inverse: Solve iteratively with CG
@@ -2740,7 +2724,14 @@ void SpaceTimeMatrix::SolveMassSystem()
  */
 
 
-/* Arbitrary component(s) of s-step BDF block(s). */
+
+/* Gets block row (or multiple if there are > 1 DOFs per process) of s-step BDF 
+    space-time equations. No spatial parallelism.
+
+NOTEs: 
+    -m_t0 is assumed to be 0, and so the spatial discretization is evaluated at
+        time t0 + (n+s)*dt == (n+s)*dt.
+*/
 void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr, 
                                         int    * &colinds, 
                                         double * &data, 
@@ -2748,102 +2739,97 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
                                         double * &U, 
                                         int      &onProcSize)
 {
-    int globalInd0 = m_globRank * m_nDOFPerProc;        // Global index of first variable I own
-    int globalInd1 = globalInd0 + m_nDOFPerProc - 1;    // Global index of last variable I own
+    int globalInd0 = m_globRank * m_nDOFPerProc;    // Index of first DOF on process
+    int globalInd1 = globalInd0 + m_nDOFPerProc - 1;// Index of last DOF on process
     
-    // Get spatial discretization at time required by first 1st DOF on process
+    /* --- Get spatial discretization at time required by 1st DOF on process --- */
+    int      spatialDOFs;    
+    int      L_nnz;
     int    * L_rowptr;
     int    * L_colinds;
     double * L_data;
     double * B0;
     double * U0;
-    int spatialDOFs;    
-    getSpatialDiscretization(L_rowptr, L_colinds, L_data, B0, U0, spatialDOFs, m_t0 + (globalInd0+1)*m_dt, m_bsize);
-    int nnzL = L_rowptr[spatialDOFs];   
+    getSpatialDiscretization(L_rowptr, L_colinds, L_data, B0, U0, spatialDOFs, m_t0 + (globalInd0+m_s_multi)*m_dt, m_bsize);
+    L_nnz = L_rowptr[spatialDOFs];   
     
-    // Get mass matrix
+    /* --- Get mass matrix ---*/
+    int      M_nnz;
     int    * M_rowptr;
     int    * M_colinds;
     double * M_data;
-    
-    // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
-    if (!m_M_exists) setIdentityMassLocalRange(0, spatialDOFs-1); // Entire spatial discretization fits on process
-    
+    // Set range of identity mass matix to assemble if needed (all fits on process)
+    if (!m_M_exists) setIdentityMassLocalRange(0, spatialDOFs-1); 
     getMassMatrix(M_rowptr, M_colinds, M_data);
-    int nnzM = M_rowptr[spatialDOFs];
+    M_nnz = M_rowptr[spatialDOFs];
 
-    /* ------ Get total NNZ on this processor. ------ */
-    //  -Assumes NNZ of spatial discretization does not change with time
-    //  -Doesn't assume sparsity of M and L overlap: This nnz count is an upperbound.
-    int procNnz = 0;
+    /* --- Get total NNZ estimate on process --- */
+    //  -Assume NNZ of L does not change with time
+    //  -Don't assume sparsity of M and L overlap: Estimate will be an upperbound.
+    int onProcNnz = 0;
     for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
         // Coupling to myself
-        procNnz += nnzM;
-        procNnz += nnzL;
+        onProcNnz += M_nnz;
+        onProcNnz += L_nnz;
         
-        // Coupling to solutions at previous times
+        // Coupling to DOFs at s previous times
         if (globalInd > m_s_multi - 1) {
-            procNnz += m_s_multi * nnzM;
-        } else {
-            procNnz += globalInd * nnzM;
+            onProcNnz += m_s_multi * M_nnz;
+        } else { // Or n times if n < s
+            onProcNnz += globalInd * M_nnz;
         }
     }
     
-    onProcSize = m_nDOFPerProc * spatialDOFs; // Number of rows I own
+    onProcSize = m_nDOFPerProc * spatialDOFs; // Number of rows on process
     rowptr     = new int[onProcSize + 1];
-    colinds    = new int[procNnz];
-    data       = new double[procNnz];
+    rowptr[0]  = 0; 
+    colinds    = new int[onProcNnz];
+    data       = new double[onProcNnz];
     B          = new double[onProcSize];
     U          = new double[onProcSize];
-    rowptr[0]  = 0; 
     
-    int dataInd         = 0;
-    int colOffset       = 0;    // Global index of first column for furthest DOF that we couple back to
-    double temp         = 0.0;  // Temporary constant 
-    int rowOffset       = 0;    // Offset for accessing rowptr array for each DOF on proc
+    int dataInd      = 0;
+    int colOffset    = 0;  // Global index of first column for DOF that we're coupling to
+    int rowptrOffset = 0;  // Offset for accessing rowptr array for each DOF on proc
+    double temp      = 0.0;
     
     
-    /* ------------------------------------------------------------------------------------------------- */
-    /* ------ Loop over all DOFs on this processor building their block rows in space-time matrix ------ */
-    /* ------------------------------------------------------------------------------------------------- */
+    /* ----------------------------------------------------- */
+    /* ------ Build block row for all DOFs on process ------ */
+    /* ----------------------------------------------------- */
     for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
-    
         
-        std::cout << "globalInd = " <<  globalInd << '\n';
-    
         // Rebuild spatial discretization if it's time dependent
-        if ((globalInd > globalInd0) && m_isTimeDependent) {
+        if (globalInd > globalInd0 && m_isTimeDependent) {
             delete[] L_rowptr;
             delete[] L_colinds;
             delete[] L_data;
             delete[] U0;
             delete[] B0;
-            getSpatialDiscretization(L_rowptr, L_colinds, L_data, B0, U0, spatialDOFs, m_t0 + (globalInd+1)*m_dt, m_bsize);
+            getSpatialDiscretization(L_rowptr, L_colinds, L_data, B0, U0, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt, m_bsize);
         }
     
         std::map<int, double>::iterator it;
     
-        // Loop over each row in spatial discretization, working from left-most column/variables to right-most
+        // Loop over each row in spatial discretization, working from earliest DOFs to the current one
         for (int row = 0; row < spatialDOFs; row++) {
-            B[rowOffset + row] = m_dt * m_b_multi[0] * B0[row]; // PDE source term. NOTE: Only b_s is stored for BDF schemes 
-            U[rowOffset + row] = U0[row]; // Initial guess at solution
+            B[rowptrOffset + row] = m_dt*m_b_multi[0]*B0[row]; // PDE source term. NOTE: Only b_s is stored for BDF schemes 
+            U[rowptrOffset + row] = U0[row];                   // Initial guess at solution
         
-            // Number of solutions I couple to at previous times
+            // Number of previous DOFs current DOF couples to
             int s_effective = m_s_multi;
             
             // First s DOFs only couple to the n times before them rather than all s
             if (globalInd <= m_s_multi - 1) {
                 s_effective = globalInd;
-                
                 // Add precomputed w[n] vector holding all necessary starting-value information
-                B[rowOffset + row] += m_w_multi[globalInd][row];
+                B[rowptrOffset + row] += m_w_multi[globalInd][row];
             }
             
-            // Global index of furthest DOFs I couple back to
+            // Global index of furthest DOF current DOF couples back to
             colOffset = (globalInd - s_effective) * spatialDOFs;
             
-            
-            /* ------ Off-block-diagonal component ------ */
+            /* ------ Off-block-diagonal component that reaches back s_effective DOFs with mass matrix couplings ------ */
             for (int j = s_effective; j >= 1; j--)  {
                 // Get mass-matrix data
                 for (int p = M_rowptr[row]; p < M_rowptr[row+1]; p++) {                
@@ -2853,7 +2839,6 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
                 }
                 colOffset += spatialDOFs;
             }
-        
         
             /* ------ Block-diagonal component ------ */
             std::map<int, double> entries; 
@@ -2879,16 +2864,17 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
                 dataInd         += 1;
             }
 
-            // Move to next row for current DOF
-            rowptr[rowOffset + row+1] = dataInd;
+            // Move to next row of spatial discretization for current DOF
+            rowptr[rowptrOffset + row+1] = dataInd;
         }
-        rowOffset += spatialDOFs;
+        
+        // Finished assembling component for current DOF, move to next DOF on process
+        rowptrOffset += spatialDOFs;
     }
-    // Finished assembling component of global space-time matrix
     
     // Check that sufficient data was allocated
-    if (dataInd > procNnz) {
-        std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
+    if (dataInd > onProcNnz) {
+        std::cout << "WARNING: Space-time BDF matrix has more nonzeros than allocated.\n";
     }
     
     // Clean up.
@@ -2901,7 +2887,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     delete[] B0;
     delete[] U0;
     
-    // No longer need the solution initialization information
+    // Information about initializing space-time RHS vector no longer needed.
     for (int i = 0; i < m_w_multi.size(); i++) {
         delete[] m_w_multi[i];
         m_w_multi[i] = NULL;

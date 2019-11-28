@@ -227,6 +227,9 @@ int main(int argc, char *argv[])
     /* ------ Finite-difference discretizations of advection ------ */
     /* ------------------------------------------------------------ */
     else if (spatialDisc == 3) {
+        bool usingRK        = false;
+        bool usingMultistep = false;
+        int  smulti         = 0;
         
         double CFL_fraction;
         double CFLlim;
@@ -269,6 +272,9 @@ int main(int argc, char *argv[])
         } else if  (timeDisc >= 30 && timeDisc < 40) {
             CFLlim = 1.0;
             CFL_fraction = 1.0; // Use a CFL number of ...
+            
+            usingMultistep = true;
+            smulti = timeDisc % 10;
         }
             
         
@@ -294,20 +300,19 @@ int main(int argc, char *argv[])
         //nt = 6;
         //dt = T / (nt - 1);
         
-        // Round up nt so that numProcess evenly divides it. Assuming time-only parallelism...
+        // Round up nt so that numProcess evenly divides number of unknowns. Assuming time-only parallelism...
         // NOTE: this will slightly change T... But actually, enforce this always so that 
         // tests are consistent accross time-stepping and space-time system
-        int rem = nt % numProcess;
-        if (rem != 0) nt += (numProcess-rem); 
-        
-        //nt += 1; // Need to do this for space-time BDF at the moment...
-        //nt = 16;
-        //nt = 7;
+        if (usingRK) {
+            int rem = nt % numProcess; // There are nt unknowns
+            if (rem != 0) nt += (numProcess-rem); 
+        } else if (usingMultistep) {
+            int rem = (nt-smulti) % numProcess; // There are nt-s unknowns
+            if (rem != 0) nt += (numProcess-rem); 
+        }
         
         // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
         dt = T / (nt - 1); 
-        
-        std::cout << "dt/dx=" << dt/(2.0 / pow(2.0, refLevels + 2)) << '\n';
         
         /* --- Get SPACETIMEMATRIX object --- */
         std::vector<int> n_px = {};
@@ -327,6 +332,8 @@ int main(int argc, char *argv[])
         // Set parameters
         STmatrix.SetSolverParameters(solver);
         STmatrix.SetAIRHyperbolic();
+        //STmatrix.SetAIR();
+        //STmatrix.SetAMG();
         // Solve PDE
         STmatrix.Solve();
                 
