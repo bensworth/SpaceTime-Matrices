@@ -80,6 +80,20 @@ int main(int argc, char *argv[])
     Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, 
                                     AMGiters, precon_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass)};
 
+
+
+    
+    // double distance_R;
+    // std::string prerelax;
+    // std::string postrelax;
+    // int interp_type;
+    // int relax_type;
+    // int coarsen_type;
+    // double strength_tolC;
+    // double strength_tolR;
+    // double filter_tolR;
+    // double filter_tolA;
+    // int cycle_type;
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
     AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
     const char* temp_prerelax = "A";
@@ -271,7 +285,7 @@ int main(int argc, char *argv[])
         // BDF (implicit)
         } else if  (timeDisc >= 30 && timeDisc < 40) {
             CFLlim = 1.0;
-            CFL_fraction = 1.0; // Use a CFL number of ...
+            CFL_fraction = 4.0; // Use a CFL number of ...
             
             usingMultistep = true;
             smulti = timeDisc % 10;
@@ -304,11 +318,13 @@ int main(int argc, char *argv[])
         // NOTE: this will slightly change T... But actually, enforce this always so that 
         // tests are consistent accross time-stepping and space-time system
         if (usingRK) {
-            int rem = nt % numProcess; // There are nt unknowns
+            int rem = nt % numProcess; // There are s*nt DOFs for integer s
             if (rem != 0) nt += (numProcess-rem); 
         } else if (usingMultistep) {
             int rem = (nt-smulti) % numProcess; // There are nt-s unknowns
             if (rem != 0) nt += (numProcess-rem); 
+            
+            nt = 10;
         }
         
         // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
@@ -331,9 +347,13 @@ int main(int argc, char *argv[])
         
         // Set parameters
         STmatrix.SetSolverParameters(solver);
-        STmatrix.SetAIRHyperbolic();
-        //STmatrix.SetAIR();
+        
+        //STmatrix.SetAMGParameters(AMG);
+        
+        //STmatrix.SetAIRHyperbolic();
+        STmatrix.SetAIR();
         //STmatrix.SetAMG();
+        
         // Solve PDE
         STmatrix.Solve();
                 

@@ -277,7 +277,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                  
                 // Set up communication group for spatial discretizations.
                 m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
-                m_DOFInd = m_globRank / m_Np_x;
+                m_DOFInd = m_globRank / m_Np_x; // Temporal DOF current process owns
                 MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
                 MPI_Comm_rank(m_spatialComm, &m_spatialRank);
                 MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
@@ -309,30 +309,27 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
         } else if (m_BDF) {
             /* ------ Temporal + spatial parallelism ------ */
             if (m_numProc > m_nt-m_s_multi) {
-                std::cout << "WARNING: SPACE-TIME PARALLELISM NOT implemented FOR BDF METHODS (YET)" << '\n';
-                MPI_Finalize();
-                exit(1);
+                if (m_globRank == 0) std::cout << "Space-time system: Spatial + temporal parallelism!\n";      
                 
-                // if (m_globRank == 0) std::cout << "Space-time system: Spatial + temporal parallelism!\n";
-                // 
-                // m_useSpatialParallel = true;
-                // if (m_numProc % (m_nt-1-m_s_multi) != 0) {
-                //     if (m_globRank == 0) std::cout << "Error: number of processes " << m_numProc << " does not divide number of time points (" << m_nt-1 << ") - number of starting values (" << m_s_multi << ") == " << m_nt-1-m_s_multi << "\n";
-                //     MPI_Finalize();
-                //     exit(1);
-                // }
-                // else {
-                //     m_spatialCommSize = m_numProc / (m_nt-1-m_s_multi);
-                //     m_Np_x = m_spatialCommSize; // TODO : remove. 
-                // }
-                // 
-                // // Set up communication group for spatial discretizations.
-                // m_timeInd = m_globRank / m_Np_x; // TODO. Delete this...
-                // m_DOFInd = m_globRank / m_Np_x;
-                // MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
-                // MPI_Comm_rank(m_spatialComm, &m_spatialRank);
-                // MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
+                m_useSpatialParallel = true;
+                
+                // Ensure DOFs can be evenly split among processors 
+                if (m_numProc % (m_nt-m_s_multi) != 0) {
+                    if (m_globRank == 0) std::cout << "Error: total procs (" << m_numProc << ") does not evenly divide total number of DOFs (number of time points (" << m_nt << ") - number of starting values (" << m_s_multi << ") == " << m_nt-m_s_multi << ") \n";
+                    MPI_Finalize();
+                    exit(1);
+                }
+                else {
+                    m_spatialCommSize = m_numProc / (m_nt - m_s_multi);
+                }
+                 
+                // Set up communication group for spatial discretizations.
+                m_DOFInd = m_globRank / m_spatialCommSize; // Temporal DOF current process owns
+                MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
+                MPI_Comm_rank(m_spatialComm, &m_spatialRank);
+                MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
             }
+            
             
             /* ------ Temporal parallelism only ------ */
             else {
@@ -344,7 +341,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 m_useSpatialParallel = false;
                 if ( (m_nt-m_s_multi) % m_numProc != 0) {
                     if (m_globRank == 0) {
-                        std::cout << "Error: total DOFs (number of time points (" << m_nt << ") - number of starting values (" << m_s_butcher << ") == " << m_nt-m_s_multi << ") does not divide number of processes " << m_numProc << "\n";
+                        std::cout << "Error: total DOFs (number of time points (" << m_nt << ") - number of starting values (" << m_s_multi << ") == " << m_nt-m_s_multi << ") does not divide number of processes " << m_numProc << "\n";
                     }
                     MPI_Finalize();
                     exit(1);
@@ -427,7 +424,7 @@ void SpaceTimeMatrix::Solve() {
             // Only have processes that need starting values actually obtain them
             bool iNeedStartValues = false;
             if (m_useSpatialParallel) {
-                // TODO
+                if (m_DOFInd < m_s_multi) iNeedStartValues = true; // First s DOFs need starting values
             } else {
                 int firstDOFIOwn = m_globRank * m_nDOFPerProc; // First temporal DOF on process
                 if (firstDOFIOwn < m_s_multi) iNeedStartValues = true; // First s DOFs need starting values
@@ -2306,54 +2303,54 @@ void SpaceTimeMatrix::SetSolverParametersDefaults() {
 /* Set classical AMG parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAMG()
 {
-   m_AMG_parameters.prerelax = "AA";
-   m_AMG_parameters.postrelax = "AA";
-   m_AMG_parameters.relax_type = 3;
-   m_AMG_parameters.interp_type = 6;
-   m_AMG_parameters.strength_tolC = 0.1;
-   m_AMG_parameters.coarsen_type = 6;
-   m_AMG_parameters.distance_R = -1;
-   m_AMG_parameters.strength_tolR = -1;
-   m_AMG_parameters.filter_tolA = 0.0;
-   m_AMG_parameters.filter_tolR = 0.0;
-   m_AMG_parameters.cycle_type = 1;
-   m_rebuildSolver = true;
+    m_AMG_parameters.filter_tolR = 0.0;
+    m_AMG_parameters.prerelax = "AA";
+    m_AMG_parameters.postrelax = "AA";
+    m_AMG_parameters.relax_type = 3;
+    m_AMG_parameters.interp_type = 6;
+    m_AMG_parameters.strength_tolC = 0.1;
+    m_AMG_parameters.coarsen_type = 6;
+    m_AMG_parameters.distance_R = -1;
+    m_AMG_parameters.strength_tolR = -1;
+    m_AMG_parameters.filter_tolA = 0.0;
+    m_AMG_parameters.cycle_type = 1;
+    m_rebuildSolver = true;
 }
 
 
 /* Set standard AIR parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIR()
 {
-   m_AMG_parameters.prerelax = "A";
-   m_AMG_parameters.postrelax = "FFC";
-   m_AMG_parameters.relax_type = 3;
-   m_AMG_parameters.interp_type = 100;
-   m_AMG_parameters.strength_tolC = 0.005;
-   m_AMG_parameters.coarsen_type = 6;
-   m_AMG_parameters.distance_R = 1.5;
-   m_AMG_parameters.strength_tolR = 0.005;
-   m_AMG_parameters.filter_tolA = 0.0;
-   m_AMG_parameters.filter_tolR = 0.0;
-   m_AMG_parameters.cycle_type = 1;
-   m_rebuildSolver = true;
+    m_AMG_parameters.distance_R = 1.5;
+    m_AMG_parameters.prerelax = "A";
+    m_AMG_parameters.postrelax = "FFC";
+    m_AMG_parameters.relax_type = 3;
+    m_AMG_parameters.interp_type = 100;
+    m_AMG_parameters.strength_tolC = 0.005;
+    m_AMG_parameters.coarsen_type = 6;
+    m_AMG_parameters.strength_tolR = 0.005;
+    m_AMG_parameters.filter_tolR = 0.0;
+    m_AMG_parameters.filter_tolA = 0.0;
+    m_AMG_parameters.cycle_type = 1;
+    m_rebuildSolver = true;
 }
 
 
 /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIRHyperbolic()
 {
-   m_AMG_parameters.prerelax = "A";
-   m_AMG_parameters.postrelax = "F";
-   m_AMG_parameters.relax_type = 10;
-   m_AMG_parameters.interp_type = 100;
-   m_AMG_parameters.strength_tolC = 0.005;
-   m_AMG_parameters.coarsen_type = 6;
-   m_AMG_parameters.distance_R = 1.5;
-   m_AMG_parameters.strength_tolR = 0.005;
-   m_AMG_parameters.filter_tolA = 0.0001;
-   m_AMG_parameters.filter_tolR = 0.0;
-   m_AMG_parameters.cycle_type = 1;
-   m_rebuildSolver = true;
+    m_AMG_parameters.distance_R = 1.5;
+    m_AMG_parameters.prerelax = "A";
+    m_AMG_parameters.postrelax = "F";
+    m_AMG_parameters.relax_type = 10;
+    m_AMG_parameters.interp_type = 100;
+    m_AMG_parameters.strength_tolC = 0.005;
+    m_AMG_parameters.coarsen_type = 6;
+    m_AMG_parameters.strength_tolR = 0.005;
+    m_AMG_parameters.filter_tolR = 0.0;
+    m_AMG_parameters.filter_tolA = 0.0001;
+    m_AMG_parameters.cycle_type = 1;
+    m_rebuildSolver = true;
 }
 
 
@@ -2688,11 +2685,11 @@ void SpaceTimeMatrix::SolveMassSystem()
     // Mass matrix is lumped to be diagonal: Directly multiply by its inverse!
     // Note: The inverse of the mass matrix must already be stored here!
     } else if (m_solver_parameters.lump_mass) {
-            if (!m_invMij) {
-                std::cout << "WARNING: A diagonally lumped mass matrix is inverted directly, but m_invM doesn't exist! You must create this first" << '\n';
-                MPI_Finalize();
-                exit(1);
-            }
+        if (!m_invMij) {
+            std::cout << "WARNING: Diagonally lumped mass matrix is inverted directly, but m_invM doesn't exist! You must create this first" << '\n';
+            MPI_Finalize();
+            exit(1);
+        }
         
         m_iterative = false;
         hypre_ParCSRMatrixMatvec(1.0, m_invM, m_b, 0.0, m_x); // x <- 1.0*inv(M)*b + 0.0*x
@@ -2874,7 +2871,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     
     // Check that sufficient data was allocated
     if (dataInd > onProcNnz) {
-        std::cout << "WARNING: Space-time BDF matrix has more nonzeros than allocated.\n";
+        std::cout << "WARNING: Space-time BDF matrix has more nonzeros than allocated on process " << m_globRank << " of " << m_numProc << ".\n";
     }
     
     // Clean up.
@@ -2887,7 +2884,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     delete[] B0;
     delete[] U0;
     
-    // Information about initializing space-time RHS vector no longer needed.
+    // Information for initializing space-time RHS vector no longer needed.
     for (int i = 0; i < m_w_multi.size(); i++) {
         delete[] m_w_multi[i];
         m_w_multi[i] = NULL;
@@ -2897,7 +2894,9 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
 
 
 
-/* Arbitrary component(s) of s-stage RK block(s) w/ last stage eliminated. */
+/* Gets block row (or multiple if there are > 1 DOFs per process) of s-stage RK 
+    space-time equations. No spatial parallelism.
+*/
 void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr, 
                                        int    * &colinds, 
                                        double * &data,
@@ -2912,7 +2911,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     int * blockInd = new int[m_nDOFPerProc];            // Block DOF, v, that each DOF belongs to
     for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
         localInd[globalInd - globalInd0] = globalInd % m_s_butcher;
-        blockInd[globalInd - globalInd0] = std::floor( (double) globalInd / m_s_butcher ); // TODO: Just use integer division here rather than floor?
+        blockInd[globalInd - globalInd0] = globalInd / m_s_butcher; 
     }
     
     // Get spatial discretization at time required by first 1st DOF.
@@ -3228,7 +3227,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     
     // Check that sufficient data was allocated
     if (dataInd > procNnz) {
-        std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
+        std::cout << "WARNING: Space-time RK matrix has more nonzeros than allocated on process " << m_globRank << " of " << m_numProc << ".\n";
     }
     
     // Clean up.
@@ -3251,18 +3250,156 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
 /* ------------------ Spatial parallelism ------------------ */
 /* --------------------------------------------------------- */
 
+/* Get component of block row of s-step BDF space-time equations. Uses spatial parallelism.
 
-void SpaceTimeMatrix::BDFSpaceTimeBlock(int     * &rowptr, 
+NOTEs: 
+    -m_t0 is assumed to be 0, and so the spatial discretization is evaluated at
+        time t0 + (n+s)*dt == (n+s)*dt.
+*/
+void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr, 
                                         int    * &colinds, 
                                         double * &data, 
                                         double * &B, 
-                                        double * &X, 
+                                        double * &U, 
                                         int      &localMinRow, 
                                         int      &localMaxRow, 
                                         int      &spatialDOFs) 
 {
-  
-}
+    int globalInd = m_DOFInd; // Index of temporal DOF on process
+    
+    /* --- Get spatial discretization at time required temporal DOF on process --- */
+    int      L_nnz;
+    int    * L_rowptr;
+    int    * L_colinds;
+    double * L_data;
+    double * B0;
+    double * U0;
+    getSpatialDiscretization(m_spatialComm, L_rowptr, L_colinds, L_data, B0, U0, localMinRow, 
+                                localMaxRow, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt, m_bsize);
+    int onProcSize = localMaxRow - localMinRow + 1; // Number of rows on process
+    L_nnz          = L_rowptr[onProcSize] - L_rowptr[0];   
+    
+    /* --- Get mass matrix ---*/
+    int      M_nnz;
+    int    * M_rowptr;
+    int    * M_colinds;
+    double * M_data;
+    // Set range of identity mass matix to assemble if needed 
+    if (!m_M_exists) setIdentityMassLocalRange(localMinRow, localMaxRow); 
+    getMassMatrix(M_rowptr, M_colinds, M_data);
+    M_nnz = M_rowptr[onProcSize] - M_rowptr[0];
+
+
+    /* --- Get total NNZ estimate on process --- */
+    //  -Doesn't assume sparsity of M and L overlap: Estimate will be an upperbound.
+    int onProcNnz = 0;
+    // Coupling to myself
+    onProcNnz += M_nnz;
+    onProcNnz += L_nnz;
+    
+    // Coupling to DOFs at s previous times
+    if (globalInd > m_s_multi - 1) {
+        onProcNnz += m_s_multi * M_nnz;
+    } else { // Or n times if n < s
+        onProcNnz += globalInd * M_nnz;
+    }
+    
+    rowptr    = new int[onProcSize + 1];
+    rowptr[0] = 0; 
+    colinds   = new int[onProcNnz];
+    data      = new double[onProcNnz];
+    B         = new double[onProcSize];
+    U         = new double[onProcSize];
+    
+    int dataInd      = 0;
+    int colOffset    = 0;  // Global index of first column for DOF that we're coupling to
+    double temp      = 0.0;
+    
+    
+    /* ------------------------------------------------ */
+    /* ------ Build block row for DOF on process ------ */
+    /* ------------------------------------------------ */
+    std::map<int, double>::iterator it;
+
+    // Loop over all rows of spatial discretization on process
+    for (int row = 0; row < onProcSize; row++) {
+        B[row] = m_dt*m_b_multi[0]*B0[row]; // PDE source term. NOTE: Only b_s is stored for BDF schemes 
+        U[row] = U0[row];                   // Initial guess at solution
+    
+        // Number of previous DOFs current DOF couples to
+        int s_effective = m_s_multi;
+        
+        // First s DOFs only couple to the n times before them rather than all s
+        if (globalInd <= m_s_multi - 1) {
+            s_effective = globalInd;
+            // Add precomputed w[n] vector holding all necessary starting-value information
+            B[row] += m_w_multi[globalInd][row];
+        }
+        
+        // Global index of furthest DOF current DOF couples back to
+        colOffset = (globalInd - s_effective) * spatialDOFs;
+        
+        /* ------ Off-block-diagonal component that reaches back s_effective DOFs with mass matrix couplings ------ */
+        for (int j = s_effective; j >= 1; j--)  {
+            // Get mass-matrix data
+            for (int p = M_rowptr[row]; p < M_rowptr[row+1]; p++) {                
+                data[dataInd]    = m_a_multi[m_s_multi-j]*M_data[p];
+                colinds[dataInd] = M_colinds[p] + colOffset;
+                dataInd         += 1;
+            }
+            colOffset += spatialDOFs;
+        }
+    
+        /* ------ Block-diagonal component ------ */
+        std::map<int, double> entries; 
+        // Get mass-matrix data
+        for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
+            if (std::abs(M_data[j]) > 1e-16) {
+                entries[M_colinds[j]] = M_data[j];
+            }
+        }
+
+        // Add spatial discretization data to mass-matrix data
+        temp = m_dt * m_b_multi[0]; // Note only b_s is stored for BDF schemes
+        for (int j = L_rowptr[row]; j < L_rowptr[row+1]; j++) {
+            if (std::abs(L_data[j]) > 1e-16) {
+                entries[L_colinds[j]] += temp * L_data[j];
+            }
+        }
+
+        // Add this data to global matrix
+        for (it=entries.begin(); it!=entries.end(); it++) {
+            colinds[dataInd] = it->first + colOffset;
+            data[dataInd]    = it->second;
+            dataInd         += 1;
+        }
+
+        // Move to next row of spatial discretization for current DOF
+        rowptr[row+1] = dataInd;
+    }
+    
+    // Check sufficient data was allocated
+    if (dataInd > onProcNnz) {
+        std::cout << "WARNING: Space-time BDF matrix has more nonzeros than allocated on process " << m_globRank << " of " << m_numProc << ".\n";
+    }
+    
+    // Clean up.
+    delete[] L_rowptr;
+    delete[] L_colinds;
+    delete[] L_data;
+    delete[] M_rowptr;
+    delete[] M_colinds;
+    delete[] M_data;
+    delete[] B0;
+    delete[] U0;
+    
+    // Information for initializing space-time RHS vector no longer needed.
+    for (int i = 0; i < m_w_multi.size(); i++) {
+        delete[] m_w_multi[i];
+        m_w_multi[i] = NULL;
+    }
+}  
+
 
 void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr, 
                                         int    * &colinds, 
@@ -3276,64 +3413,59 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
     
     int globalInd = m_DOFInd;                   // Global index of variable I own
     int localInd  = globalInd % m_s_butcher;    // Local index of variable I own
-    // TODO: I guess I can just use integer division here? 
-    int blockInd  = std::floor( (double) globalInd / m_s_butcher ); // Block index of variable I own
+    int blockInd  = globalInd / m_s_butcher;    // Block index of variable I own
     
     // Get spatial discretization 
-    int* T_rowptr;
-    int* T_colinds;
-    double* T_data;
+    int      L_nnz;
+    int    * L_rowptr;
+    int    * L_colinds;
+    double * L_data;
     double t = 0.0; // Time to evaluate spatial discretization
     if (localInd == 0) { // Solution-type DOF that's not the initial condition
         if (blockInd != 0) t = m_dt * (blockInd-1) + m_dt * m_c_butcher[m_s_butcher-1]; 
     } else { // Stage-type DOF
         t = m_dt * blockInd + m_dt * m_c_butcher[localInd-1]; 
     }
-    getSpatialDiscretization(m_spatialComm, T_rowptr, T_colinds, T_data, 
-                            B, X, localMinRow, localMaxRow, spatialDOFs, 
-                            t, m_bsize);
-    int onProcSize = localMaxRow - localMinRow + 1; // Number of rows of spatial disc I own
-    int nnzL       = T_rowptr[onProcSize] - T_rowptr[0];    // Nnz in the component of spatial disc I own
+    getSpatialDiscretization(m_spatialComm, L_rowptr, L_colinds, L_data, B, X, localMinRow, 
+                                localMaxRow, spatialDOFs, t, m_bsize);
+    int onProcSize = localMaxRow - localMinRow + 1; // Number of rows on process
+    L_nnz          = L_rowptr[onProcSize] - L_rowptr[0];  
     
     // Get mass matrix
-    int *    M_rowptr;
-    int *    M_colinds;
+    int      M_nnz;
+    int    * M_rowptr;
+    int    * M_colinds;
     double * M_data;
     
-    // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
+    // Set range of identity mass matix to assemble if needed 
     if (!m_M_exists) setIdentityMassLocalRange(localMinRow, localMaxRow); 
-    
     getMassMatrix(M_rowptr, M_colinds, M_data);
-    int nnzM = M_rowptr[onProcSize] - M_rowptr[0];
-    
-    // std::cout << "nnzL on proc " << m_globRank << " = " << nnzL << '\n';
-    // std::cout << "spatialDOFs on proc " << m_globRank << " = " << spatialDOFs << '\n';
-    // std::cout << "nnzM on proc " << m_globRank << " = " << nnzM << '\n';
-    // 
-    
+    M_nnz = M_rowptr[onProcSize] - M_rowptr[0];
+
+
     /* ------ Get total NNZ on this processor. ------ */
     //  -Doesn't assume sparsity of M and L overlap: This nnz count is an upperbound.
-    int procNnz = 0;
+    int onProcNnz = 0;
     int k = localInd;
     // Solution-type variable 
     if (k == 0) {
         // Initial condition just has identity coupling
         if (blockInd == 0) {
-            procNnz += spatialDOFs;
+            onProcNnz += spatialDOFs;
         // All solution DOFs at t > 0
         } else {
             // Coupling to itself
-            procNnz += nnzM;
-            if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] != 0.0) procNnz += nnzL;
+            onProcNnz += M_nnz;
+            if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] != 0.0) onProcNnz += L_nnz;
     
             // Coupling to solution DOF at previous time 
-            procNnz += nnzM;
-            if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] != 0.0) procNnz += nnzL; 
+            onProcNnz += M_nnz;
+            if (m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] != 0.0) onProcNnz += L_nnz; 
     
             // Coupling to stage variables at previous time 
             for (int j = 0; j < m_s_butcher-1; j++) {
-                if (m_b_butcher[j] != 0.0) procNnz += nnzM;
-                if (m_b_butcher[j]*m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1]*m_A_butcher[m_s_butcher-1][j] != 0.0) procNnz += nnzL;
+                if (m_b_butcher[j] != 0.0) onProcNnz += M_nnz;
+                if (m_b_butcher[j]*m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1]*m_A_butcher[m_s_butcher-1][j] != 0.0) onProcNnz += L_nnz;
             }
         }
     
@@ -3341,23 +3473,22 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
     } else {
         k -= 1; // Work with this to index Butcher arrays directly.
         // Coupling to itself
-        procNnz += nnzM;
-        if (m_A_butcher[k][k] != 0.0) procNnz += nnzL;
+        onProcNnz += M_nnz;
+        if (m_A_butcher[k][k] != 0.0) onProcNnz += L_nnz;
     
         // Coupling to solution at previous time
-        procNnz += nnzL;
+        onProcNnz += L_nnz;
     
         // Coupling to previous stage variables at current time
         for (int j = 0; j < k; j++) {
-            if (m_A_butcher[k][j] != 0.0) procNnz += nnzL;
+            if (m_A_butcher[k][j] != 0.0) onProcNnz += L_nnz;
         }
     }
     
-    //std::cout << "nnz on proc " << m_globRank << " = " << procNnz << '\n';
     
     rowptr    = new int[onProcSize + 1];
-    colinds   = new int[procNnz];
-    data      = new double[procNnz];
+    colinds   = new int[onProcNnz];
+    data      = new double[onProcNnz];
     rowptr[0] = 0; 
     
     int dataInd         = 0;
@@ -3365,9 +3496,9 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
     int localColOffset  = 0;    // Temporary variable to help indexing
     double temp         = 0.0;  // Temporary constant 
     
-    /* ---------------------------------------------------------------------------------------------- */
-    /* ------ Build my component of the block row of the space-time matrix belonging to my DOF ------ */
-    /* ---------------------------------------------------------------------------------------------- */
+    /* ---------------------------------------------------------- */
+    /* ------ Build block row of space-time matrix for DOF ------ */
+    /* ---------------------------------------------------------- */
     
     std::map<int, double>::iterator it;
     /* -------------------------------------------------------- */
@@ -3391,7 +3522,6 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
             addInitialCondition(m_spatialComm, B);
             addInitialCondition(m_spatialComm, X); 
     
-            //std::cout << "Global rank = " << m_globRank << "; Local rank = " << m_spatialRank << "\n";
     
         // Solution-type DOF at time t > 0
         } else {
@@ -3412,9 +3542,9 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                 // Add spatial discretization data to mass-matrix data
                 temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1];
                 if (temp != 0.0) {
-                    for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
-                        if (std::abs(T_data[j]) > 1e-16) {
-                            entries[T_colinds[j]] += temp * T_data[j];
+                    for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
+                        if (std::abs(L_data[j]) > 1e-16) {
+                            entries[L_colinds[j]] += temp * L_data[j];
                         }
                     }
                 }
@@ -3445,9 +3575,9 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                     temp = m_b_butcher[i] * m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] * m_A_butcher[m_s_butcher-1][i];
                     if (temp != 0.0) {
                         temp *= m_dt;
-                        for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
-                            if (std::abs(T_data[j]) > 1e-16) {
-                                entries2[T_colinds[j]] += temp * T_data[j];
+                        for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
+                            if (std::abs(L_data[j]) > 1e-16) {
+                                entries2[L_colinds[j]] += temp * L_data[j];
                             }
                         }
                     }
@@ -3474,9 +3604,9 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                 // Add spatial discretization data to mass-matrix data
                 temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1];
                 if (temp != 0.0) {
-                    for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
-                        if (std::abs(T_data[j]) > 1e-16) {
-                            entries3[T_colinds[j]] += temp * T_data[j];
+                    for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
+                        if (std::abs(L_data[j]) > 1e-16) {
+                            entries3[L_colinds[j]] += temp * L_data[j];
                         }
                     }
                 }
@@ -3497,6 +3627,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                 rowptr[row+1] = dataInd;
             }
         }
+        
     /* ----------------------------------------------------- */
     /* ------ Assemble block row for a stage-type DOF ------ */
     /* ----------------------------------------------------- */
@@ -3507,9 +3638,9 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
         // Loop over each row in spatial discretization, working from left-most column/variables to right-most
         for (int row=0; row<onProcSize; row++) {
             /* ------ Coupling to solution at current time ------ */
-            for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
-                colinds[dataInd] = globalColOffset + T_colinds[j];
-                data[dataInd] = T_data[j];
+            for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
+                colinds[dataInd] = globalColOffset + L_colinds[j];
+                data[dataInd] = L_data[j];
                 dataInd += 1;
             }
     
@@ -3519,10 +3650,10 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                 if (temp != 0.0) {
                     temp *= m_dt;
                     localColOffset = globalColOffset + (i+1) * spatialDOFs;
-                    for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
-                        if (std::abs(T_data[j]) > 1e-16) {
-                            colinds[dataInd] = localColOffset + T_colinds[j];
-                            data[dataInd] = temp * T_data[j];
+                    for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
+                        if (std::abs(L_data[j]) > 1e-16) {
+                            colinds[dataInd] = localColOffset + L_colinds[j];
+                            data[dataInd] = temp * L_data[j];
                             dataInd += 1;
                         }
                     }
@@ -3542,9 +3673,9 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
             temp = m_A_butcher[kInd-1][kInd-1];
             if (temp != 0.0) {
                 temp *= m_dt;
-                for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
-                    if (std::abs(T_data[j]) > 1e-16) {
-                        entries[T_colinds[j]] += temp * T_data[j];
+                for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
+                    if (std::abs(L_data[j]) > 1e-16) {
+                        entries[L_colinds[j]] += temp * L_data[j];
                     }
                 }
             }
@@ -3564,16 +3695,14 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
     // Finished assembling component of global space-time matrix
     
     // Check that sufficient data was allocated
-    if (dataInd > procNnz) {
-        std::cout << "WARNING: Matrix has more nonzeros than allocated.\n";
+    if (dataInd > onProcNnz) {
+        std::cout << "WARNING: Space-time RK matrix has more nonzeros than allocated on process " << m_globRank << " of " << m_numProc << ".\n";
     }
     
-    //std::cout << "Actual nnz on proc " << m_globRank << " = " << rowptr[onProcSize] << "\n";
-    
     // Clean up.
-    delete[] T_rowptr;
-    delete[] T_colinds;
-    delete[] T_data;
+    delete[] L_rowptr;
+    delete[] L_colinds;
+    delete[] L_data;
     delete[] M_rowptr;
     delete[] M_colinds;
     delete[] M_data;

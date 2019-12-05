@@ -162,6 +162,21 @@ private:
     void RKSpaceTimeBlock(int    * &rowptr, 
                           int    * &colinds, 
                           double * &data, 
+                          double * &B, 
+                          double * &X, 
+                          int      &onProcSize);
+              
+    void BDFSpaceTimeBlock(int    * &rowptr, 
+                           int    * &colinds, 
+                           double * &data, 
+                           double * &B, 
+                           double * &X, 
+                           int      &onProcSize);
+
+    // Using spatial parallelism
+    void RKSpaceTimeBlock(int    * &rowptr, 
+                          int    * &colinds, 
+                          double * &data, 
                           double * &B,
                           double * &X, 
                           int      &localMinRow, 
@@ -176,22 +191,7 @@ private:
                            int      &localMinRow, 
                            int      &localMaxRow, 
                            int      &spatialDOFs);
-    
-    // Using spatial parallelism
-    void RKSpaceTimeBlock(int    * &rowptr, 
-                          int    * &colinds, 
-                          double * &data, 
-                          double * &B, 
-                          double * &X, 
-                          int      &onProcSize);
-              
-    void BDFSpaceTimeBlock(int    * &rowptr, 
-                           int    * &colinds, 
-                           double * &data, 
-                           double * &B, 
-                           double * &X, 
-                           int      &onProcSize);
-              
+                  
               
     //  TODO : remove these functions...          
     void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
@@ -242,7 +242,7 @@ private:
     // Spatial discretization on one processor                                  
     virtual void getSpatialDiscretizationG(double * &G, 
                                            int      &spatialDOFs, 
-                                           double     t);
+                                           double    t);
     virtual void getSpatialDiscretizationL(int    * &A_rowptr, 
                                            int    * &A_colinds, 
                                            double * &A_data,
