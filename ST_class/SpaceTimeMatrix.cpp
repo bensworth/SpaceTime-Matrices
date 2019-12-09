@@ -2890,8 +2890,6 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
         m_w_multi[i] = NULL;
     }
 }                                    
-    
-
 
 
 /* Gets block row (or multiple if there are > 1 DOFs per process) of s-stage RK 
@@ -3058,13 +3056,14 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
                     // Get mass-matrix data
                     for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
                         if (std::abs(M_data[j]) > 1e-16) {
-                            entries[M_colinds[j]] = M_data[j] / m_dt;
+                            entries[M_colinds[j]] = M_data[j];
                         }
                     }
     
                     // Add spatial discretization data to mass-matrix data
                     temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1];
                     if (temp != 0.0) {
+                        temp *= m_dt;
                         for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
                             if (std::abs(T_data[j]) > 1e-16) {
                                 entries[T_colinds[j]] += temp * T_data[j];
@@ -3087,6 +3086,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
                         // Get mass-matrix data
                         temp = m_b_butcher[i];
                         if (temp != 0.0) {
+                            temp *= m_dt;
                             for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
                                 if (std::abs(M_data[j]) > 1e-16) {
                                     entries2[M_colinds[j]] = temp * M_data[j];
@@ -3097,7 +3097,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
                         // Add spatial discretization data to mass-matrix data
                         temp = m_b_butcher[i] * m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] * m_A_butcher[m_s_butcher-1][i];
                         if (temp != 0.0) {
-                            temp *= m_dt;
+                            temp *= (m_dt * m_dt);
                             for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
                                 if (std::abs(T_data[j]) > 1e-16) {
                                     entries2[T_colinds[j]] += temp * T_data[j];
@@ -3120,13 +3120,14 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
                     // Get mass-matrix data
                     for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
                         if (std::abs(M_data[j]) > 1e-16) {
-                            entries3[M_colinds[j]] = M_data[j] / m_dt;
+                            entries3[M_colinds[j]] = M_data[j];
                         }
                     }
     
                     // Add spatial discretization data to mass-matrix data
                     temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1];
                     if (temp != 0.0) {
+                        temp *= m_dt;
                         for (int j=T_rowptr[row]; j<T_rowptr[row+1]; j++) {
                             if (std::abs(T_data[j]) > 1e-16) {
                                 entries3[T_colinds[j]] += temp * T_data[j];
@@ -3144,7 +3145,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     
     
                     // RHS and initial guess
-                    B[rowOffset + row] = m_b_butcher[m_s_butcher-1] * B0[row];
+                    B[rowOffset + row] = m_dt * m_b_butcher[m_s_butcher-1] * B0[row];
                     X[rowOffset + row] = X0[row];
     
                     // Move to next row for current variable
@@ -3535,13 +3536,14 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                 // Get mass-matrix data
                 for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
                     if (std::abs(M_data[j]) > 1e-16) {
-                        entries[M_colinds[j]] = M_data[j] / m_dt;
+                        entries[M_colinds[j]] = M_data[j];
                     }
                 }
     
                 // Add spatial discretization data to mass-matrix data
                 temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1];
                 if (temp != 0.0) {
+                    temp *= m_dt;
                     for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
                         if (std::abs(L_data[j]) > 1e-16) {
                             entries[L_colinds[j]] += temp * L_data[j];
@@ -3564,6 +3566,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                     // Get mass-matrix data
                     temp = m_b_butcher[i];
                     if (temp != 0.0) {
+                        temp *= m_dt;
                         for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
                             if (std::abs(M_data[j]) > 1e-16) {
                                 entries2[M_colinds[j]] = temp * M_data[j];
@@ -3574,7 +3577,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                     // Add spatial discretization data to mass-matrix data
                     temp = m_b_butcher[i] * m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1] * m_A_butcher[m_s_butcher-1][i];
                     if (temp != 0.0) {
-                        temp *= m_dt;
+                        temp *= (m_dt * m_dt);
                         for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
                             if (std::abs(L_data[j]) > 1e-16) {
                                 entries2[L_colinds[j]] += temp * L_data[j];
@@ -3597,13 +3600,14 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
                 // Get mass-matrix data
                 for (int j=M_rowptr[row]; j<M_rowptr[row+1]; j++) {                
                     if (std::abs(M_data[j]) > 1e-16) {
-                        entries3[M_colinds[j]] = M_data[j] / m_dt;
+                        entries3[M_colinds[j]] = M_data[j];
                     }
                 }
     
                 // Add spatial discretization data to mass-matrix data
                 temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1];
                 if (temp != 0.0) {
+                    temp *= m_dt;
                     for (int j=L_rowptr[row]; j<L_rowptr[row+1]; j++) {
                         if (std::abs(L_data[j]) > 1e-16) {
                             entries3[L_colinds[j]] += temp * L_data[j];
@@ -3621,7 +3625,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int     * &rowptr,
     
     
                 // Scale solution-independent spatial component by coefficient
-                B[row] *= m_b_butcher[m_s_butcher-1];
+                B[row] *= (m_dt * m_b_butcher[m_s_butcher-1]);
     
                 // Move to next row for current variable
                 rowptr[row+1] = dataInd;
