@@ -181,8 +181,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
       m_bsize(1), m_hmin(-1), m_hmax(-1),
       m_M_localMinRow(-1), m_M_localMaxRow(-1),  m_rebuildMass(true)
 {
-    m_isTimeDependent = true; // TODO : this will need to be removed later... when L and G are treated separately
-    
+        
     // Get number of processes
     MPI_Comm_rank(m_globComm, &m_globRank);
     MPI_Comm_size(m_globComm, &m_numProc);
@@ -2799,14 +2798,19 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
         
         // Rebuild spatial discretization if it's time dependent
-        if (globalInd > globalInd0 && m_isTimeDependent) {
-            delete[] L_rowptr;
-            delete[] L_colinds;
-            delete[] L_data;
-            delete[] V0;
-            delete[] B0;
-            getSpatialDiscretizationG(B0, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt);
-            getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, V0, getV0, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt, m_bsize);            
+        if (globalInd > globalInd0) {
+            if (m_g_isTimedependent) {
+                delete[] B0;
+                getSpatialDiscretizationG(B0, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt);
+            }
+            
+            if (m_L_isTimedependent) {
+                delete[] L_rowptr;
+                delete[] L_colinds;
+                delete[] L_data;
+                delete[] V0;
+                getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, V0, getV0, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt, m_bsize);            
+            }
         }
     
         std::map<int, double>::iterator it;
@@ -3015,22 +3019,30 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     for (int globalInd = globalInd0; globalInd <= globalInd1; globalInd++) {
     
         // Rebuild spatial discretization if it's time dependent
-        if ((globalInd > globalInd0) && m_isTimeDependent) {
-            delete[] L_rowptr;
-            delete[] L_colinds;
-            delete[] L_data;
-            delete[] B0;
-            delete[] V0;
+        if (globalInd > globalInd0) {
             // Time to evaluate spatial discretization at
-            // Solution-type DOF
-            if (localInd[globalInd-globalInd0] == 0) { 
-                t = m_dt * (blockInd[globalInd-globalInd0] - 1) + m_dt * m_c_butcher[m_s_butcher-1];
-            //  Stage-type DOF    
-            } else { 
-                t = m_dt * blockInd[globalInd-globalInd0]       + m_dt * m_c_butcher[localInd[globalInd-globalInd0]-1];
+            if (m_L_isTimedependent || m_g_isTimedependent) {
+                // Solution-type DOF
+                if (localInd[globalInd-globalInd0] == 0) { 
+                    t = m_dt * (blockInd[globalInd-globalInd0] - 1) + m_dt * m_c_butcher[m_s_butcher-1];
+                //  Stage-type DOF    
+                } else { 
+                    t = m_dt * blockInd[globalInd-globalInd0]       + m_dt * m_c_butcher[localInd[globalInd-globalInd0]-1];
+                }
             }
-            getSpatialDiscretizationG(B0, spatialDOFs, t);
-            getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, V0, getV0, spatialDOFs, t, m_bsize);
+            
+            if (m_g_isTimedependent) {
+                delete[] B0;
+                getSpatialDiscretizationG(B0, spatialDOFs, t);
+            }
+            
+            if (m_L_isTimedependent) {    
+                delete[] L_rowptr;
+                delete[] L_colinds;
+                delete[] L_data;
+                delete[] V0;
+                getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, V0, getV0, spatialDOFs, t, m_bsize);
+            }
         }
     
     

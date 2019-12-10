@@ -138,7 +138,6 @@ private:
     int     m_Np_x;     /* TODO : Remove. Replace with protected variable "m_spatialCommSize" */
     int     m_ntPerProc; // TODO: this variable doesn't really make sense...
     int     m_numTimeSteps; // TODO: I don't think we should use this variable it's confusing: we assume Nt points, but we do Nt-1 time steps. But it's the Nt that's important because there are Nt DOFs and not Nt-1...
-    bool    m_isTimeDependent; //  TODO : Will need to be removed ...
     int     m_spCommSize; // TODO : remove... now protected
     
     double  m_t1; // TOOD :  do we use this?? delete??
@@ -257,6 +256,7 @@ private:
                                         int &localMinRow, int &localMaxRow, 
                                         int &spatialDOFs) = 0;
     virtual void getInitialCondition(double * &B, int &spatialDOFs) = 0;
+    
     // TODO : I  don't think these make sense... Shouldn't we have as  above?
     // TODO: make optional? 
     virtual void addInitialCondition(const MPI_Comm &spatialComm, double *B) = 0;
