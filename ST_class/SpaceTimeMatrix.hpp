@@ -191,35 +191,27 @@ private:
                            int      &localMinRow, 
                            int      &localMaxRow, 
                            int      &spatialDOFs);
-                  
-              
-    //  TODO : remove these functions...          
-    void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-    void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
-    void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &onProcSize);
-    void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
-              double *&X, int &onProcSize);
-
-
-    // TODO : these functions are to be phased out...
+                           
+    //  TODO : remove these functions...  
+    // -----------------------------------------        
+    // void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
+    //           double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    // void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
+    //           double *&X, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    // void BDF1(int *&rowptr, int *&colinds, double *&data, double *&B,
+    //           double *&X, int &onProcSize);
+    // void AB1(int *&rowptr, int *&colinds, double *&data, double *&B,
+    //           double *&X, int &onProcSize);
     // -----------------------------------------
-    virtual void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
-                                          int* &A_colinds, double* &A_data, double* &B,
-                                          double* &X, int &localMinRow, int &localMaxRow,
-                                          int &spatialDOFs, double t, int &bsize) = 0;
-
-    virtual void getSpatialDiscretization(int* &A_rowptr, int* &A_colinds, double* &A_data,
-                                          double* &B, double* &X, int &spatialDOFs,
-                                          double t, int &bsize) = 0;                                    
-    // -----------------------------------------
+                              
+    
 
     // Spatial discretization on more than one processor. Must same row distribution
     // over processors each time called, e.g., first processor in communicator gets
     // first 10 spatial DOFs, second processor next 10, and so on. 
     
+    
+    // TODO : Make all spatial discretization functions PURE VIRTUAL once they've been implemented!
     virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
                                            double * &G, 
                                            int      &localMinRow, 

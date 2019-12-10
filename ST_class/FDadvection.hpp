@@ -59,30 +59,6 @@ private:
     std::vector<int>    m_neighboursNxOnProc;   /* Number of DOFs in each direction owned by neighbouring procs */
 
 
-
-    // TODO -- these are to be removed...
-    // ---------------------------------------------------------------------------------
-    void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                  int *&L_colinds, double *&L_data, double *&B,
-                                  double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, int &bsize);
-    void getSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data,
-                                  double *&B, double *&X, int &spatialDOFs, double t,
-                                  int &bsize);  
-    void get1DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                    int *&L_colinds, double *&L_data, double *&B,
-                                    double *&X, int &localMinRow, int &localMaxRow,
-                                    int &spatialDOFs, double t, int &bsize);
-    void get2DSpatialDiscretization(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                    int *&L_colinds, double *&L_data, double *&B,
-                                    double *&X, int &localMinRow, int &localMaxRow,
-                                    int &spatialDOFs, double t, int &bsize);                                                               
-    void get2DSpatialDiscretization(int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double *&B, double *&X,
-                                        int &spatialDOFs, double t, int &bsize);                            
-    // ---------------------------------------------------------------------------------
-
-
     // Call when using spatial parallelism                          
     void getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
                                     int &localMinRow, int &localMaxRow, int &spatialDOFs, double t);                               
