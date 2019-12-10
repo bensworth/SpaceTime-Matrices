@@ -163,14 +163,14 @@ private:
                           int    * &colinds, 
                           double * &data, 
                           double * &B, 
-                          double * &X, 
+                          double * &V, 
                           int      &onProcSize);
               
     void BDFSpaceTimeBlock(int    * &rowptr, 
                            int    * &colinds, 
                            double * &data, 
                            double * &B, 
-                           double * &X, 
+                           double * &V, 
                            int      &onProcSize);
 
     // Using spatial parallelism
@@ -178,7 +178,7 @@ private:
                           int    * &colinds, 
                           double * &data, 
                           double * &B,
-                          double * &X, 
+                          double * &V, 
                           int      &localMinRow, 
                           int      &localMaxRow, 
                           int      &spatialDOFs);
@@ -187,7 +187,7 @@ private:
                            int    * &colinds, 
                            double * &data, 
                            double * &B,
-                           double * &X, 
+                           double * &V, 
                            int      &localMinRow, 
                            int      &localMaxRow, 
                            int      &spatialDOFs);
