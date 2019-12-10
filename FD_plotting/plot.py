@@ -85,17 +85,17 @@ pprint.pprint(params)
 #  --- Parallel in time --- #
 #############################
 if (params["pit"] == 1):
-    # If using a multistep method, temporarily reset nt to nt-s_multi to read in data
+    # If using a multistep method, temporarily reset nt to nt+1-s_multi to read in data
     if using_multistep:
-        params["nt"] -= params["s_multi"]
+        params["nt"] += 1-params["s_multi"]
     
     ### ----------------------------------------------------------------------------------- ###
     ### --- NO SPATIAL PARALLELISM: Work out which processor uT lives on and extract it --- ###
     if not params["spatialParallel"]:
         DOFsPerProc = int((params["s"] * params["nt"]) / params["P"]) # Number of temporal variables per proc
-        PuT         = int(np.floor( (params["s"] * (params["nt"]-1)) / DOFsPerProc )) # Index of proc that owns uT
+        PuT         = int(np.floor( (params["s"] * params["nt"]-1) / DOFsPerProc )) # Index of proc that owns uT
         PuT_DOF0Ind = PuT * DOFsPerProc # Global index of first variable on this proc
-        PuT_uTInd   = (params["s"] * (params["nt"]-1)) - PuT_DOF0Ind # Local index of uT on its proc
+        PuT_uTInd   = (params["s"] * params["nt"] - 1) - PuT_DOF0Ind # Local index of uT on its proc
         
         # Filename for data output by processor output processor. Assumes format is <<filename>>.<<index of proc using 5 digits>>
         Ufilename  = filename + "." + "0" * (5-len(str(PuT))) + str(PuT)
@@ -145,7 +145,7 @@ if (params["pit"] == 1):
 
     # Reset nt to its real value
     if using_multistep:
-        params["nt"] += params["s_multi"]
+        params["nt"] -= 1-params["s_multi"]
 
 
 ###############################
@@ -187,7 +187,7 @@ if params["space_dim"] == 1:
     nt = params["nt"]
     x = np.linspace(-1, 1, nx+1)
     x = x[:-1] # nx points in [-1, 1)
-    T = params["dt"]  * (nt - 1)
+    T = params["dt"] * nt
 
     # The exact solutions for the test problems
     def uexact(x,t):
@@ -232,7 +232,7 @@ if params["space_dim"] == 2:
     x = x[:-1] # nx points in [-1, 1)
     y = y[:-1] # ny points in [-1, 1)
     [X, Y] = np.meshgrid(x, y)
-    T = params["dt"]  * (nt - 1)
+    T = params["dt"] * nt
 
     # If used spatial parallelism, DOFs are not ordered in row-wise lexicographic, but instead
     # are blocked by proc, with procs in row-wise lexicographic order and DOFs on proc ordered

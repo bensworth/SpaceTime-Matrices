@@ -109,9 +109,9 @@ if (params["pit"] == 1):
     ### --- NO SPATIAL PARALLELISM: Work out which processor uT lives on and extract it --- ###
     if not params["spatialParallel"]:
         DOFsPerProc = int((params["s"] * params["nt"]) / params["P"]) # Number of temporal variables per proc
-        PuT         = int(np.floor( (params["s"] * (params["nt"]-1)) / DOFsPerProc )) # Index of proc that owns uT
+        PuT         = int(np.floor( (params["s"] * params["nt"]-1) / DOFsPerProc )) # Index of proc that owns uT
         PuT_DOF0Ind = PuT * DOFsPerProc # Global index of first variable on this proc
-        PuT_uTInd   = (params["s"] * (params["nt"]-1)) - PuT_DOF0Ind # Local index of uT on its proc
+        PuT_uTInd   = (params["s"] * params["nt"] - 1) - PuT_DOF0Ind # Local index of uT on its proc
         
         # filenameIN for data output by processor output processor. Assumes format is <<filenameIN>>.<<index of proc using 5 digits>>
         Ufilename  = filenameIN + "." + "0" * (5-len(str(PuT))) + str(PuT)
@@ -197,7 +197,7 @@ if params["space_dim"] == 1:
     nx = NX
     x = np.linspace(-1, 1, nx+1)
     x = x[:-1] # nx points in [-1, 1)
-    T = params["dt"]  * (params["nt"] - 1)
+    T = params["dt"] * params["nt"]
 
     # The exact solutions for the test problems
     def uexact(x,t):
@@ -232,7 +232,7 @@ if params["space_dim"] == 2:
     x = x[:-1] # nx points in [-1, 1)
     y = y[:-1] # ny points in [-1, 1)
     [X, Y] = np.meshgrid(x, y)
-    T = params["dt"]  * (params["nt"] - 1)
+    T = params["dt"] * params["nt"]
 
     # If used spatial parallelism, DOFs are not ordered in row-wise lexicographic, but instead
     # are blocked by proc, with procs in row-wise lexicographic order and DOFs on proc ordered

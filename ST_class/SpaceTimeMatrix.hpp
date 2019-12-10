@@ -287,6 +287,24 @@ private:
     void GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
                                         HYPRE_IJMatrix     &Lij,
                                         double              t);
+            
+            
+    void GetHypreMatrixFromCRSData(HYPRE_ParCSRMatrix  &A,
+                                   HYPRE_IJMatrix      &Aij,
+                                   MPI_Comm             A_comm,
+                                   int                * A_rowptr, 
+                                   int                * A_colinds, 
+                                   double             * A_data, 
+                                   int                  ilower, 
+                                   int                  iupper);         
+                    
+    void GetHypreVectorFromData(HYPRE_ParVector  &x, 
+                                HYPRE_IJVector   &xij,
+                                MPI_Comm          x_comm,
+                                double          * x_data, 
+                                int               ilower, 
+                                int               iupper);                                      
+                    
                                             
     void SetHypreMassMatrix(int  ilower, 
                             int  iupper);

@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
         // BDF (implicit)
         } else if  (timeDisc >= 30 && timeDisc < 40) {
             CFLlim = 1.0;
-            CFL_fraction = 4.0; // Use a CFL number of ...
+            CFL_fraction = 1.0; // Use a CFL number of ...
             
             usingMultistep = true;
             smulti = timeDisc % 10;
@@ -321,10 +321,8 @@ int main(int argc, char *argv[])
             int rem = nt % numProcess; // There are s*nt DOFs for integer s
             if (rem != 0) nt += (numProcess-rem); 
         } else if (usingMultistep) {
-            int rem = (nt-smulti) % numProcess; // There are nt-s unknowns
+            int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
             if (rem != 0) nt += (numProcess-rem); 
-            
-            nt = 10;
         }
         
         // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
