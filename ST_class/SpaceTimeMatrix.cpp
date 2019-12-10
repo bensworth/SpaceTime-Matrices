@@ -177,7 +177,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
       m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
       m_a_multi({}), m_b_multi({}), 
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
-      m_spatialComm(NULL), m_L_isTimedependent(true), m_g_isTimedependent(true),
+      m_spatialComm(NULL), m_L_isTimedependent(true), m_G_isTimedependent(true),
       m_bsize(1), m_hmin(-1), m_hmax(-1),
       m_M_localMinRow(-1), m_M_localMaxRow(-1),  m_rebuildMass(true)
 {
@@ -816,7 +816,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
         
         // Compute spatial discretization at t + dt
         // Solution-independent term
-        if (m_g_isTimedependent || step == 0) {
+        if (m_G_isTimedependent || step == 0) {
             GetHypreSpatialDiscretizationG(g, gij, t + m_dt);
         }
         // Solution-dependent term
@@ -1096,7 +1096,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
 
 
     // Is it necessary to build spatial discretization matrix/DIRK matrix more than once?
-    bool rebuildMatrix = ((m_L_isTimedependent) || (!m_SDIRK));
+    bool rebuildMatrix = (m_L_isTimedependent || !m_SDIRK);
 
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
@@ -1114,7 +1114,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
             
             // Compute spatial discretization at t + c[i]*dt
             // Solution-independent term
-            if (m_g_isTimedependent || (i == 0 && step == 0)) {
+            if (m_G_isTimedependent || (i == 0 && step == 0)) {
                 //HYPRE_IJVectorDestroy(gij);
                 GetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
@@ -1154,7 +1154,6 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
                 
                 // Setup range of identity matrix to assemble if spatial discretization doesn't use a mass matrix
                 if (!m_M_exists) setIdentityMassLocalRange(ilower, iupper);
-                
                 getMassMatrix(M_rowptr, M_colinds, M_data);
                 onProcSize     = iupper - ilower + 1;
                 M_rows         = new int[onProcSize];
@@ -1343,7 +1342,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
             }
             
             // Compute spatial discretization at t + c[i]*dt
-            if (m_g_isTimedependent || (i == 0 && step == 0)) {
+            if (m_G_isTimedependent || (i == 0 && step == 0)) {
                 GetHypreSpatialDiscretizationG(g, gij, t + m_dt * m_c_butcher[i]);
             }
 
@@ -2799,7 +2798,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
         
         // Rebuild spatial discretization if it's time dependent
         if (globalInd > globalInd0) {
-            if (m_g_isTimedependent) {
+            if (m_G_isTimedependent) {
                 delete[] B0;
                 getSpatialDiscretizationG(B0, spatialDOFs, m_t0 + (globalInd+m_s_multi)*m_dt);
             }
@@ -3021,7 +3020,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
         // Rebuild spatial discretization if it's time dependent
         if (globalInd > globalInd0) {
             // Time to evaluate spatial discretization at
-            if (m_L_isTimedependent || m_g_isTimedependent) {
+            if (m_L_isTimedependent || m_G_isTimedependent) {
                 // Solution-type DOF
                 if (localInd[globalInd-globalInd0] == 0) { 
                     t = m_dt * (blockInd[globalInd-globalInd0] - 1) + m_dt * m_c_butcher[m_s_butcher-1];
@@ -3031,7 +3030,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
                 }
             }
             
-            if (m_g_isTimedependent) {
+            if (m_G_isTimedependent) {
                 delete[] B0;
                 getSpatialDiscretizationG(B0, spatialDOFs, t);
             }

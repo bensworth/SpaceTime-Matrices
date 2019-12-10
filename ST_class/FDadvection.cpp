@@ -189,19 +189,19 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
     if (m_problemID == 1) {
         m_conservativeForm  = true; 
         m_L_isTimedependent = false;
-        m_g_isTimedependent = false;
+        m_G_isTimedependent = false;
     } else if (m_problemID == 2) {
         m_conservativeForm  = true; 
         m_L_isTimedependent = true;
-        m_g_isTimedependent = true;
+        m_G_isTimedependent = true;
     } else if (m_problemID == 3) {
         m_conservativeForm  = false; 
         m_L_isTimedependent = true;
-        m_g_isTimedependent = true;
+        m_G_isTimedependent = true;
     } else { // In general assume most general form
         m_conservativeForm  = true;
         m_L_isTimedependent = true;
-        m_g_isTimedependent = true;
+        m_G_isTimedependent = true;
     }
     
     
@@ -211,6 +211,13 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
     /* Ensure spatial parallelism setup is permissible and 
     decide which variables current process and its neighbours own, etc */
     if (m_useSpatialParallel) {
+        //  To be safe, just do a check to ensure there isn't more procs than DOFs
+        if (m_spatialCommSize > m_spatialDOFs) {
+            if (m_spatialRank == 0) std::cout << "WARNING: Number of processors must exceed number of spatial DOFs!" << '\n';
+            MPI_Finalize();
+            exit(1);
+        }
+        
         /* --- One spatial dimension --- */
         if (m_dim == 1) 
         {
@@ -308,7 +315,7 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
             MPI_Recv(&m_neighboursNxOnProc[2], 2, MPI_INT, pSInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
             MPI_Recv(&m_neighboursNxOnProc[4], 2, MPI_INT, pEInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
             MPI_Recv(&m_neighboursNxOnProc[6], 2, MPI_INT, pWInd, 0, m_spatialComm, MPI_STATUS_IGNORE);
-        } 
+        }
     }
     //std::cout << "I made it through constructor..." << '\n';
 }

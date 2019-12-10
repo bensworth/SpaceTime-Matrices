@@ -312,7 +312,7 @@ protected:
     
     // TOOD : Make sure these variables are set in spatial discretization code...
     bool     m_L_isTimedependent; /* Is spatial discretization time dependent? */
-    bool     m_g_isTimedependent; /* Is PDE source term time dependent? */
+    bool     m_G_isTimedependent; /* Is PDE source term time dependent? */
 
     int *    m_M_rowptr;
     int *    m_M_colinds;
