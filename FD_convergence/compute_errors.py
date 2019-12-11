@@ -136,7 +136,7 @@ if (params["pit"] == 1):
         params["p_xTotal"] = int(params["p_xTotal"])
         
         # Index of proc holding first component of uT
-        PuT0 = (params["nt"]-1) * params["s"] * params["p_xTotal"]     
+        PuT0 = (params["nt"] * params["s"] - 1) * params["p_xTotal"]     
         
         # Get names of all procs holding uT data
         PuT = []
