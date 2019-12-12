@@ -257,6 +257,14 @@ private:
                                         int &spatialDOFs) = 0;
     virtual void getInitialCondition(double * &B, int &spatialDOFs) = 0;
 
+    // Optional function to obtain exact solution of PDE at time t. Boolean return value reflects whether such a solution is implemented
+    virtual bool GetExactPDESolution(double * &U, int &spatialDOFs, double t) { return false; };
+    
+    virtual bool GetExactPDESolution(const MPI_Comm &spatialComm, 
+                                        double * &U, int &localMinRow, 
+                                        int &localMaxRow, 
+                                        int &spatialDOFs, double t) { return false; };
+    
     
     /* ------ Sequential time integration routines ------ */
     void ERKTimeSteppingSolve();    /* General purpose ERK solver */
@@ -349,6 +357,8 @@ public:
     void SetSolverParametersDefaults();
     void SetSolverParameters(Solver_parameters &solver_params); 
         
+    
+    bool GetDiscretizationError(double &e2norm);
     
     void PrintMeshData();
 

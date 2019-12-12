@@ -207,6 +207,7 @@ if params["space_dim"] == 1:
     # Compare uT against the exact solution
     print("--------------------------------------------")
     print("|uNum - uExact|_inf = {:.16e}".format(np.linalg.norm(uT_exact - uT, np.inf)))
+    print("|uNum - uExact|_2 = {:.16e}".format(np.linalg.norm(uT_exact - uT, 2)))
     print("--------------------------------------------")
 
     # Plot data if requested...
@@ -306,8 +307,10 @@ if params["space_dim"] == 2:
             uT_exact[j,i] = uexact(x[i],y[j],T)
 
     # Compare uT against the exact solution
+    # Need to flatten arrays so numpy uses vector and not  matrix norms
     print("--------------------------------------------")
-    print("|uNum - uExact|_inf = {:.16e}".format(np.max(np.abs(uT_exact - uT))))
+    print("|uNum - uExact|_inf = {:.16e}".format(np.linalg.norm(uT_exact.flatten() - uT.flatten(), np.inf)))
+    print("|uNum - uExact|_2 = {:.16e}".format(np.linalg.norm(uT_exact.flatten() - uT.flatten(), 2)))
     print("--------------------------------------------")
 
 

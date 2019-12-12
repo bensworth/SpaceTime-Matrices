@@ -284,14 +284,15 @@ int main(int argc, char *argv[])
             smulti = timeDisc % 10;
         }
             
+        double dx, dy = -1.0;
         
         // Time step so that we run at CFL_fraction of the CFL limit 
         if (dim == 1) {
-            double dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
+            dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
             dt = dx * CFLlim;
         } else if (dim == 2) {
-            double dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
-            double dy = dx;
+            dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
+            dy = dx;
             dt = CFLlim/(1/dx + 1/dy);
         }
         
@@ -313,7 +314,9 @@ int main(int argc, char *argv[])
         if (usingRK) {
             int rem = nt % numProcess; // There are s*nt DOFs for integer s
             if (rem != 0) nt += (numProcess-rem); 
-            //nt = 4;
+            //nt = 4; 
+            
+            nt = 3;
         } else if (usingMultistep) {
             int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
             if (rem != 0) nt += (numProcess-rem); 
@@ -348,6 +351,9 @@ int main(int argc, char *argv[])
         
         // Solve PDE
         STmatrix.Solve();
+            
+        double discerror;    
+        bool gotdiscerror = STmatrix.GetDiscretizationError(discerror);
                 
         if (save_sol) {
             std::string filename;
@@ -359,10 +365,12 @@ int main(int argc, char *argv[])
             STmatrix.SaveX(filename);
             //STmatrix.SaveRHS("b");
             //STmatrix.SaveMatrix("A");
+            
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
                 int nx = pow(2, refLevels);
                 std::map<std::string, std::string> space_info;
+    
                 space_info["space_order"]     = std::to_string(order);
                 space_info["nx"]              = std::to_string(nx);
                 space_info["space_dim"]       = std::to_string(dim);
@@ -371,6 +379,13 @@ int main(int argc, char *argv[])
                 for(int d = 0; d < n_px.size(); d++) {
                     space_info[std::string("p_x") + std::to_string(d)] = std::to_string(n_px[d]);
                 }
+                
+                // Not sure how else to ensure disc error is cast to a string in scientific format...
+                if (gotdiscerror) {
+                    space_info["discerror"].resize(16);
+                    space_info["discerror"].resize(std::snprintf(&space_info["discerror"][0], 16, "%.6e", discerror));
+                } 
+
                 STmatrix.SaveSolInfo(filename, space_info);    
             }
         }

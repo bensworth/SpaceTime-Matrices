@@ -17,6 +17,152 @@
 //      - namespace for RK tableaux/AMG parameters? Keep structs separate from class? 
 
 
+/* Get discretization error for solution at final time T = nt*dt. 
+    Boolean return value indicates whether discretization error was set on the given process.
+    
+    Discretization error is computed in the (unscaled) 2-norm
+    
+    NOTE: The value of e2norm is set on process on 0 and the final process, 
+        but it may not be set on any other processes!
+*/
+bool SpaceTimeMatrix::GetDiscretizationError(double &e2norm)
+{
+    int      spaceLocalMinRow; 
+    int      spaceLocalMaxRow; 
+    int      spatialDOFs;
+    double * uexact;
+    bool     got_uexact;
+    bool     send_to_root = false; // Send my e2norm data to process 0 or not
+    
+    // Get PDE solution at final time on spatial communicator
+    if (m_useSpatialParallel) {
+        got_uexact = GetExactPDESolution(m_spatialComm, uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, m_dt*m_nt);
+    } else {
+        got_uexact = GetExactPDESolution(uexact, spatialDOFs, m_dt*m_nt);
+        spaceLocalMinRow = 0;
+        spaceLocalMaxRow = spatialDOFs - 1;
+    }
+
+    // Create new error vector so as not to edit m_x 
+    HYPRE_ParVector e   = NULL;
+    HYPRE_IJVector  eij = NULL;
+    
+    // Get numerical solution and compute solution
+    if (got_uexact)  {
+        int spaceOnProcSize = spaceLocalMaxRow - spaceLocalMinRow + 1; // Number of rows of spatial problem on process
+        
+        // The indices of m_x corresponding to u(T)
+        int * extract_indices = new int[spaceOnProcSize];
+        
+        // Space-time system: Need to extract last spatial component from space-time vector
+        if (m_pit) {
+            // uT distributed across multiple processors. 
+            if (m_useSpatialParallel) {
+                int uT_ind; // Global index of uT
+                if (m_RK) {
+                    uT_ind = m_nt * m_s_butcher - 1; // There are nt*s temporal DOFs
+                } else if (m_BDF) {
+                    uT_ind = m_nt - m_s_multi; // There are nt + 1 - s temporal DOFs
+                }
+                
+                // Extract all data on the spatial communicator associated with uT!
+                if (m_DOFInd == uT_ind) {            
+                    int spaceTimeLocalMinRow;
+                    int spaceTimeLocalMaxRow;
+                    HYPRE_IJVectorGetLocalRange(m_xij, &spaceTimeLocalMinRow, &spaceTimeLocalMaxRow);
+                    int spaceTimeOnProcSize = spaceTimeLocalMaxRow - spaceTimeLocalMinRow + 1;
+                    
+                    for (int i = 0; i < spaceTimeOnProcSize; i++) {
+                        extract_indices[i] = spaceTimeLocalMinRow + i;
+                    }
+                    
+                    // TODO: this edge case isn't quite right if nt == 1.
+                    // Process 0 is not participating in error calculation so it needs data from final process
+                    if (m_nt > 1) send_to_root = true; // For nt == 1, spatial parallelism means proc 0 might hold u(1)
+                    
+                // Just return, remaining processors won't participate in error calculation
+                } else {
+                    if (m_globRank == 0) {
+                        MPI_Recv(&e2norm, 1, MPI_DOUBLE, m_numProc-1, 0, m_globComm, MPI_STATUS_IGNORE);
+                        return true;
+                    } else {
+                        return false;
+                    }    
+                }
+                
+            // uT on last process only.
+            } else {
+                if (m_globRank == m_numProc-1) {
+                    
+                    // If more than one process, process 0 will not participate in error calculation
+                    if (m_numProc > 1) send_to_root = true;
+
+                    // TODO : Get last row on process, then extract the spatialDOFs up to that one...
+                    int spaceTimeLocalMinRow, spaceTimeLocalMaxRow;
+                    HYPRE_IJVectorGetLocalRange(m_xij, &spaceTimeLocalMinRow, &spaceTimeLocalMaxRow);
+                    
+                    // Extract last spatialDOFs entries from vector
+                    for (int i = 0; i < spatialDOFs; i++) {
+                        extract_indices[spatialDOFs-1 - i] = spaceTimeLocalMaxRow - i;
+                    }
+
+                // All but last process do not participate in calculation
+                } else {
+                    if (m_globRank == 0) {
+                        MPI_Recv(&e2norm, 1, MPI_DOUBLE, m_numProc-1, 0, m_globComm, MPI_STATUS_IGNORE);
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            
+        // Time-stepping: All processors participate in error calculation, extract all data from m_x
+        } else {       
+            for (int i = 0; i < spaceOnProcSize; i++) {
+                extract_indices[i] = i + spaceLocalMinRow;
+            }
+        }
+        
+        
+        /* ---------------------------------------------------- */
+        /* --- Extract u(T) from m_x and compute error norm --- */
+        /* ---------------------------------------------------- */
+        // Extract uT data from member vector
+        double * e_data = new double[spaceOnProcSize];
+        HYPRE_IJVectorGetValues(m_xij, spaceOnProcSize, extract_indices, e_data);
+        
+        // Compute entrywise error: Substract exact PDE soln from numerical soln
+        for (int i = 0; i < spaceOnProcSize; i++) {
+            e_data[i] -= uexact[i];
+        }
+        
+        // Assemble HYPRE error vector on spatial communicator for purposes of computing its norm
+        GetHypreVectorFromData(e, eij, m_spatialComm, e_data, spaceLocalMinRow, spaceLocalMaxRow); 
+        
+        // Compute (unscaled) two-norm of error. Only compute on process 0. Is this possible?
+        e2norm = sqrt(hypre_ParVectorInnerProd(e, e));
+        
+        // Only the last process sends its data to process 0 (But only if they're not the same thing!)
+        if (send_to_root && m_globRank == m_numProc-1) MPI_Send(&e2norm, 1, MPI_DOUBLE, 0, 0, m_globComm);
+        
+        // Clean up
+        delete[] extract_indices;
+        delete[] e_data;
+        HYPRE_IJVectorDestroy(eij);
+        
+        // Yes. Disc error was computed on this process.
+        return true;
+            
+            
+    // PDE solution not implemented
+    } else {
+        if (m_globRank == 0) std::cout << "WARNING: Exact PDE solution not implemented for current problem, cannot compute discretization error" << '\n';
+        return false;
+    }
+}
+    
+
 /* Update member variables for describing which component of the identity 
 mass-matrix the current process owns 
 
@@ -1865,7 +2011,7 @@ void SpaceTimeMatrix::SaveSolInfo(std::string filename, std::map<std::string, st
 {
     std::ofstream solinfo;
     solinfo.open(filename);
-    solinfo << std::setprecision(17); // Must accurately print out dt to file!
+    solinfo << std::scientific; // This means parameters will be printed with enough significant digits
     solinfo << "pit " << int(m_pit) << "\n";
     solinfo << "P " << m_numProc << "\n";
     solinfo << "nt " << m_nt << "\n";
