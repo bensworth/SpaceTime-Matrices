@@ -256,11 +256,6 @@ private:
                                         int &localMinRow, int &localMaxRow, 
                                         int &spatialDOFs) = 0;
     virtual void getInitialCondition(double * &B, int &spatialDOFs) = 0;
-    
-    // TODO : I  don't think these make sense... Shouldn't we have as  above?
-    // TODO: make optional? 
-    virtual void addInitialCondition(const MPI_Comm &spatialComm, double *B) = 0;
-    virtual void addInitialCondition(double *B) = 0;
 
     
     /* ------ Sequential time integration routines ------ */

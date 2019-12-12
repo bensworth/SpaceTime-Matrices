@@ -35,7 +35,6 @@ int main(int argc, char *argv[])
     /* ------------------------------------------------------ */
     int pit          = 1; 
     bool mass_exists = false;
-    bool isTimeDependent = true;
     int numTimeSteps = 2; // TODO: I think this should be removed...
     int nt           = 2;
     int order        = 1;
@@ -68,7 +67,7 @@ int main(int argc, char *argv[])
 
     /* --- Spatial discretization parameters --- */
     int spatialDisc  = 3;
-    int refLevels    = 1;
+    int refLevels    = 3;
 
     // Finite-difference specific parameters
     int FD_ProblemID = 1;
@@ -135,17 +134,17 @@ int main(int argc, char *argv[])
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
                    "Spatial discretization (1=CG diffusion, 2=DG advection, 3=FD advection");
     args.AddOption(&order, "-o", "--order",
-                  "Finite element order."); // TODO : general space disc refinement?
+                  "Spatial discretization order."); 
     args.AddOption(&refLevels, "-l", "--level",
-                  "Number levels mesh refinement.");
+                  "Number levels mesh refinement; FD uses 2^refLevels DOFs.");
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
     args.AddOption(&FD_ProblemID, "-FD", "--FD-prob-ID",
-                  "Finite difference problem ID.");  
+                  "FD: Problem ID.");  
     args.AddOption(&px, "-px", "--procx",
-                  "Number of procs in x-direction.");
+                  "FD: Number of procs in x-direction.");
     args.AddOption(&py, "-py", "--procy",
-                  "Number of procs in y-direction.");                          
+                  "FD: Number of procs in y-direction.");                          
 
     /* --- Text output of solution etc --- */              
     args.AddOption(&out, "-out", "--out",
@@ -288,10 +287,10 @@ int main(int argc, char *argv[])
         
         // Time step so that we run at CFL_fraction of the CFL limit 
         if (dim == 1) {
-            double dx = 2.0 / pow(2.0, refLevels + 2); // Assume nx = 2^(refLevels + 2), and x \in [-1,1] 
+            double dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
             dt = dx * CFLlim;
         } else if (dim == 2) {
-            double dx = 2.0 / pow(2.0, refLevels + 2); // Assume nx = 2^(refLevels + 2), and x \in [-1,1] 
+            double dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
             double dy = dx;
             dt = CFLlim/(1/dx + 1/dy);
         }
@@ -314,8 +313,7 @@ int main(int argc, char *argv[])
         if (usingRK) {
             int rem = nt % numProcess; // There are s*nt DOFs for integer s
             if (rem != 0) nt += (numProcess-rem); 
-            
-            nt = 4;
+            //nt = 4;
         } else if (usingMultistep) {
             int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
             if (rem != 0) nt += (numProcess-rem); 
@@ -363,7 +361,7 @@ int main(int argc, char *argv[])
             //STmatrix.SaveMatrix("A");
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {
-                int nx = pow(2, refLevels+2);
+                int nx = pow(2, refLevels);
                 std::map<std::string, std::string> space_info;
                 space_info["space_order"]     = std::to_string(order);
                 space_info["nx"]              = std::to_string(nx);

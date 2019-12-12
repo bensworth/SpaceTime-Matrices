@@ -152,7 +152,7 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
     /* --- Setup grid information --- */
     /* ------------------------------ */
     // Can generalize this if you like to pass in distinct order and nDOFs in y-direction. This by default just makes them the same as in the x-direction    
-    double nx = pow(2, refLevels+2);
+    double nx = pow(2, refLevels);
     double ny = nx;
     //double nx = 10;
     double dx = 2.0 / nx; 
@@ -858,98 +858,32 @@ void FDadvection::getLocalUpwindDiscretization(double * &localWeights, int * &lo
 }
 
 
-
-// PARALLELISM: Get solution-independent component of spatial discretization in vector  G
-void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double * &G, 
-                                            int &localMinRow, int &localMaxRow, 
-                                            int &spatialDOFs, double t)
-{
-    spatialDOFs  = m_spatialDOFs;
-    localMinRow  = m_localMinRow;                    // First row on proc
-    localMaxRow  = m_localMinRow + m_onProcSize - 1; // Last row on proc
-    int rowcount = 0;
-    G = new double[m_onProcSize]; 
-    
-    if (m_dim == 1) {        
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            G[rowcount] = PDE_Source(MeshIndToPoint(row, 0), t);
-            rowcount += 1;
-        }
-    } else if (m_dim == 2) {
-        int xInd, yInd;      
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            xInd = m_pGridInd[0] * m_nxOnProcInt[0] + rowcount % m_nxOnProc[0]; // x-index of current point
-            yInd = m_pGridInd[1] * m_nxOnProcInt[1] + rowcount / m_nxOnProc[0]; // y-index of current point
-            G[rowcount] = PDE_Source(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1), t);
-            rowcount += 1;
-        }
-    }     
-}
-
-// NO PARALLELISM: Get solution-independent component of spatial discretization in vector  G
-void FDadvection::getSpatialDiscretizationG(double * &G, int &spatialDOFs, double t)
-{
-    spatialDOFs = m_spatialDOFs;
-    G = new double[m_spatialDOFs];
-    
-    if (m_dim == 1) {
-        for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-            G[xInd] = PDE_Source(MeshIndToPoint(xInd, 0), t);
-        }
-    } else if (m_dim == 2) {
-        int rowInd = 0;
-        for (int yInd = 0; yInd < m_nx[1]; yInd++) {
-            for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-                G[rowInd] = PDE_Source(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1), t);
-                rowInd += 1;
-            }
-        }
-    }
-}
-
-
-// Put initial condition in vector B.
-void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B, 
-                                        int &localMinRow, int &localMaxRow, 
-                                        int &spatialDOFs) 
-{
-    spatialDOFs  = m_spatialDOFs;
-    localMinRow  = m_localMinRow;                    // First row on proc
-    localMaxRow  = m_localMinRow + m_onProcSize - 1; // Last row on proc
-    int rowcount = 0;
-    B = new double[m_onProcSize]; 
-    
-    if (m_dim == 1) {        
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            B[rowcount] = InitCond(MeshIndToPoint(row, 0));
-            rowcount += 1;
-        }
-    } else if (m_dim == 2) {
-        int xInd, yInd;      
-        for (int row = localMinRow; row <= localMaxRow; row++) {
-            xInd = m_pGridInd[0] * m_nxOnProcInt[0] + rowcount % m_nxOnProc[0]; // x-index of current point
-            yInd = m_pGridInd[1] * m_nxOnProcInt[1] + rowcount / m_nxOnProc[0]; // y-index of current point
-            B[rowcount] = InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
-            rowcount += 1;
-        }
-    }     
-}
-
-
-void FDadvection::getInitialCondition(double * &B, int &spatialDOFs)
+// Evaluate grid-function when grid is distributed on a single process
+void FDadvection::GetGridFunction(void * GridFunction, 
+                                    double * &B, 
+                                    int &spatialDOFs)
 {
     spatialDOFs = m_spatialDOFs;
     B = new double[m_spatialDOFs];
     
+    // One spatial dimension
     if (m_dim == 1) {
+        // Cast function to the correct format
+        std::function<double(double)> GridFunction1D = *(std::function<double(double)> *) GridFunction;
+        
         for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-            B[xInd] = InitCond(MeshIndToPoint(xInd, 0));
+            B[xInd] = GridFunction1D(MeshIndToPoint(xInd, 0));
         }
+        
+    // Two spatial dimensions
     } else if (m_dim == 2) {
+        // Cast function to the correct format
+        std::function<double(double, double)> GridFunction2D = *(std::function<double(double, double)> *) GridFunction;
+        
         int rowInd = 0;
         for (int yInd = 0; yInd < m_nx[1]; yInd++) {
             for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-                B[rowInd] = InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
+                B[rowInd] = GridFunction2D(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
                 rowInd += 1;
             }
         }
@@ -957,52 +891,122 @@ void FDadvection::getInitialCondition(double * &B, int &spatialDOFs)
 }
 
 
-// Add initial condition to vector B.
-void FDadvection::addInitialCondition(const MPI_Comm &spatialComm, double * B) 
+// Evaluate grid-function when grid is distributed across multiple processes
+void FDadvection::GetGridFunction(void * GridFunction, 
+                                    const MPI_Comm &spatialComm, 
+                                    double * &B, 
+                                    int &localMinRow, 
+                                    int &localMaxRow, 
+                                    int &spatialDOFs) 
 {
-    int localMinRow = m_localMinRow;                    // First row on processor
-    int localMaxRow = m_localMinRow + m_onProcSize - 1; // Last row on processor
-    int rowInd      = 0;
+    spatialDOFs  = m_spatialDOFs;
+    localMinRow  = m_localMinRow;                    // First row on process
+    localMaxRow  = m_localMinRow + m_onProcSize - 1; // Last row on process
+    int rowcount = 0;
+    B            = new double[m_onProcSize]; 
+
+    // One spatial dimension
     if (m_dim == 1) {
+        // Cast function to the correct format
+        std::function<double(double)> GridFunction1D = *(std::function<double(double)> *) GridFunction;
+
         for (int row = localMinRow; row <= localMaxRow; row++) {
-            B[rowInd] += InitCond(MeshIndToPoint(row, 0));
-            rowInd += 1;
+            B[rowcount] = GridFunction1D(MeshIndToPoint(row, 0));
+            rowcount += 1;
         }
-    } else if (m_dim == 2) {
-        int xIndGlobal;
-        int yIndGlobal;
+        
+    // Two spatial dimensions
+    } else if  (m_dim == 2) {
+        // Cast function to the correct format
+        std::function<double(double, double)> GridFunction2D = *(std::function<double(double, double)> *) GridFunction;
+
+        int xInd, yInd;      
         for (int row = localMinRow; row <= localMaxRow; row++) {
-            xIndGlobal = m_pGridInd[0] * m_nxOnProcInt[0] + rowInd % m_nxOnProc[0]; // Global x-index
-            yIndGlobal = m_pGridInd[1] * m_nxOnProcInt[1] + rowInd / m_nxOnProc[0]; // Global y-index
-            B[rowInd] += InitCond(MeshIndToPoint(xIndGlobal, 0), MeshIndToPoint(yIndGlobal, 1));
-            rowInd += 1;
+            xInd = m_pGridInd[0] * m_nxOnProcInt[0] + rowcount % m_nxOnProc[0]; // x-index of current point
+            yInd = m_pGridInd[1] * m_nxOnProcInt[1] + rowcount / m_nxOnProc[0]; // y-index of current point
+            B[rowcount] = GridFunction2D(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
+            rowcount += 1;
         }
     }
 }
 
 
-// Add initial condition to vector B.
-void FDadvection::addInitialCondition(double *B)
+// Get solution-independent component of spatial discretization in vector  G
+void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
+                                            double * &G, 
+                                            int &localMinRow, 
+                                            int &localMaxRow, 
+                                            int &spatialDOFs, 
+                                            double t)
 {
+    // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
     if (m_dim == 1) {
-        for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-            B[xInd] += InitCond(MeshIndToPoint(xInd, 0));
-        }
+        std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Source(x, t); };
+        GetGridFunction((void *) &GridFunction, G, spatialDOFs);
     } else if (m_dim == 2) {
-        int rowInd = 0;
-        for (int yInd = 0; yInd < m_nx[1]; yInd++) {
-            for (int xInd = 0; xInd < m_nx[0]; xInd++) {
-                B[rowInd] += InitCond(MeshIndToPoint(xInd, 0), MeshIndToPoint(yInd, 1));
-                rowInd += 1;
-            }
-        }
-    }
+        std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Source(x, y, t); };
+        GetGridFunction((void *) &GridFunction, G, spatialDOFs);
+    }  
+}
+
+
+// Get solution-independent component of spatial discretization in vector  G
+void FDadvection::getSpatialDiscretizationG(double * &G, int &spatialDOFs, double t)
+{
+    // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
+    if (m_dim == 1) {
+        std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Source(x, t); };
+        GetGridFunction((void *) &GridFunction, G, spatialDOFs);
+    } else if (m_dim == 2) {
+        std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Source(x, y, t); };
+        GetGridFunction((void *) &GridFunction, G, spatialDOFs);
+    }  
+}
+
+
+// Allocate vector U0 memory and populate it with initial condition.
+void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, 
+                                        double * &U0, 
+                                        int &localMinRow, 
+                                        int &localMaxRow, 
+                                        int &spatialDOFs) 
+{
+    // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
+    if (m_dim == 1) {
+        std::function<double(double)> GridFunction = [this](double x) { return InitCond(x); };
+        GetGridFunction((void *) &GridFunction, spatialComm, U0, localMinRow, localMaxRow, spatialDOFs);
+    } else if (m_dim == 2) {
+        std::function<double(double, double)> GridFunction = [this](double x, double y) { return InitCond(x, y); };
+        GetGridFunction((void *) &GridFunction, spatialComm, U0, localMinRow, localMaxRow, spatialDOFs);
+    }   
+}
+
+
+// Allocate vector U0 memory and populate it with initial condition.
+void FDadvection::getInitialCondition(double * &U0, int &spatialDOFs)
+{
+    // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
+    if (m_dim == 1) {
+        std::function<double(double)> GridFunction = [this](double x) { return InitCond(x); };
+        GetGridFunction((void *) &GridFunction, U0, spatialDOFs);
+    } else if (m_dim == 2) {
+        std::function<double(double, double)> GridFunction = [this](double x, double y) { return InitCond(x, y); };
+        GetGridFunction((void *) &GridFunction, U0, spatialDOFs);
+    }  
 }
 
 
 // Stencils for upwind discretizations of d/dx. Wind is assumed to blow left to right. 
 void FDadvection::get1DUpwindStencil(int * &inds, double * &weights, int dim)
 {    
+    // Just check that there are sufficiently many DOFs to discretize derivative
+    if (m_nx[dim] < m_order[dim] + 1) {
+        std::cout << "WARNING: FD stencil requires more grid points than are on grid! Increase nx!" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    
     inds    = new int[m_order[dim]+1];
     weights = new double[m_order[dim]+1];
     

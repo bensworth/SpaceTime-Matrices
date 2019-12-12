@@ -92,16 +92,25 @@ private:
                                         int &spatialDOFs, double t, int &bsize);
                                 
     /* Uses spatial parallelism */  
-                                     
-    
-    void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, 
-                                int &localMaxRow, int &spatialDOFs);
+    void getInitialCondition(const MPI_Comm &spatialComm, 
+                                   double * &U0, 
+                                   int      &localMinRow, 
+                                   int      &localMaxRow, 
+                                   int      &spatialDOFs);
                                 
-    void getInitialCondition(double * &B, int &spatialDOFs);
-    
-    void addInitialCondition(const MPI_Comm &spatialComm, double *B);
-    
-    void addInitialCondition(double *B);
+    void getInitialCondition(double * &U0, 
+                             int      &spatialDOFs);
+
+    void GetGridFunction(void   *  GridFunction, 
+                         double * &B, 
+                         int      &spatialDOFs);
+
+    void GetGridFunction(      void     *  GridFunction, 
+                         const MPI_Comm   &spatialComm, 
+                               double   * &B, 
+                               int        &localMinRow, 
+                               int        &localMaxRow, 
+                               int        &spatialDOFs);
 
 
     /* Helper functions; shouldn't really be called outside of this class */
