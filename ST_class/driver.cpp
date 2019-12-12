@@ -11,14 +11,29 @@ using namespace mfem;
 
 /* Some examples for solving 2nd-order, 2D finite difference problems
 ---IMPLICIT TIME-STEPPING:
-mpirun -np 4 ./driver -pit 0 -s 3 -d 2 -t 222 -o 2 -l 4 -p 2 -gmres 1 -rebuild -1 -ppre -1 -tol 1e-5 -FD 2 -saveX 1
+mpirun -np 4 ./driver -pit 0 -s 3 -d 2 -nt 60 -t 222 -o 2 -l 6 -p 2 -gmres 1 -rebuild -1 -ppre -1 -tol 1e-5 -FD 2 -saveX 1
 ---IMPLICIT SPACE-TIME:
-mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -t 222 -o 2 -l 4 -p 2 -gmres 1 -rebuild -1 -ppre 1 -tol 1e-5 -FD 2 -saveX 1
+mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -nt 60 -t 222 -o 2 -l 6 -p 2 -gmres 1 -rebuild -1 -ppre 1 -tol 1e-5 -FD 2 -saveX 1
 ---EXPLICIT TIME-STEPPING:
-mpirun -np 4 ./driver -pit 0 -s 3 -d 2 -t 122 -o 2 -l 4 -p 2 -FD 2 -saveX 1
+mpirun -np 4 ./driver -pit 0 -s 3 -d 2 -nt 60 -t 122 -o 2 -l 6 -p 2 -FD 2 -saveX 1
 ---EXPLICIT SPACE-TIME:
-mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -t 122 -o 2 -l 4 -p 2 -gmres 1 -ppre 1 -tol 1e-5 -FD 2 -saveX 1
+mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -nt 60 -t 122 -o 2 -l 6 -p 2 -gmres 1 -ppre 1 -tol 1e-5 -FD 2 -saveX 1
 */
+
+
+/* --- Ben, here is an example of AIR doing poorly --- */
+/* Solve constant coefficient advection in 1D, 2nd-order BDF+2nd-order FD (space-time matrix is lower trinagular)
+
+-Refine mesh in space-time by a factor of 2 each time
+-AIR is diverging on 1st iteration (if GMRES is turned off, that is). 
+-The blow up at the first iteration increases as the mesh is refined
+-Convergence rate is influenced by number of procs (but I'm not using the on proc trinagular solve, am I?)
+
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 61 -o 2 -l 6 -p 2 -gmres 0 -tol 1e-5 -FD 1 -saveX 1 
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 121 -o 2 -l 7 -p 2 -gmres 0 -tol 1e-5 -FD 1 -saveX 1 
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 241 -o 2 -l 8 -p 2 -gmres 0 -tol 1e-5 -FD 1 -saveX 1 
+*/
+
 
 int main(int argc, char *argv[])
 {
@@ -94,9 +109,15 @@ int main(int argc, char *argv[])
     // double filter_tolA;
     // int cycle_type;
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
+    // AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
+    // const char* temp_prerelax = "A";
+    // const char* temp_postrelax = "FA";
+
+    // The "standard" AIR parameters used in SetAIR()
+    AMG_parameters AMG = {1.5, "A", "FFC", 100, 3, 6, 0.005, 0.0, 0.0, 0.0, 1};
     const char* temp_prerelax = "A";
-    const char* temp_postrelax = "FA";
+    const char* temp_postrelax = "FFC";
+    
 
     OptionsParser args(argc, argv);
     
@@ -214,6 +235,7 @@ int main(int argc, char *argv[])
         mass_exists = true; // Have a mass matrix
         CGdiffusion STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, dt, refLevels, order, lump_mass);
             
+        STmatrix.SetAMGParameters(AMG);
         STmatrix.SetSolverParameters(solver);                 
         STmatrix.Solve();                            
         
@@ -228,6 +250,7 @@ int main(int argc, char *argv[])
         mass_exists = true; // Have a mass matrix
         DGadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, dt, refLevels, order, lump_mass);
         
+        STmatrix.SetAMGParameters(AMG);
         STmatrix.SetSolverParameters(solver);
         STmatrix.Solve();
 
@@ -298,32 +321,30 @@ int main(int argc, char *argv[])
         
         dt *= CFL_fraction;
         
-        // Manually set time to integrate to
-        double T = 2.0; // For 1D in space...
-        //double T = 2.0  * dt; // For 1D in space...
-        if (dim == 2) T = 0.5; // For 2D in space...
-        
-        // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        nt = ceil(T / dt);
-        //nt = 6;
-        //dt = T / (nt - 1);
-        
-        // Round up nt so that numProcess evenly divides number of unknowns. Assuming time-only parallelism...
-        // NOTE: this will slightly change T... But actually, enforce this always so that 
-        // tests are consistent accross time-stepping and space-time system
-        if (usingRK) {
-            int rem = nt % numProcess; // There are s*nt DOFs for integer s
-            if (rem != 0) nt += (numProcess-rem); 
-            //nt = 4; 
-            
-            nt = 3;
-        } else if (usingMultistep) {
-            int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
-            if (rem != 0) nt += (numProcess-rem); 
-        }
-        
-        // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
-        dt = T / (nt - 1); 
+        // // Manually set time to integrate to
+        // double T = 2.0; // For 1D in space...
+        // //double T = 2.0  * dt; // For 1D in space...
+        // if (dim == 2) T = 0.5; // For 2D in space...
+        // 
+        // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
+        // nt = ceil(T / dt);
+        // //nt = 6;
+        // //dt = T / (nt - 1);
+        // 
+        // // Round up nt so that numProcess evenly divides number of unknowns. Assuming time-only parallelism...
+        // // NOTE: this will slightly change T... But actually, enforce this always so that 
+        // // tests are consistent accross time-stepping and space-time system
+        // if (usingRK) {
+        //     int rem = nt % numProcess; // There are s*nt DOFs for integer s
+        //     if (rem != 0) nt += (numProcess-rem); 
+        //     //nt = 4; 
+        // } else if (usingMultistep) {
+        //     int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
+        //     if (rem != 0) nt += (numProcess-rem); 
+        // }
+        // 
+        // // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
+        // dt = T / (nt - 1); 
         
         /* --- Get SPACETIMEMATRIX object --- */
         std::vector<int> n_px = {};
@@ -341,19 +362,16 @@ int main(int argc, char *argv[])
                                 dt, dim, refLevels, order, FD_ProblemID, n_px);
         
         // Set parameters
+        STmatrix.SetAMGParameters(AMG);
         STmatrix.SetSolverParameters(solver);
         
-        //STmatrix.SetAMGParameters(AMG);
-        
         //STmatrix.SetAIRHyperbolic();
-        STmatrix.SetAIR();
+        //STmatrix.SetAIR();
         //STmatrix.SetAMG();
         
         // Solve PDE
         STmatrix.Solve();
             
-        double discerror;    
-        bool gotdiscerror = STmatrix.GetDiscretizationError(discerror);
                 
         if (save_sol) {
             std::string filename;
@@ -365,6 +383,10 @@ int main(int argc, char *argv[])
             STmatrix.SaveX(filename);
             //STmatrix.SaveRHS("b");
             //STmatrix.SaveMatrix("A");
+            
+            double discerror;    
+            bool gotdiscerror = STmatrix.GetDiscretizationError(discerror);
+            
             
             // Save data to file enabling easier inspection of solution            
             if (rank == 0) {

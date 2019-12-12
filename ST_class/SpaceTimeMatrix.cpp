@@ -827,7 +827,7 @@ void SpaceTimeMatrix::SetMultistepStartValues()
     
     /* If we need more starting values obtain them via sequential RK integration */
     if (SetMultiRKPairing()) {
-        m_nt = 2; // We take only a single step at a time (RK routines are hard-codes to take m_nt-1 steps)
+        m_nt = 1; // We take only a single step at a time (RK routines are hard-coded to take m_nt steps)
         
         // Get the remaining s-1 starting values, u_n
         for (int n = 1; n < m_s_multi; n++) {
@@ -893,7 +893,6 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     /* ---------------------------------------------------------------------- */
     /* ------------------------ Setup/initialization ------------------------ */
     /* ---------------------------------------------------------------------- */
-    double t = (m_s_multi-1) * m_dt; // Initial time to integrate from. The current solution is known at t_{s-1}
     
     // Check that solution vector has been initialized!
     if (m_u_multi_ij.empty()) {
@@ -966,6 +965,8 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
             std::cout << "\nSolving for time level " << tInd+1 << " of " << m_nt << "\n"; 
             std::cout << "-----------------------------------------\n\n";
         }
+        
+        double t = tInd * m_dt; // Current time at which the solution is known
         
         // Compute spatial discretization at t + dt
         // Solution-independent term
@@ -1086,7 +1087,6 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
             exit(1);
         }
 
-        t    += m_dt; // Increment time
         step += 1;    // Increment step counter
         
         // Update tailptr and headptr for next iteration
