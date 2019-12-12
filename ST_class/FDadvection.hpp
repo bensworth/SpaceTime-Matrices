@@ -8,6 +8,7 @@
 #include <iostream>
 #include <functional>
 #include <vector>
+#include <cmath>
 
 #define PI 3.14159265358979323846
 
@@ -46,6 +47,7 @@ private:
     int m_onProcSize;                           /* Number of DOFs on proc */
     int m_spatialDOFs;                          /* Total number of DOFs in spatial disc */
     int m_localMinRow;                          /* Global index of first DOF on proc */
+    bool m_PDE_soln_implemented;                /* Exact solution of PDE is implemented */
     std::vector<int>    m_order;                /* Order of discretization in each direction */
     std::vector<int>    m_nx;                   /* Number of DOFs in each direction */
     std::vector<double> m_dx;                   /* Mesh spacing in each direction */
@@ -57,6 +59,7 @@ private:
     std::vector<int>    m_nxOnProcBnd;          /* Number of DOFs in each direction on procs on BOUNDARY of proc domain */
     std::vector<int>    m_neighboursLocalMinRow;/* Global index of first DOF owned by neighbouring procs */
     std::vector<int>    m_neighboursNxOnProc;   /* Number of DOFs in each direction owned by neighbouring procs */
+    
 
 
     // Call when using spatial parallelism                          
@@ -100,6 +103,19 @@ private:
                                 
     void getInitialCondition(double * &U0, 
                              int      &spatialDOFs);
+    
+    bool GetExactPDESolution(const MPI_Comm &spatialComm, 
+                                                double * &U, 
+                                                int &localMinRow, 
+                                                int &localMaxRow, 
+                                                int &spatialDOFs, 
+                                                double t);
+    
+                             
+    bool GetExactPDESolution(double * &U0, 
+                            int      &spatialDOFs, double t);
+                            
+    
 
     void GetGridFunction(void   *  GridFunction, 
                          double * &B, 
@@ -128,6 +144,9 @@ private:
                         int component);  
     double PDE_Source(double x, double t);              /* 1D source */
     double PDE_Source(double x, double y, double t);    /* 2D source */
+
+    double PDE_Solution(double x, double t);
+    double PDE_Solution(double x, double y, double t);
 
 public:
 

@@ -1,9 +1,33 @@
 #include "FDadvection.hpp"
 
 /* TODO : 
--getSpatialDiscretizationG and getInitialCondition are the same functions except 
-    they call different functions; maybe make one general function?? Like getSpatialDiscretizationVector, or getSpatialDiscretizationGridFun
 */
+
+
+/* Exact solution for model problems. 
+
+This depends on initial conditions, source terms, wave speeds, and  mesh
+So if any of these are updated the solutions given here will be wrong...  */
+double FDadvection::PDE_Solution(double x, double t) {
+    if (m_problemID == 1) {
+        return InitCond( std::fmod(x + 1 - t, 2)  - 1 );
+    } else if (m_problemID == 2 || m_problemID == 3) {
+        return cos( PI*(x-t) ) * exp( cos( 2*PI*t ) - 1 );     
+    } else {
+        return 0.0; // Just so we're not given a compilation warning
+    }
+}
+
+
+double FDadvection::PDE_Solution(double x, double y, double t) {
+    if (m_problemID == 1) {
+        return InitCond( std::fmod(x + 1 - t, 2) - 1, std::fmod(y + 1 - t, 2)  - 1 );
+    } else if (m_problemID == 2 || m_problemID == 3) {
+        return cos( PI*(x-t) ) * cos( PI*(y-t) ) * exp( cos( 4*PI*t ) - 1 );     
+    } else {
+        return 0.0; // Just so we're not given a compilation warning
+    }
+}
 
  
 double FDadvection::InitCond(double x) 
@@ -147,7 +171,6 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
         }
     }
     
-    
     /* ------------------------------ */
     /* --- Setup grid information --- */
     /* ------------------------------ */
@@ -190,18 +213,23 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
         m_conservativeForm  = true; 
         m_L_isTimedependent = false;
         m_G_isTimedependent = false;
+        m_PDE_soln_implemented = true;
     } else if (m_problemID == 2) {
         m_conservativeForm  = true; 
         m_L_isTimedependent = true;
         m_G_isTimedependent = true;
+        m_PDE_soln_implemented = true;
     } else if (m_problemID == 3) {
         m_conservativeForm  = false; 
         m_L_isTimedependent = true;
         m_G_isTimedependent = true;
-    } else { // In general assume most general form
-        m_conservativeForm  = true;
-        m_L_isTimedependent = true;
-        m_G_isTimedependent = true;
+        m_PDE_soln_implemented = true;
+        
+    // Quit because wave speeds, sources, IC's etc are not implemented for a `general` problem
+    } else { 
+        if (m_spatialRank == 0) std::cout << "WARNING: FD problemID == " << m_problemID << " not recognised!" << '\n';
+        MPI_Finalize();
+        exit(1);
     }
     
     
@@ -931,6 +959,47 @@ void FDadvection::GetGridFunction(void * GridFunction,
 }
 
 
+// Get PDE solution
+bool FDadvection::GetExactPDESolution(const MPI_Comm &spatialComm, 
+                                            double * &U, 
+                                            int &localMinRow, 
+                                            int &localMaxRow, 
+                                            int &spatialDOFs, 
+                                            double t)
+{
+    if (m_PDE_soln_implemented) {
+        // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
+        if (m_dim == 1) {
+            std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Solution(x, t); };
+            GetGridFunction((void *) &GridFunction, spatialComm, U, localMinRow, localMaxRow, spatialDOFs);
+        } else if (m_dim == 2) {
+            std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Solution(x, y, t); };
+            GetGridFunction((void *) &GridFunction, spatialComm, U, localMinRow, localMaxRow, spatialDOFs);
+        }  
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool FDadvection::GetExactPDESolution(double * &U, int &spatialDOFs, double t)
+{
+    if (m_PDE_soln_implemented) {
+        // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
+        if (m_dim == 1) {
+            std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Solution(x, t); };
+            GetGridFunction((void *) &GridFunction, U, spatialDOFs);
+        } else if (m_dim == 2) {
+            std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Solution(x, y, t); };
+            GetGridFunction((void *) &GridFunction, U, spatialDOFs);
+        }  
+        return true;
+    } else {
+        return false;
+    }
+}
+
+
 // Get solution-independent component of spatial discretization in vector  G
 void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
                                             double * &G, 
@@ -942,10 +1011,10 @@ void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm,
     // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
     if (m_dim == 1) {
         std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Source(x, t); };
-        GetGridFunction((void *) &GridFunction, G, spatialDOFs);
+        GetGridFunction((void *) &GridFunction, spatialComm, G, localMinRow, localMaxRow, spatialDOFs);
     } else if (m_dim == 2) {
         std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Source(x, y, t); };
-        GetGridFunction((void *) &GridFunction, G, spatialDOFs);
+        GetGridFunction((void *) &GridFunction, spatialComm, G, localMinRow, localMaxRow, spatialDOFs);
     }  
 }
 
