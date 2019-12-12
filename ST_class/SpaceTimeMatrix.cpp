@@ -726,11 +726,11 @@ void SpaceTimeMatrix::SetMultistepSpaceTimeRHSValues()
     /* Insert RHS information into non-HYPRE vectors so it can be added directly
      into the space-time RHS during its construction */
     m_w_multi.resize(m_s_multi);
-    for (int i = 0; i < m_s_multi; i++) {
+    for (int n = 0; n < m_s_multi; n++) {
         
         int ilower, iupper, onProcSize;
         int * indices;
-        HYPRE_IJVectorGetLocalRange(m_u_multi_ij[i], &ilower, &iupper);
+        HYPRE_IJVectorGetLocalRange(m_u_multi_ij[n], &ilower, &iupper);
         onProcSize = iupper - ilower + 1; // Number  of rows on process
         
         indices = new int[onProcSize];
@@ -738,14 +738,14 @@ void SpaceTimeMatrix::SetMultistepSpaceTimeRHSValues()
             indices[i] = ilower + i;
         }
         
-        m_w_multi[i] = new double[onProcSize];
-        HYPRE_IJVectorGetValues(m_u_multi_ij[i], onProcSize, indices, m_w_multi[i]);
+        m_w_multi[n] = new double[onProcSize];
+        HYPRE_IJVectorGetValues(m_u_multi_ij[n], onProcSize, indices, m_w_multi[n]);
         
         delete[] indices;
     
         // Free values in HYPRE data structures as no longer needed
-        HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
-        m_u_multi_ij[i] = NULL;
+        HYPRE_IJVectorDestroy(m_u_multi_ij[n]);
+        m_u_multi_ij[n] = NULL;
     }
     m_u_multi    = {};
     m_u_multi_ij = {};
