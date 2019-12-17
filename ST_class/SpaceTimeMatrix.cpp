@@ -320,7 +320,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
       m_u_multi({}), m_u_multi_ij({}),
       m_Mij(NULL), m_invMij(NULL), m_iterative(true), 
       m_RK(false), m_ERK(false), m_DIRK(false), m_SDIRK(false),
-      m_multi(false), m_AB(false), m_AM(false), m_BDF(false),
+      m_multi(false), m_AB(false), m_AM(false), m_BDF(false), 
       m_a_multi({}), m_b_multi({}), 
       m_M_rowptr(NULL), m_M_colinds(NULL), m_M_data(NULL), m_rebuildSolver(false),
       m_spatialComm(NULL), m_L_isTimedependent(true), m_G_isTimedependent(true),
@@ -493,7 +493,7 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 m_useSpatialParallel = false;
                 if ( (m_nt + 1 - m_s_multi) % m_numProc != 0) {
                     if (m_globRank == 0) {
-                        std::cout << "Error: total DOFs (nt+1 (" << m_nt+1 << ") - number of starting values (" << m_s_multi << ") == " << m_nt+1-m_s_multi << ") does not divide number of processes " << m_numProc << "\n";
+                        std::cout << "Error: total DOFs (nt+1 (" << m_nt+1 << ") - number of starting values (" << m_s_multi << ") == " << m_nt+1-m_s_multi << ") does not divide number of processes (" << m_numProc << ")\n";
                     }
                     MPI_Finalize();
                     exit(1);
@@ -825,8 +825,8 @@ void SpaceTimeMatrix::SetMultistepStartValues()
     // Set global starting time to 0
     m_t0 = 0.0; 
     
-    /* If we need more starting values obtain them via sequential RK integration */
-    if (SetMultiRKPairing()) {
+    /* If we need more starting values, and are obtaining them via sequential RK integration */
+    if (m_solver_parameters.multi_init == 0 && SetMultiRKPairing()) {
         m_nt = 1; // We take only a single step at a time (RK routines are hard-coded to take m_nt steps)
         
         // Get the remaining s-1 starting values, u_n
@@ -859,6 +859,44 @@ void SpaceTimeMatrix::SetMultistepStartValues()
         m_c_butcher = {};
         m_b_butcher = {};
         m_A_butcher = {};
+    
+    
+    /* If we need more starting values, and are obtaining them via user provided exact PDE solution */
+    } else if (m_solver_parameters.multi_init == 1 && m_s_multi > 1) {
+        
+        int      spatialDOFs;
+        int      spaceLocalMinRow;
+        int      spaceLocalMaxRow;
+        bool     got_uexact = false;
+        double * uexact;
+        
+        
+        // Get exact PDE solution at time t_n
+        for (int n = 1; n < m_s_multi; n++) {
+            
+            // Attempt to get PDE solution
+            if (m_useSpatialParallel) {
+                got_uexact = GetExactPDESolution(m_spatialComm, uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, n*m_dt);
+            } else {
+                got_uexact = GetExactPDESolution(uexact, spatialDOFs, n*m_dt);
+                spaceLocalMinRow = 0;
+                spaceLocalMaxRow = spatialDOFs - 1;
+            } 
+            
+            // Transfer solution into appropriate HYPRE vector
+            if (got_uexact) {
+                GetHypreVectorFromData(m_u_multi[n], m_u_multi_ij[n], m_spatialComm,
+                                        uexact, spaceLocalMinRow, spaceLocalMaxRow);
+                delete[] uexact;
+                
+            } else {
+                std::cout << "WARNING: Cannot initialize multistep method with exact solution since no such solution has been provided by the user!" << '\n';
+                MPI_Finalize();
+                exit(1);
+            }
+        }
+        
+           
     }
     
     // Reset variables to their original values
@@ -2517,6 +2555,8 @@ void SpaceTimeMatrix::SetSolverParametersDefaults() {
     
     m_solver_parameters.binv_scale   = false;
     m_solver_parameters.lump_mass    = true;
+    
+    m_solver_parameters.multi_init   = 0;
 }
 
 
@@ -2737,6 +2777,18 @@ void SpaceTimeMatrix::SolveAMG()
             SetBoomerAMGOptions(m_solver_parameters.printLevel, m_solver_parameters.maxiter, m_solver_parameters.tol);
             // Build AMG hierarchy based on current value of A
             HYPRE_BoomerAMGSetup(m_solver, m_A, m_b, m_x); // NOTE: Values of b and x are ignored by this function!
+            
+            
+            // experimenting with extracting CF splitting from solver object
+            // hypre_ParAMGData   *amg_data = (hypre_ParAMGData*) m_solver;
+            // HYPRE_Int          **CF_marker_array;
+            // CF_marker_array = hypre_ParAMGDataCFMarkerArray(amg_data);
+            // 
+            // for (int level = 0; level < 1; level++) {
+            //     for (int DOF = 0; DOF < 5; DOF++)
+            //     std::cout << "CF[level="<< level << "][" << DOF << "] = " << CF_marker_array[level][DOF] << '\n';
+            // } 
+            
             if (m_globRank == 0) std::cout << "Solver assembled.\n";
             m_rebuildSolver = false; // Don't rebuild solver again unless explicitly told to
         }

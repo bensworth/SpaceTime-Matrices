@@ -52,6 +52,8 @@ struct Solver_parameters {
     
     bool   binv_scale;          /* Scale by block inverse if mass matrix is block diagonal */
     bool   lump_mass;           /* Lump mass matrix so that it's diagonal */
+    
+    int    multi_init;          /* Technique for initializing multistep solution. 0 == RK integration; 1 == User provided exact solution */
 };
 
 

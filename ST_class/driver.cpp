@@ -79,6 +79,7 @@ int main(int argc, char *argv[])
     int binv_scale   = 0;
     int lump_mass    = 1;
     
+    int multi_init   = 0; 
 
     /* --- Spatial discretization parameters --- */
     int spatialDisc  = 3;
@@ -92,7 +93,8 @@ int main(int argc, char *argv[])
 
     // Initialize solver options struct with default parameters */
     Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, 
-                                    AMGiters, precon_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass)};
+                                    AMGiters, precon_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass), 
+                                    multi_init};
 
 
 
@@ -114,7 +116,7 @@ int main(int argc, char *argv[])
     // const char* temp_postrelax = "FA";
 
     // The "standard" AIR parameters used in SetAIR()
-    AMG_parameters AMG = {1.5, "A", "FFC", 100, 3, 6, 0.005, 0.0, 0.0, 0.0, 1};
+    AMG_parameters AMG = {1.5, "A", "FFC", 100, 0, 6, 0.005, 0.0, 0.0, 0.0, 1};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "FFC";
     
@@ -149,7 +151,9 @@ int main(int argc, char *argv[])
     args.AddOption(&lump_mass, "-lump", "--lump-mass",
                   "Lump mass matrix to be diagonal.");  
     args.AddOption(&binv_scale, "-binv", "--scale-binv",
-                  "Scale linear system by inverse of mass diagonal blocks.");                
+                  "Scale linear system by inverse of mass diagonal blocks."); 
+    args.AddOption(&(solver.multi_init), "-minit", "--multi-init",
+                  "Technique for initializing multistep starting values.");                
                   
     /* Spatial discretization */
     args.AddOption(&spatialDisc, "-s", "--spatial-disc",
