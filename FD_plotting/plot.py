@@ -185,20 +185,23 @@ else:
 if params["space_dim"] == 1:
     nx = NX
     nt = params["nt"]
-    x = np.linspace(-1, 1, nx+1)
-    x = x[:-1] # nx points in [-1, 1)
+    x = np.linspace(-1, 1, nx+1)    
+    if (params["problemID"] <= 100):
+        x = x[:-1] # nx points in [-1, 1) for periodic
+    else:
+        x = x[1:] # nx points in (-1, 1] for inflow
     T = params["dt"] * nt
 
     # The exact solutions for the test problems
     def uexact(x,t):
-        if params["problemID"] == 1:
+        if params["problemID"] == 1 or params["problemID"] == 101:
             temp = np.mod(x + 1  - t, 2) - 1
             #return np.cos(np.pi*temp) ** 4
             return np.sin(np.pi*temp) ** 4
             
-        elif (params["problemID"] == 2) or (params["problemID"] == 3):    
+        elif (params["problemID"] == 2) or (params["problemID"] == 3) or params["problemID"] == 102 or params["problemID"] == 103:    
             return np.cos(np.pi*(x - t)) * np.exp(np.cos(2*np.pi*t) - 1)
-            #return np.cos(np.pi*(x - t)) * np.exp(np.cos(t))/np.exp(1)
+            #return np.cos(np.pi*(x - t)) * np.exp(np.cos(t))/np.exp(1)    
 
     uT_exact = np.zeros(nx)
     for i in range(0,nx):

@@ -41,6 +41,8 @@ class FDadvection : public SpaceTimeMatrix
 private:
     
     bool m_conservativeForm;                    /* TRUE == PDE in conservative form; FALSE == PDE in non-conservative form */
+    bool m_periodic;                            /* Periodic boundaries */
+    bool m_inflow;                              /* Inflow/outflow boundaries */
     int m_dim;                                  /* Number of spatial dimensions */
     int m_problemID;                            /* ID for test problems */
     int m_refLevels;                            /* Have nx == 2^(refLevels + 2) spatial DOFs */
@@ -60,6 +62,7 @@ private:
     std::vector<int>    m_neighboursLocalMinRow;/* Global index of first DOF owned by neighbouring procs */
     std::vector<int>    m_neighboursNxOnProc;   /* Number of DOFs in each direction owned by neighbouring procs */
     
+    int div_ceil(int numerator, int denominator);
 
 
     // Call when using spatial parallelism                          
@@ -147,6 +150,20 @@ private:
 
     double PDE_Solution(double x, double t);
     double PDE_Solution(double x, double y, double t);
+
+    double LagrangeOutflowCoefficient(int i, int k, int p);
+    double InflowBoundary(double t);
+    
+    void AppendInflowStencil1D(double * &G, double t);
+    
+    void OutflowStencil(int &outflowStencilNnz, double * &localOutflowWeights, int * &localOutflowInds, int stencilNnz, double * localWeights, int * localInds, int dim, int DOFInd); 
+
+    int factorial(int n) { return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n; };
+    
+    int GlobalIndToMeshInd(int globInd);
+    void GetInflowBoundaryDerivatives(double * &du, double t, int dim);
+    void GetInflowValues(std::map<int, double> &uGhost, double t, int dim);
+    double GetCentralFDApprox(std::function<double(double)> f, double x0, int order, double h);
 
 public:
 
