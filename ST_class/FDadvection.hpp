@@ -156,7 +156,7 @@ private:
     
     void AppendInflowStencil1D(double * &G, double t);
     
-    void OutflowStencil(int &outflowStencilNnz, double * &localOutflowWeights, int * &localOutflowInds, int stencilNnz, double * localWeights, int * localInds, int dim, int DOFInd); 
+    void GetOutflowDiscretization(int &outflowStencilNnz, double * &localOutflowWeights, int * &localOutflowInds, int stencilNnz, double * localWeights, int * localInds, int dim, int DOFInd); 
 
     int factorial(int n) { return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n; };
     

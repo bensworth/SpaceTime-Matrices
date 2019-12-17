@@ -273,7 +273,7 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
         
     /* Test problems with inflow/outflow boundaries */
     } else if (m_problemID == 101) { /* Constant-coefficient */
-        m_conservativeForm  = true; 
+        m_conservativeForm  = !true; 
         m_L_isTimedependent = false;
         m_G_isTimedependent = true; 
         m_PDE_soln_implemented = true;
@@ -977,14 +977,13 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
     double xIntLeftBndry  = MeshIndToPoint(m_order[0]/2 + 2, 0); // For x < this, stencil has some dependence on inflow
     double xIntRightBndry = MeshIndToPoint(m_nx[0] - div_ceil(m_order[0], 2) + 1, 0); // For x > this, stencil has some dependence on outflow ghost points
          
-         
     /* ------------------------------------------------------------------- */
     /* ------ Get CSR structure of L for all rows on this processor ------ */
     /* ------------------------------------------------------------------- */
     for (int row = localMinRow; row <= localMaxRow; row++) {
-        xInd = GlobalIndToMeshInd(xInd);    // Mesh index of point we're discretizing at
-        x    = MeshIndToPoint(row, xDim);   // Value of point we're discretizing at
-        
+        xInd = GlobalIndToMeshInd(row);    // Mesh index of point we're discretizing at
+        x    = MeshIndToPoint(xInd, xDim);   // Value of point we're discretizing at
+
         // Get function, which given an integer offset, computes wavespeed(x + dx * offset, t)
         localWaveSpeed = [this, x, dx, t](int offset) { return WaveSpeed(x + dx * offset, t); };
                 
@@ -1025,7 +1024,7 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
                 int      xOutflowStencilNnz;
                 int    * localOutflowInds;
                 double * localOutflowWeights;
-                OutflowStencil(xOutflowStencilNnz, localOutflowWeights, localOutflowInds, xStencilNnz, localWeights, localInds, 0, xInd); 
+                GetOutflowDiscretization(xOutflowStencilNnz, localOutflowWeights, localOutflowInds, xStencilNnz, localWeights, localInds, 0, xInd); 
                 
                 // Add in stencil after potentially performing extrapolation
                 for (int count = 0; count < xOutflowStencilNnz; count++) {
@@ -1070,7 +1069,7 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
 // Hard-coded to assume that stencil of any point uses wind blowing from left to right.
 
 // DOFInd is the index of x_{DOFInd}. This is the point we're discretizing at
-void FDadvection::OutflowStencil(int &outflowStencilNnz, double * &localOutflowWeights, int * &localOutflowInds, 
+void FDadvection::GetOutflowDiscretization(int &outflowStencilNnz, double * &localOutflowWeights, int * &localOutflowInds, 
                                     int stencilNnz, double * localWeights, int * localInds, int dim, int xInd) 
 {
     
@@ -1378,7 +1377,7 @@ void FDadvection::GetInflowBoundaryDerivatives(double * &du, double t, int dim)
                 // }
                 
                 if (m_order[dim] >= 3)  {
-                    std::cout << "WARNING: Inflow derivative of this order " << m_order[dim]-1 << " not implemented" << '\n';
+                    std::cout << "WARNING: Inflow derivative of order " << m_order[dim]-1 << " not implemented" << '\n';
                     MPI_Finalize();
                     exit(1);
                 }
@@ -1394,24 +1393,24 @@ void FDadvection::GetInflowBoundaryDerivatives(double * &du, double t, int dim)
                 // 2nd derivative
                 if (m_order[dim] >= 3) {
                     du[2] = 0.0;
-                    
+                
                     std::function<double(double)> f;
                     double df;
-                    
+                
                     // 1st-term
                     f = [this, t, dInflowBoundary](double x) { return (PDE_Source(x,t) - dInflowBoundary)/WaveSpeed(x, t); };
                     df = GetCentralFDApprox(f, xIn, 1, h);
                     du[2] += df;
-                    
+                
                     f = [this, xIn](double tdummy) { return (PDE_Source(xIn, tdummy) - 1.0)/WaveSpeed(xIn, tdummy); };
                     df = GetCentralFDApprox(f, t, 1, h);
                     du[2] -= df/WaveSpeedIn;
-                    
-                    du[2] -= GetCentralFDApprox(myInflowBoundary, t, 2, h)/(WaveSpeedIn*WaveSpeedIn);
+                
+                    du[2] += GetCentralFDApprox(myInflowBoundary, t, 2, h)/(WaveSpeedIn*WaveSpeedIn);
                 }
                 
                 if (m_order[dim] >= 4)  {
-                    std::cout << "WARNING: Inflow derivative of this order " << m_order[dim]-1 << " not implemented" << '\n';
+                    std::cout << "WARNING: Inflow derivative of order " << m_order[dim]-1 << " not implemented" << '\n';
                     MPI_Finalize();
                     exit(1);
                 }
@@ -1455,7 +1454,8 @@ void FDadvection::GetInflowValues(std::map<int, double> &uGhost, double t, int d
     
     // Approximate solution at p/2 ghost points using Taylor series based at inflow
     for (int i = -1; i >= -m_order[dim]/2; i--) {
-        for (int k = 0; k <= m_order[dim]-1; k++) {
+        uGhost[i] = du[0]; // 0th-order derivative
+        for (int k = 1; k <= m_order[dim]-1; k++) {
             uGhost[i] += pow(i*m_dx[dim], k) / factorial(k) * du[k];
         }
     }
@@ -1485,31 +1485,30 @@ void FDadvection::AppendInflowStencil1D(double * &G, double t) {
     int * plusInds;
     double * plusWeights;
     get1DUpwindStencil(plusInds, plusWeights, xDim);
-    
-    
+
     // Generate stencils for wind blowing right to left by reversing stencils
     // NOTE: We shouldn't need these here since wind is assumed to blow left to right at all these points near
     // the boundary, but we need these arrays for the implementation that gets the stencil 
-    int * minusInds       = new int[xStencilNnz];
-    double * minusWeights = new double[xStencilNnz];
-    for (int i = 0; i < xStencilNnz; i++) {
-        minusInds[i]    = -plusInds[xFD_Order-i];
-        minusWeights[i] = -plusWeights[xFD_Order-i];
-    } 
+    int * minusInds       = NULL;
+    double * minusWeights = NULL;
     
     // Placeholder for weights and indices to discretize derivative at each point
     double * localWeights = new double[xStencilNnz];
     int * localInds; // This will just point to an existing array, doesn't need memory allocated!
+    int xInd;
     double x;
+    
     
     // Get function, which given an integer offset, computes wavespeed(x + dx * offset, t)
     std::function<double(int)> localWaveSpeed;  
     
     // There are p/2+1 DOFs whose stencil depends on inflow and potentially ghost points
     for (int row = 0; row <= m_order[0]/2; row++) {
+        
+        xInd = GlobalIndToMeshInd(row);
             
         // Value of grid point we're discretizing at
-        x = MeshIndToPoint(row+1, xDim); // NOTE: row i is associated with DOF at point x_{i+1} since x_0 eliminated through BCs!
+        x = MeshIndToPoint(xInd, xDim); 
         
         // Get function, which given an integer offset, computes wavespeed(x + dx * offset, t)
         localWaveSpeed = [this, x, dx, t](int offset) { return WaveSpeed(x + dx * offset, t); };
@@ -1520,9 +1519,9 @@ void FDadvection::AppendInflowStencil1D(double * &G, double t) {
                                         minusWeights, minusInds, xStencilNnz);
             
         // Loop over entries in stencil, adding couplings to boundary point or ghost points                            
-        // TODO: Why do I have to subtract here??
+        // TODO: Why do I have to subtract and not add here??
         for (int count = 0; count < xStencilNnz; count++) {
-            if (row + localInds[count] < 0) G[row] -= localWeights[count] * uGhost[row+1 + localInds[count]]; // Account for row i being associated with x_{i+1} by using row + 1
+            if (xInd + localInds[count] <= 0) G[row] -= localWeights[count] * uGhost[xInd + localInds[count]]; 
         }                                 
     }
 }
