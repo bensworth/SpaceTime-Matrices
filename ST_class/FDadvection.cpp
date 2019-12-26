@@ -273,7 +273,7 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
         
     /* Test problems with inflow/outflow boundaries */
     } else if (m_problemID == 101) { /* Constant-coefficient */
-        m_conservativeForm  = !true; 
+        m_conservativeForm  = true; 
         m_L_isTimedependent = false;
         m_G_isTimedependent = true; 
         m_PDE_soln_implemented = true;
@@ -1332,95 +1332,96 @@ void FDadvection::getSpatialDiscretizationG(double * &G, int &spatialDOFs, doubl
 }
 
 
-// Get (p-k)th-order approximations to kth spatial derivative of u at boundary, k = 0,...,p-1
-// Will just approximate derivatives with finite differences...
-void FDadvection::GetInflowBoundaryDerivatives(double * &du, double t, int dim)
+/* Get the first p-1 derivatives of u at the inflow boundary at time t0
+
+NOTES:
+    -All derivatives are approximated via 2nd-order centred finite differences
+    
+    -Lots of terms here are explicitly written as functions of time so that higher-order
+        derivatives that use them can perform numerical differentiation in time
+*/
+void FDadvection::GetInflowBoundaryDerivatives1D(double * &du, double t0)
 {
+    //int p = m_order[0]-1; // Hack for seeing if I really need all the derivatives...
+    int p = m_order[0]; // Order of spatial discretization
+    du    = new double[p]; 
+    du[0] = InflowBoundary(t0); // The boundary itself. i.e, the 0th-derivative 
     
-    du = new double[m_order[dim]]; 
-    
-    du[0] = InflowBoundary(t); // The boundary itself. i.e, the 0th-derivative there
-    
-    
-    // Only higher than 1st-order schemes need more than 0th derivative
-    if (m_order[dim] > 1) {
+    /* ------------------- */
+    /* --- Compute u_x --- */
+    /* ------------------- */
+    if (p >= 2) {
+        double h = 1e-6;            // Spacing used in FD approximations of derivatives
+        double x0 = m_boundary0[0]; // Coordinate of inflow boundary
         
+        std::function<double(double)> s_x0 = [&, this](double t) { return PDE_Source(x0, t); };
+        std::function<double(double)> a_x0 = [&, this](double t) { return WaveSpeed(x0, t); };
         
-        // One spatial dimension
-        if (m_dim == 1) {
-            double h = 1e-7; // Spacing used in FD formulae
+        std::function<double(double, double)> a = [this](double x, double t) { return WaveSpeed(x, t); };
+        
+        // x-derivative of wave speed evaluated at point x0 as a function of time
+        std::function<double(double)> dadx_x0 = [&, this](double t) 
+                { return GetCentralFDApprox([&, this](double x) { return a(x, t); }, x0, 1, h); };
+        
+        std::function<double(double)> z    = [this](double t) { return InflowBoundary(t); };
+        
+        // t-derivative of BC as a function of time
+        std::function<double(double)> dzdt = [&, this](double t) { return GetCentralFDApprox(z, t, 1, h); };
+        
+        // x-derivative of u as a function of time
+        std::function<double(double)> dudx;
+        
+        // Get u_x(x0,t) as a function of time depending on form of PDE
+        if (m_conservativeForm) {
+            dudx = [&, this](double t) { return (s_x0(t) - dadx_x0(t)*z(t) - dzdt(t))/a_x0(t); };
+        } else {
+            dudx = [&, this](double t) { return (s_x0(t) - dzdt(t))/a_x0(t); };
+        }
+        
+        // Evaluate u_x(x0,t) at time t0
+        du[1] = dudx(t0);
+        
+        /* -------------------- */
+        /* --- Compute u_xx --- */
+        /* -------------------- */
+        if (p >= 3) {
+            std::function<double(double, double)> s = [this](double x, double t) { return PDE_Source(x, t); };
+            // x-derivative of source evaluated at point x0 as a function of time
+            std::function<double(double)> dsdx_x0 = [&, this](double t) 
+                    { return GetCentralFDApprox([&, this](double x) { return s(x, t); }, x0, 1, h); };
             
-            // Coordinate of inflow boundary
-            double xIn = m_boundary0[dim];            
+            // xx-derivative of wave speed evaluated at point x0 as a function of time
+            std::function<double(double)> d2adx2_x0 = [&, this](double t) 
+                    { return GetCentralFDApprox([&, this](double x) { return a(x, t); }, x0, 2, h); };
             
-            double PDE_SourceIn = PDE_Source(xIn, t);
-            double WaveSpeedIn = WaveSpeed(xIn, t);
+            // x-derivative of reciprocal of wave speed evaluated at point x0 as a function of time
+            std::function<double(double)> dradx_x0 = [&, this](double t) 
+                    { return GetCentralFDApprox([&, this](double x) { return 1.0/a(x, t); }, x0, 1, h); };
             
-            std::function<double(double)> myWaveSpeedIn = [this, t](double x) { return WaveSpeed(x, t); };
-            double dWaveSpeedIn = GetCentralFDApprox(myWaveSpeedIn, xIn, 1, h);
+            // xt-derivative of u as a function of time
+            std::function<double(double)> d2udxdt = [&, this](double t) { return GetCentralFDApprox(dudx, t, 1, h); };
             
-            std::function<double(double)> myInflowBoundary = [this](double tdummy) { return InflowBoundary(tdummy); };
-            double dInflowBoundary = GetCentralFDApprox(myInflowBoundary, t, 1, h);
+            // xx-derivative of u as a function of time
+            std::function<double(double)> d2udx2;
             
-            
-            
-            // Conservative PDE
+            // Get u_xx(x0,t) as a function of time depending on form of PDE
             if (m_conservativeForm) {
-                
-                // 1st-derivative
-                if (m_order[dim] >= 2) {
-                    du[1] = (PDE_SourceIn - dWaveSpeedIn * InflowBoundary(t) - dInflowBoundary)/WaveSpeedIn;
-                }
-                // // 2nd derivative
-                // if (m_order[dim] >= 3) {
-                //     du[2] = 
-                // }
-                
-                if (m_order[dim] >= 3)  {
-                    std::cout << "WARNING: Inflow derivative of order " << m_order[dim]-1 << " not implemented" << '\n';
-                    MPI_Finalize();
-                    exit(1);
-                }
-                
-            // Non-conservative PDE
+                d2udx2 = [&, this](double t) { return (dsdx_x0(t) - d2adx2_x0(t)*z(t) - dadx_x0(t)*dudx(t) - d2udxdt(t))/a_x0(t) 
+                                                + dradx_x0(t)*(s_x0(t) - dadx_x0(t)*z(t) - dzdt(t)); };
             } else {
-                
-                // 1st-derivative
-                if (m_order[dim] >= 2) {
-                    du[1] = (PDE_SourceIn - dInflowBoundary)/WaveSpeedIn;
-                }
-                
-                // 2nd derivative
-                if (m_order[dim] >= 3) {
-                    du[2] = 0.0;
-                
-                    std::function<double(double)> f;
-                    double df;
-                
-                    // 1st-term
-                    f = [this, t, dInflowBoundary](double x) { return (PDE_Source(x,t) - dInflowBoundary)/WaveSpeed(x, t); };
-                    df = GetCentralFDApprox(f, xIn, 1, h);
-                    du[2] += df;
-                
-                    f = [this, xIn](double tdummy) { return (PDE_Source(xIn, tdummy) - 1.0)/WaveSpeed(xIn, tdummy); };
-                    df = GetCentralFDApprox(f, t, 1, h);
-                    du[2] -= df/WaveSpeedIn;
-                
-                    du[2] += GetCentralFDApprox(myInflowBoundary, t, 2, h)/(WaveSpeedIn*WaveSpeedIn);
-                }
-                
-                if (m_order[dim] >= 4)  {
-                    std::cout << "WARNING: Inflow derivative of order " << m_order[dim]-1 << " not implemented" << '\n';
-                    MPI_Finalize();
-                    exit(1);
-                }
+                d2udx2 = [&, this](double t) { return (dsdx_x0(t) - d2udxdt(t))/a_x0(t) 
+                                                + dradx_x0(t)*(s_x0(t) - dzdt(t)); };
             }
             
-        } else {
-            // TODO : 2D
-            std::cout << "WARNING: only 1d inflow derivatives implemented" << '\n';
-            MPI_Finalize();
-            exit(1);
+            // Evaluate u_xx(x0,t) at time t0
+            du[2] = d2udx2(t0);
+            //du[0] = 0.0;
+            
+            if (p >= 4)  {
+                std::cout << "WARNING: Inflow derivatives only implemented up to degree 2\n";
+                MPI_Finalize();
+                exit(1);
+            }
         }
     }
 }
@@ -1449,13 +1450,14 @@ void FDadvection::GetInflowValues(std::map<int, double> &uGhost, double t, int d
 {
     
     double * du;
-    GetInflowBoundaryDerivatives(du, t, dim);
+    GetInflowBoundaryDerivatives1D(du, t);
     uGhost[0] = du[0]; // The inflow boundary value itself
     
     // Approximate solution at p/2 ghost points using Taylor series based at inflow
     for (int i = -1; i >= -m_order[dim]/2; i--) {
         uGhost[i] = du[0]; // 0th-order derivative
-        for (int k = 1; k <= m_order[dim]-1; k++) {
+        for (int k = 1; k <= m_order[dim]-1; k++) { // True value??
+        //for (int k = 1; k <= m_order[dim]-2; k++) { // Works almost identically???
             uGhost[i] += pow(i*m_dx[dim], k) / factorial(k) * du[k];
         }
     }

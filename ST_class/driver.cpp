@@ -29,9 +29,15 @@ mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -nt 60 -t 122 -o 2 -l 6 -p 2 -gmres 1 -pp
 -The blow up at the first iteration increases as the mesh is refined
 -Convergence rate is influenced by number of procs (but I'm not using the on proc trinagular solve, am I?)
 
-    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 61 -o 2 -l 6 -p 2 -gmres 0 -tol 1e-5 -FD 1 -saveX 1 
-    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 121 -o 2 -l 7 -p 2 -gmres 0 -tol 1e-5 -FD 1 -saveX 1 
-    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 241 -o 2 -l 8 -p 2 -gmres 0 -tol 1e-5 -FD 1 -saveX 1 
+#---PERIODIC BCs
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 61 -o 2 -l 6 -p 2 -gmres 0 -tol 1e-5 -FD 1 -save 2 
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 121 -o 2 -l 7 -p 2 -gmres 0 -tol 1e-5 -FD 1 -save 2 
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 241 -o 2 -l 8 -p 2 -gmres 0 -tol 1e-5 -FD 1 -save 2 
+    
+#---INFLOW BCs    
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 61 -o 2 -l 6 -p 2 -gmres 0 -tol 1e-5 -FD 101 -save 2 
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 121 -o 2 -l 7 -p 2 -gmres 0 -tol 1e-5 -FD 101 -save 2 
+    mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 241 -o 2 -l 8 -p 2 -gmres 0 -tol 1e-5 -FD 101 -save 2 
 */
 
 
@@ -56,7 +62,7 @@ int main(int argc, char *argv[])
     int dim          = 2;
     
     int save_mat     = 0;
-    int save_sol     = 0;
+    int saveLevel    = 0;  // Don't save anything by default
     const char * out = ""; // Filename of data to be saved...
     
     int timeDisc     = 211;
@@ -174,10 +180,8 @@ int main(int argc, char *argv[])
     /* --- Text output of solution etc --- */              
     args.AddOption(&out, "-out", "--out",
                   "Name of output file."); 
-    args.AddOption(&save_mat, "-saveA", "--save-mat",
-                  "Boolean to save matrix to file.");
-    args.AddOption(&save_sol, "-saveX", "--save-sol",
-                  "Boolean to save solution to file.");
+    args.AddOption(&saveLevel, "-save", "--save-sol-data",
+                  "Level of information to save.");
                   
     /* --- AMG parameters --- */              
     args.AddOption(&(AMG.cycle_type), "-c", "--cycle-type",
@@ -304,7 +308,8 @@ int main(int argc, char *argv[])
         
         // BDF (implicit)
         } else if  (timeDisc >= 30 && timeDisc < 40) {
-            CFLlim = 1.0;
+            CFLlim = 0.8;
+            //CFLlim = 1.0;
             CFL_fraction = 1.0; // Use a CFL number of ...
             
             usingMultistep = true;
@@ -325,7 +330,8 @@ int main(int argc, char *argv[])
         
         dt *= CFL_fraction;
         
-        // // Manually set time to integrate to
+        
+        // // Manually set time to integrate to (just comment or uncomment this...)
         // double T = 2.0; // For 1D in space...
         // //double T = 2.0  * dt; // For 1D in space...
         // if (dim == 2) T = 0.5; // For 2D in space...
@@ -349,7 +355,7 @@ int main(int argc, char *argv[])
         // 
         // // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
         // dt = T / (nt - 1); 
-        
+        // 
         /* --- Get SPACETIMEMATRIX object --- */
         std::vector<int> n_px = {};
         if (px != -1) {
@@ -377,16 +383,18 @@ int main(int argc, char *argv[])
         STmatrix.Solve();
             
                 
-        if (save_sol) {
+        if (saveLevel >= 1) {
             std::string filename;
             if (std::string(out) == "") {
                 filename =  "data/U" + std::to_string(pit); // Default filename...
             } else {
                 filename = out;
             }
-            STmatrix.SaveX(filename);
-            //STmatrix.SaveRHS("b");
-            //STmatrix.SaveMatrix("A");
+            
+            if (saveLevel >= 2) STmatrix.SaveX(filename);
+            if (saveLevel >= 3) STmatrix.SaveMatrix("A");
+            if (saveLevel >= 3) STmatrix.SaveRHS("b");
+            
             
             double discerror;    
             bool gotdiscerror = STmatrix.GetDiscretizationError(discerror);
@@ -402,7 +410,7 @@ int main(int argc, char *argv[])
                 space_info["space_dim"]       = std::to_string(dim);
                 space_info["space_refine"]    = std::to_string(refLevels);
                 space_info["problemID"]       = std::to_string(FD_ProblemID);
-                for(int d = 0; d < n_px.size(); d++) {
+                for (int d = 0; d < n_px.size(); d++) {
                     space_info[std::string("p_x") + std::to_string(d)] = std::to_string(n_px[d]);
                 }
                 
@@ -411,6 +419,11 @@ int main(int argc, char *argv[])
                     space_info["discerror"].resize(16);
                     space_info["discerror"].resize(std::snprintf(&space_info["discerror"][0], 16, "%.6e", discerror));
                 } 
+                
+                if (dx != -1.0) {
+                    space_info["dx"].resize(16);
+                    space_info["dx"].resize(std::snprintf(&space_info["dx"][0], 16, "%.6e", dx));
+                }
 
                 STmatrix.SaveSolInfo(filename, space_info);    
             }

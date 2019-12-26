@@ -161,7 +161,7 @@ private:
     int factorial(int n) { return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n; };
     
     int GlobalIndToMeshInd(int globInd);
-    void GetInflowBoundaryDerivatives(double * &du, double t, int dim);
+    void GetInflowBoundaryDerivatives1D(double * &du, double t);
     void GetInflowValues(std::map<int, double> &uGhost, double t, int dim);
     double GetCentralFDApprox(std::function<double(double)> f, double x0, int order, double h);
 

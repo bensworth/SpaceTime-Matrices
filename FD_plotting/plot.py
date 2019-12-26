@@ -218,6 +218,8 @@ if params["space_dim"] == 1:
         plt.plot(x, uT_exact, linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
         plt.plot(x, uT, linestyle = "--", marker = "x", color = "b", label = "$u_{{\\rm{num}}}$")
         
+        #plt.semilogy(x, np.abs(uT_exact - uT), linestyle = "--", marker = "o", markerfacecolor = "none", color = "r", label = "$u_{{\\rm{exact}}}$")
+        
         plt.legend(fontsize = fs["fontsize"]-2)
         plt.title("$u(x,{:.2f})$".format(T), **fs)
         plt.xlabel("$x$", **fs)
