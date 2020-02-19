@@ -17,302 +17,6 @@
 //      - namespace for RK tableaux/AMG parameters? Keep structs separate from class? 
 
 
-/* Get discretization error for solution at final time T = nt*dt. 
-    Boolean return value indicates whether discretization error was set on the given process.
-    
-    Discretization error is computed in the (unscaled) 2-norm
-    
-    NOTE: The value of e2norm is set on process on 0 and the final process, 
-        but it may not be set on any other processes!
-*/
-bool SpaceTimeMatrix::GetDiscretizationError(double &e2norm)
-{
-    int      spaceLocalMinRow; 
-    int      spaceLocalMaxRow; 
-    int      spatialDOFs;
-    double * uexact;
-    bool     got_uexact;
-    bool     send_to_root = false; // Send my e2norm data to process 0 or not
-    
-    // Get PDE solution at final time on spatial communicator
-    if (m_useSpatialParallel) {
-        got_uexact = GetExactPDESolution(m_spatialComm, uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, m_dt*m_nt);
-    } else {
-        got_uexact = GetExactPDESolution(uexact, spatialDOFs, m_dt*m_nt);
-        spaceLocalMinRow = 0;
-        spaceLocalMaxRow = spatialDOFs - 1;
-    }
-
-    // Create new error vector so as not to edit m_x 
-    HYPRE_ParVector e   = NULL;
-    HYPRE_IJVector  eij = NULL;
-    
-    // Get numerical solution and compute solution
-    if (got_uexact)  {
-        int spaceOnProcSize = spaceLocalMaxRow - spaceLocalMinRow + 1; // Number of rows of spatial problem on process
-        
-        // The indices of m_x corresponding to u(T)
-        int * extract_indices = new int[spaceOnProcSize];
-        
-        // Space-time system: Need to extract last spatial component from space-time vector
-        if (m_pit) {
-            // uT distributed across multiple processors. 
-            if (m_useSpatialParallel) {
-                int uT_ind; // Global index of uT
-                if (m_RK) {
-                    uT_ind = m_nt * m_s_butcher - 1; // There are nt*s temporal DOFs
-                } else if (m_BDF) {
-                    uT_ind = m_nt - m_s_multi; // There are nt + 1 - s temporal DOFs
-                }
-                
-                // Extract all data on the spatial communicator associated with uT!
-                if (m_DOFInd == uT_ind) {            
-                    int spaceTimeLocalMinRow;
-                    int spaceTimeLocalMaxRow;
-                    HYPRE_IJVectorGetLocalRange(m_xij, &spaceTimeLocalMinRow, &spaceTimeLocalMaxRow);
-                    int spaceTimeOnProcSize = spaceTimeLocalMaxRow - spaceTimeLocalMinRow + 1;
-                    
-                    for (int i = 0; i < spaceTimeOnProcSize; i++) {
-                        extract_indices[i] = spaceTimeLocalMinRow + i;
-                    }
-                    
-                    // TODO: this edge case isn't quite right if nt == 1.
-                    // Process 0 is not participating in error calculation so it needs data from final process
-                    if (m_nt > 1) send_to_root = true; // For nt == 1, spatial parallelism means proc 0 might hold u(1)
-                    
-                // Just return, remaining processors won't participate in error calculation
-                } else {
-                    if (m_globRank == 0) {
-                        MPI_Recv(&e2norm, 1, MPI_DOUBLE, m_numProc-1, 0, m_globComm, MPI_STATUS_IGNORE);
-                        return true;
-                    } else {
-                        return false;
-                    }    
-                }
-                
-            // uT on last process only.
-            } else {
-                if (m_globRank == m_numProc-1) {
-                    
-                    // If more than one process, process 0 will not participate in error calculation
-                    if (m_numProc > 1) send_to_root = true;
-
-                    // TODO : Get last row on process, then extract the spatialDOFs up to that one...
-                    int spaceTimeLocalMinRow, spaceTimeLocalMaxRow;
-                    HYPRE_IJVectorGetLocalRange(m_xij, &spaceTimeLocalMinRow, &spaceTimeLocalMaxRow);
-                    
-                    // Extract last spatialDOFs entries from vector
-                    for (int i = 0; i < spatialDOFs; i++) {
-                        extract_indices[spatialDOFs-1 - i] = spaceTimeLocalMaxRow - i;
-                    }
-
-                // All but last process do not participate in calculation
-                } else {
-                    if (m_globRank == 0) {
-                        MPI_Recv(&e2norm, 1, MPI_DOUBLE, m_numProc-1, 0, m_globComm, MPI_STATUS_IGNORE);
-                        return true;
-                    } else {
-                        return false;
-                    }
-                }
-            }
-            
-        // Time-stepping: All processors participate in error calculation, extract all data from m_x
-        } else {       
-            for (int i = 0; i < spaceOnProcSize; i++) {
-                extract_indices[i] = i + spaceLocalMinRow;
-            }
-        }
-        
-        
-        /* ---------------------------------------------------- */
-        /* --- Extract u(T) from m_x and compute error norm --- */
-        /* ---------------------------------------------------- */
-        // Extract uT data from member vector
-        double * e_data = new double[spaceOnProcSize];
-        HYPRE_IJVectorGetValues(m_xij, spaceOnProcSize, extract_indices, e_data);
-        
-        // Compute entrywise error: Substract exact PDE soln from numerical soln
-        for (int i = 0; i < spaceOnProcSize; i++) {
-            e_data[i] -= uexact[i];
-        }
-        
-        // Assemble HYPRE error vector on spatial communicator for purposes of computing its norm
-        GetHypreVectorFromData(e, eij, m_spatialComm, e_data, spaceLocalMinRow, spaceLocalMaxRow); 
-        
-        // Compute (unscaled) two-norm of error. Only compute on process 0. Is this possible?
-        e2norm = sqrt(hypre_ParVectorInnerProd(e, e));
-        
-        // Only the last process sends its data to process 0 (But only if they're not the same thing!)
-        if (send_to_root && m_globRank == m_numProc-1) MPI_Send(&e2norm, 1, MPI_DOUBLE, 0, 0, m_globComm);
-        
-        // Clean up
-        delete[] extract_indices;
-        delete[] e_data;
-        HYPRE_IJVectorDestroy(eij);
-        
-        // Yes. Disc error was computed on this process.
-        return true;
-            
-            
-    // PDE solution not implemented
-    } else {
-        if (m_globRank == 0) std::cout << "WARNING: Exact PDE solution not implemented for current problem, cannot compute discretization error" << '\n';
-        return false;
-    }
-}
-    
-
-/* Update member variables for describing which component of the identity 
-mass-matrix the current process owns 
-
-This is a helper function for when the spatial discretization doesn't use a mass 
-matrix but we still need one in the form of an identity matrix
-
-TODO : This is a little funny... I don't think the member variable should change over the life 
-of the code since I think a process will always own the same local range of a spatial
-discretization... But not convinced due to the way some of Ben's code is written, so just account for 
-the possiblity that they might change
-*/
-void SpaceTimeMatrix::setIdentityMassLocalRange(int localMinRow, int localMaxRow) 
-{    
-    // Reset local range if : Not previously set, has changed, or the rebuild flag has been set
-    if (m_M_localMinRow == -1 || m_M_localMaxRow == -1 || localMinRow != m_M_localMinRow || localMaxRow != m_M_localMaxRow || m_rebuildMass) {
-        m_M_localMinRow = localMinRow;
-        m_M_localMaxRow = localMaxRow;
-        m_rebuildMass   = true; // Ensures identity mass matrix will be build or rebuilt
-    }
-}
-
-
-/* Assmble some component of an identity mass matrix based on the member variables incidcating the local range owned by current process */
-void SpaceTimeMatrix::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
-{
-    // Ensure this function is not being called when the user has indicated that the spatial discretization does use a mass matrix
-    if (m_M_exists) {
-        std::cout << "WARNING: Spatial discretization subclass must implement mass matrix!" << '\n';
-        MPI_Finalize();
-        exit(1);
-    }
-    
-    
-    // Ensure that local range variables have been set before we try to assmble
-    if (m_M_localMinRow == -1 || m_M_localMaxRow == -1) {
-        std::cout << "WARNING: Local range of identity mass matrix must be set before 'getMassMatrix' is called" << '\n';
-        MPI_Finalize();
-        exit(1);
-    }
-    
-    // Only build or rebuild mass matrix if this flag has been set
-    if (m_rebuildMass) {
-        m_rebuildMass = false; // Don't rebuild unless this flag is changed
-        
-        // Free existing member variables since we're updating them
-        if (m_M_rowptr)  delete[] m_M_rowptr;
-        if (m_M_colinds) delete[] m_M_colinds;
-        if (m_M_data)    delete[] m_M_data;
-        
-        int onProcSize = m_M_localMaxRow - m_M_localMinRow + 1; // Number of rows to assemble
-
-        // Build some component of the sparse identity
-        m_M_rowptr    = new int[onProcSize+1];
-        m_M_colinds   = new int[onProcSize];
-        m_M_data      = new double[onProcSize];
-        m_M_rowptr[0] = 0;
-        int rowcount  = 0;
-        for (int row = m_M_localMinRow; row <= m_M_localMaxRow; row++) {
-            m_M_colinds[rowcount]  = row;
-            m_M_data[rowcount]     = 1.0;
-            m_M_rowptr[rowcount+1] = rowcount+1;
-            rowcount += 1;
-        }
-        
-        // As a test for inverting mass matrix, make it be the 1D Laplacian....
-        // int nnz = 3*onProcSize;
-        // m_M_rowptr    = new int[onProcSize+1];
-        // m_M_colinds   = new int[nnz];
-        // m_M_data      = new double[nnz];
-        // m_M_rowptr[0] = 0;
-        // int dataInd = 0;
-        // int rowcount = 0;
-        // for (int row = m_M_localMinRow; row <= m_M_localMaxRow; row++) {
-        //     if (row == m_M_localMinRow) {
-        //         m_M_data[dataInd] = 2.0;
-        //         m_M_colinds[dataInd] = row;
-        //         dataInd += 1;
-        //         m_M_data[dataInd] = -1.0;
-        //         m_M_colinds[dataInd] = row+1;
-        //         dataInd += 1;
-        //     } else if (row == m_M_localMaxRow) {
-        //         m_M_data[dataInd] = -1.0;
-        //         m_M_colinds[dataInd] = row-1;
-        //         dataInd += 1;
-        //         m_M_data[dataInd] = 2.0;
-        //         m_M_colinds[dataInd] = row;
-        //         dataInd += 1;
-        //     } else {
-        //         m_M_data[dataInd] = -1.0;
-        //         m_M_colinds[dataInd] = row-1;
-        //         dataInd += 1;
-        //         m_M_data[dataInd] = 2.0;
-        //         m_M_colinds[dataInd] = row;
-        //         dataInd += 1;
-        //         m_M_data[dataInd] = -1.0;
-        //         m_M_colinds[dataInd] = row+1;
-        //         dataInd += 1;
-        //     }
-        //     m_M_rowptr[rowcount+1] = dataInd;
-        //     rowcount += 1;
-        // }
-    }
-    
-    // Direct input references to existing member variables
-    M_rowptr  = m_M_rowptr;
-    M_colinds = m_M_colinds; 
-    M_data    = m_M_data; 
-}
-
-
-// TODO remove these functions when implemented in all spatial discretizations..
-void SpaceTimeMatrix::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
-                                            int* &A_colinds, double* &A_data,
-                                            double* &U0, bool getU0, 
-                                            int &localMinRow, int &localMaxRow, 
-                                            int &spatialDOFs,
-                                            double t, int &bsize)  
-{
-    std::cout << "WARNING: The `getSpatialDiscretizationL' has not been implemented in the derived spatial discretization class" << '\n';
-    MPI_Finalize();
-    exit(1);
-}                                                                            
-void SpaceTimeMatrix::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
-                                            int &localMinRow, int &localMaxRow,
-                                            int &spatialDOFs, double t)
-{
-    std::cout << "WARNING: The `getSpatialDiscretizationG' has not been implemented in the derived spatial discretization class" << '\n';
-    MPI_Finalize();
-    exit(1);
-}   
-void SpaceTimeMatrix::getSpatialDiscretizationL(int* &A_rowptr, 
-                                            int* &A_colinds, double* &A_data,
-                                            double* &U0, bool getU0, 
-                                            int &spatialDOFs,
-                                            double t, int &bsize)  
-{
-    std::cout << "WARNING: The `getSpatialDiscretizationL' has not been implemented in the derived spatial discretization class" << '\n';
-    MPI_Finalize();
-    exit(1);
-}                                                        
-void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t)
-{
-    std::cout << "WARNING: The `getSpatialDiscretizationG' has not been implemented in the derived spatial discretization class" << '\n';
-    MPI_Finalize();
-    exit(1);
-}                                                                          
-
-
-
-
 SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists, 
                                     int timeDisc, int nt, double dt)
     : m_globComm{globComm}, m_pit{pit}, m_M_exists{M_exists}, m_timeDisc{timeDisc}, m_nt{nt}, m_dt{dt},
@@ -544,9 +248,6 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
 }
 
 
-
-
-
 SpaceTimeMatrix::~SpaceTimeMatrix()
 {
     DestroyHypreMemberVariables();
@@ -562,6 +263,299 @@ SpaceTimeMatrix::~SpaceTimeMatrix()
     
     // TODO : destroy mass matrix member variables here...
 }
+
+
+/* Get discretization error for solution at final time T = nt*dt. 
+    Boolean return value indicates whether discretization error was set on the given process.
+    
+    Discretization error is computed in the (unscaled) 2-norm
+    
+    NOTE: The value of e2norm is set on process on 0 and the final process, 
+        but it may not be set on any other processes!
+*/
+bool SpaceTimeMatrix::GetDiscretizationError(double &e2norm)
+{
+    int      spaceLocalMinRow; 
+    int      spaceLocalMaxRow; 
+    int      spatialDOFs;
+    double * uexact;
+    bool     got_uexact;
+    bool     send_to_root = false; // Send my e2norm data to process 0 or not
+    
+    // Get PDE solution at final time on spatial communicator
+    if (m_useSpatialParallel) {
+        got_uexact = GetExactPDESolution(m_spatialComm, uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, m_dt*m_nt);
+    } else {
+        got_uexact = GetExactPDESolution(uexact, spatialDOFs, m_dt*m_nt);
+        spaceLocalMinRow = 0;
+        spaceLocalMaxRow = spatialDOFs - 1;
+    }
+
+    // Create new error vector so as not to edit m_x 
+    HYPRE_ParVector e   = NULL;
+    HYPRE_IJVector  eij = NULL;
+    
+    // Get numerical solution and compute solution
+    if (got_uexact)  {
+        int spaceOnProcSize = spaceLocalMaxRow - spaceLocalMinRow + 1; // Number of rows of spatial problem on process
+        
+        // The indices of m_x corresponding to u(T)
+        int * extract_indices = new int[spaceOnProcSize];
+        
+        // Space-time system: Need to extract last spatial component from space-time vector
+        if (m_pit) {
+            // uT distributed across multiple processors. 
+            if (m_useSpatialParallel) {
+                int uT_ind; // Global index of uT
+                if (m_RK) {
+                    uT_ind = m_nt * m_s_butcher - 1; // There are nt*s temporal DOFs
+                } else if (m_BDF) {
+                    uT_ind = m_nt - m_s_multi; // There are nt + 1 - s temporal DOFs
+                }
+                
+                // Extract all data on the spatial communicator associated with uT!
+                if (m_DOFInd == uT_ind) {            
+                    int spaceTimeLocalMinRow;
+                    int spaceTimeLocalMaxRow;
+                    HYPRE_IJVectorGetLocalRange(m_xij, &spaceTimeLocalMinRow, &spaceTimeLocalMaxRow);
+                    int spaceTimeOnProcSize = spaceTimeLocalMaxRow - spaceTimeLocalMinRow + 1;
+                    
+                    for (int i = 0; i < spaceTimeOnProcSize; i++) {
+                        extract_indices[i] = spaceTimeLocalMinRow + i;
+                    }
+                    
+                    // TODO: this edge case isn't quite right if nt == 1.
+                    // Process 0 is not participating in error calculation so it needs data from final process
+                    if (m_nt > 1) send_to_root = true; // For nt == 1, spatial parallelism means proc 0 might hold u(1)
+                    
+                // Just return, remaining processors won't participate in error calculation
+                } else {
+                    if (m_globRank == 0) {
+                        MPI_Recv(&e2norm, 1, MPI_DOUBLE, m_numProc-1, 0, m_globComm, MPI_STATUS_IGNORE);
+                        return true;
+                    } else {
+                        return false;
+                    }    
+                }
+                
+            // uT on last process only.
+            } else {
+                if (m_globRank == m_numProc-1) {
+                    
+                    // If more than one process, process 0 will not participate in error calculation
+                    if (m_numProc > 1) send_to_root = true;
+
+                    // TODO : Get last row on process, then extract the spatialDOFs up to that one...
+                    int spaceTimeLocalMinRow, spaceTimeLocalMaxRow;
+                    HYPRE_IJVectorGetLocalRange(m_xij, &spaceTimeLocalMinRow, &spaceTimeLocalMaxRow);
+                    
+                    // Extract last spatialDOFs entries from vector
+                    for (int i = 0; i < spatialDOFs; i++) {
+                        extract_indices[spatialDOFs-1 - i] = spaceTimeLocalMaxRow - i;
+                    }
+
+                // All but last process do not participate in calculation
+                } else {
+                    if (m_globRank == 0) {
+                        MPI_Recv(&e2norm, 1, MPI_DOUBLE, m_numProc-1, 0, m_globComm, MPI_STATUS_IGNORE);
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            
+        // Time-stepping: All processors participate in error calculation, extract all data from m_x
+        } else {       
+            for (int i = 0; i < spaceOnProcSize; i++) {
+                extract_indices[i] = i + spaceLocalMinRow;
+            }
+        }
+        
+        /* ---------------------------------------------------- */
+        /* --- Extract u(T) from m_x and compute error norm --- */
+        /* ---------------------------------------------------- */
+        // Extract uT data from member vector
+        double * e_data = new double[spaceOnProcSize];
+        HYPRE_IJVectorGetValues(m_xij, spaceOnProcSize, extract_indices, e_data);
+        
+        // Compute entrywise error: Substract exact PDE soln from numerical soln
+        for (int i = 0; i < spaceOnProcSize; i++) {
+            e_data[i] -= uexact[i];
+        }
+        
+        // Assemble HYPRE error vector on spatial communicator for purposes of computing its norm
+        GetHypreVectorFromData(e, eij, m_spatialComm, e_data, spaceLocalMinRow, spaceLocalMaxRow); 
+        
+        // Compute (unscaled) two-norm of error. Only compute on process 0. Is this possible?
+        e2norm = sqrt(hypre_ParVectorInnerProd(e, e));
+        
+        // Only the last process sends its data to process 0 (But only if they're not the same thing!)
+        if (send_to_root && m_globRank == m_numProc-1) MPI_Send(&e2norm, 1, MPI_DOUBLE, 0, 0, m_globComm);
+        
+        // Clean up
+        delete[] extract_indices;
+        delete[] e_data;
+        HYPRE_IJVectorDestroy(eij);
+        
+        // Yes. Disc error was computed on this process.
+        return true;
+            
+            
+    // PDE solution not implemented
+    } else {
+        if (m_globRank == 0) std::cout << "WARNING: Exact PDE solution not implemented for current problem, cannot compute discretization error" << '\n';
+        return false;
+    }
+}
+    
+
+/* Update member variables for describing which component of the identity 
+mass-matrix the current process owns 
+
+This is a helper function for when the spatial discretization doesn't use a mass 
+matrix but we still need one in the form of an identity matrix
+
+TODO : This is a little funny... I don't think the member variable should change over the life 
+of the code since I think a process will always own the same local range of a spatial
+discretization... But not convinced due to the way some of Ben's code is written, so just account for 
+the possiblity that they might change
+*/
+void SpaceTimeMatrix::setIdentityMassLocalRange(int localMinRow, int localMaxRow) 
+{    
+    // Reset local range if : Not previously set, has changed, or the rebuild flag has been set
+    if (m_M_localMinRow == -1 || m_M_localMaxRow == -1 || localMinRow != m_M_localMinRow || localMaxRow != m_M_localMaxRow || m_rebuildMass) {
+        m_M_localMinRow = localMinRow;
+        m_M_localMaxRow = localMaxRow;
+        m_rebuildMass   = true; // Ensures identity mass matrix will be build or rebuilt
+    }
+}
+
+
+/* Assmble some component of an identity mass matrix based on the member variables incidcating the local range owned by current process */
+void SpaceTimeMatrix::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * &M_data)
+{
+    // Ensure this function is not being called when the user has indicated that the spatial discretization does use a mass matrix
+    if (m_M_exists) {
+        std::cout << "WARNING: Spatial discretization subclass must implement mass matrix!" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    // Ensure that local range variables have been set before we try to assmble
+    if (m_M_localMinRow == -1 || m_M_localMaxRow == -1) {
+        std::cout << "WARNING: Local range of identity mass matrix must be set before 'getMassMatrix' is called" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    // Only build or rebuild mass matrix if this flag has been set
+    if (m_rebuildMass) {
+        m_rebuildMass = false; // Don't rebuild unless this flag is changed
+        
+        // Free existing member variables since we're updating them
+        if (m_M_rowptr)  delete[] m_M_rowptr;
+        if (m_M_colinds) delete[] m_M_colinds;
+        if (m_M_data)    delete[] m_M_data;
+        
+        int onProcSize = m_M_localMaxRow - m_M_localMinRow + 1; // Number of rows to assemble
+
+        // Build some component of the sparse identity
+        m_M_rowptr    = new int[onProcSize+1];
+        m_M_colinds   = new int[onProcSize];
+        m_M_data      = new double[onProcSize];
+        m_M_rowptr[0] = 0;
+        int rowcount  = 0;
+        for (int row = m_M_localMinRow; row <= m_M_localMaxRow; row++) {
+            m_M_colinds[rowcount]  = row;
+            m_M_data[rowcount]     = 1.0;
+            m_M_rowptr[rowcount+1] = rowcount+1;
+            rowcount += 1;
+        }
+        
+        // As a test for inverting mass matrix, make it be the 1D Laplacian....
+        // int nnz = 3*onProcSize;
+        // m_M_rowptr    = new int[onProcSize+1];
+        // m_M_colinds   = new int[nnz];
+        // m_M_data      = new double[nnz];
+        // m_M_rowptr[0] = 0;
+        // int dataInd = 0;
+        // int rowcount = 0;
+        // for (int row = m_M_localMinRow; row <= m_M_localMaxRow; row++) {
+        //     if (row == m_M_localMinRow) {
+        //         m_M_data[dataInd] = 2.0;
+        //         m_M_colinds[dataInd] = row;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row+1;
+        //         dataInd += 1;
+        //     } else if (row == m_M_localMaxRow) {
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row-1;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = 2.0;
+        //         m_M_colinds[dataInd] = row;
+        //         dataInd += 1;
+        //     } else {
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row-1;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = 2.0;
+        //         m_M_colinds[dataInd] = row;
+        //         dataInd += 1;
+        //         m_M_data[dataInd] = -1.0;
+        //         m_M_colinds[dataInd] = row+1;
+        //         dataInd += 1;
+        //     }
+        //     m_M_rowptr[rowcount+1] = dataInd;
+        //     rowcount += 1;
+        // }
+    }
+    
+    // Direct input references to existing member variables
+    M_rowptr  = m_M_rowptr;
+    M_colinds = m_M_colinds; 
+    M_data    = m_M_data; 
+}
+
+
+// TODO remove these functions when implemented in all spatial discretizations..
+void SpaceTimeMatrix::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
+                                            int* &A_colinds, double* &A_data,
+                                            double* &U0, bool getU0, 
+                                            int &localMinRow, int &localMaxRow, 
+                                            int &spatialDOFs,
+                                            double t, int &bsize)  
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationL' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}                                                                            
+void SpaceTimeMatrix::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
+                                            int &localMinRow, int &localMaxRow,
+                                            int &spatialDOFs, double t)
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationG' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}   
+void SpaceTimeMatrix::getSpatialDiscretizationL(int* &A_rowptr, 
+                                            int* &A_colinds, double* &A_data,
+                                            double* &U0, bool getU0, 
+                                            int &spatialDOFs,
+                                            double t, int &bsize)  
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationL' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}                                                        
+void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t)
+{
+    std::cout << "WARNING: The `getSpatialDiscretizationG' has not been implemented in the derived spatial discretization class" << '\n';
+    MPI_Finalize();
+    exit(1);
+}                                                                          
+
 
 /* General solve function, calls appropriate time integration routine */
 void SpaceTimeMatrix::Solve() {

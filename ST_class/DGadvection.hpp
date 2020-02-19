@@ -24,16 +24,46 @@ private:
 	int m_dim;
 	Vector m_omega;
     Mesh* m_mesh;
-
+    ParMesh* m_pmesh;
+    ParBilinearForm* m_pbform;
+    ParLinearForm* m_plform;
+    BilinearForm* m_bform;
+    LinearForm* m_lform;
+    DG_FECollection *m_fec;
     
 
-	void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
-                                  int *&A_colinds, double *&A_data, double *&B,
-                                  double *&X, int &localMinRow, int &localMaxRow,
-                                  int &spatialDOFs, double t, int &bsize);
-	void getSpatialDiscretization(int *&A_rowptr, int *&A_colinds, double *&A_data,
-                                  double *&B, double *&X, int &spatialDOFs, double t,
-                                  int &bsize);
+    // TODO : Make all spatial discretization functions PURE VIRTUAL once they've been implemented!
+    virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
+                                           double * &G, 
+                                           int      &localMinRow, 
+                                           int      &localMaxRow,
+                                           int      &spatialDOFs, 
+                                           double    t);                                   
+    virtual void getSpatialDiscretizationL(const MPI_Comm &spatialComm, 
+                                           int    * &A_rowptr, 
+                                           int    * &A_colinds, 
+                                           double * &A_data,
+                                           double * &U0, 
+                                           bool      getU0, 
+                                           int      &localMinRow, 
+                                           int      &localMaxRow, 
+                                           int      &spatialDOFs,
+                                           double    t, 
+                                           int      &bsize);                                            
+                                          
+                                          
+    // Spatial discretization on one processor                                  
+    virtual void getSpatialDiscretizationG(double * &G, 
+                                           int      &spatialDOFs, 
+                                           double    t);
+    virtual void getSpatialDiscretizationL(int    * &A_rowptr, 
+                                           int    * &A_colinds, 
+                                           double * &A_data,
+                                           double * &U0, 
+                                           bool      getU0, 
+                                           int      &spatialDOFs,
+                                           double    t, 
+                                           int      &bsize);                                            
 	void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);  
     void addInitialCondition(const MPI_Comm &spatialComm, double *B);
     void addInitialCondition(double *B);
