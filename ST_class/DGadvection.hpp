@@ -24,8 +24,11 @@ private:
 	int m_dim;
 	Vector m_omega;
     Mesh* m_mesh;
-
-    
+    ParMesh *m_parmesh;
+	ParBilinearForm *m_pbform;
+	ParLinearForm *m_pbform;
+	BilinearForm *m_bform;
+	LinearForm *m_lform;
 
 	void getSpatialDiscretization(const MPI_Comm &spatialComm, int *&A_rowptr,
                                   int *&A_colinds, double *&A_data, double *&B,
