@@ -73,6 +73,7 @@ int main(int argc, char *argv[])
     double tol       = 1e-8;
     int maxiter      = 250;
     int printLevel   = 3;
+    int U0ID         = 0; 
     
     // Parameters if using GMRES as solver rather than AMG
     int use_gmres    = 0;
@@ -98,11 +99,9 @@ int main(int argc, char *argv[])
 
 
     // Initialize solver options struct with default parameters */
-    Solver_parameters solver = {tol, maxiter, printLevel, bool(use_gmres), gmres_preconditioner, 
+    Solver_parameters solver = {tol, maxiter, printLevel, U0ID, bool(use_gmres), gmres_preconditioner, 
                                     AMGiters, precon_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass), 
                                     multi_init};
-
-
 
     
     // double distance_R;
@@ -144,6 +143,8 @@ int main(int argc, char *argv[])
                   "Maximum number of linear solver iterations."); 
     args.AddOption(&(solver.printLevel), "-p", "--print-level",
                   "Hypre print level.");
+    args.AddOption(&(solver.U0ID), "-U0", "--initial-iterate",
+                  "ID of initial iterate for linear solver.");
     args.AddOption(&use_gmres, "-gmres", "--use-gmres",
                   "Boolean to use GMRES as solver (default with AMG preconditioning).");
     args.AddOption(&(solver.gmres_preconditioner), "-pre", "gmres-preconditioner",

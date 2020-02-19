@@ -42,6 +42,7 @@ struct Solver_parameters {
     double tol;                 /* Relative residual holting tolerance */
     int    maxiter;             /* Maximum number of solver iterations */
     int    printLevel;          /* Amount of information about solver */
+    int    U0ID;                /* ID for initial iterate used in solver */
     
     bool   use_gmres;           /* Use preconditioned GMRES as solver */
     int    gmres_preconditioner;/* Preconditioner for GMRES */
@@ -224,7 +225,8 @@ private:
                                            int    * &A_colinds, 
                                            double * &A_data,
                                            double * &U0, 
-                                           bool      getU0, 
+                                           bool      getU0,
+                                           int       U0ID, 
                                            int      &localMinRow, 
                                            int      &localMaxRow, 
                                            int      &spatialDOFs,
@@ -241,6 +243,7 @@ private:
                                            double * &A_data,
                                            double * &U0, 
                                            bool      getU0, 
+                                           int       U0ID,
                                            int      &spatialDOFs,
                                            double    t, 
                                            int      &bsize);                                            

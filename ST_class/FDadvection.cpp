@@ -11,6 +11,28 @@ int FDadvection::div_ceil(int numerator, int denominator)
         return res.rem ? (res.quot + 1) : res.quot;
 }
 
+/* Return data to be used as an initial iterate. Data depends on integer U0ID */
+double FDadvection::GetInitialIterate(double x, int U0ID) {
+    if (U0ID == -1) {  // PDE initial condition
+        return InitCond(x);
+    } else if (U0ID == 0) { // Zero  
+        return 0.0; 
+    } else { // Random number in [0,1]
+        return (double)rand() / (double)RAND_MAX;
+    }
+}
+
+/* Return data to be used as an initial iterate. Data depends on integer U0ID */
+double FDadvection::GetInitialIterate(double x, double y, int U0ID) {
+    if (U0ID == -1) {  // PDE initial condition
+        return InitCond(x, y);
+    } else if (U0ID == 0) { // Zero  
+        return 0.0; 
+    } else { // Random number in [0,1]
+        return (double)rand() / (double)RAND_MAX;
+    }
+}
+
 
 /* Exact solution for model problems. 
 
@@ -192,6 +214,9 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
                         m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID}, m_px{px},
                         m_periodic(false), m_inflow(false), m_PDE_soln_implemented(false)
 {    
+    // Seed random number generator so results are consistent!
+    srand(0);
+    
     /* ----------------------------------------------------------------------------------------------------- */
     /* --- Check specified proc distribution is consistent with the number of procs passed by base class --- */
     /* ----------------------------------------------------------------------------------------------------- */
@@ -434,7 +459,7 @@ FDadvection::~FDadvection()
 
 // NO SPATIAL PARALLELISM: Get local CSR structure of FD spatial discretization matrix, L
 void FDadvection::getSpatialDiscretizationL(int * &L_rowptr, int * &L_colinds,
-                                           double * &L_data, double * &U0, bool getU0,
+                                           double * &L_data, double * &U0, bool getU0, int U0ID,
                                            int &spatialDOFs, double t, int &bsize)
 {
     if (m_dim == 1) {
@@ -442,13 +467,13 @@ void FDadvection::getSpatialDiscretizationL(int * &L_rowptr, int * &L_colinds,
         int dummy1, dummy2;
         get1DSpatialDiscretizationL(NULL, L_rowptr,
                                       L_colinds, L_data, U0,
-                                      getU0, dummy1, dummy2,
+                                      getU0, U0ID, dummy1, dummy2,
                                       spatialDOFs, t, bsize);
     } else if (m_dim == 2) {
         // Call a serial implementation of 2D code
         get2DSpatialDiscretizationL(L_rowptr,
                                       L_colinds, L_data, U0,
-                                      getU0,
+                                      getU0, U0ID,
                                       spatialDOFs, t, bsize);
     }
 }
@@ -456,18 +481,18 @@ void FDadvection::getSpatialDiscretizationL(int * &L_rowptr, int * &L_colinds,
 // USING SPATIAL PARALLELISM: Get local CSR structure of FD spatial discretization matrix, L
 void FDadvection::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0, int &localMinRow, int &localMaxRow,
+                                              bool getU0, int U0ID, int &localMinRow, int &localMaxRow,
                                               int &spatialDOFs, double t, int &bsize) 
 {
     if (m_dim == 1) {
         get1DSpatialDiscretizationL(spatialComm, L_rowptr,
                                       L_colinds, L_data, U0,
-                                      getU0, localMinRow, localMaxRow,
+                                      getU0, U0ID, localMinRow, localMaxRow,
                                       spatialDOFs, t, bsize);
     } else if (m_dim == 2) {
         get2DSpatialDiscretizationL(spatialComm, L_rowptr,
                                       L_colinds, L_data, U0,
-                                      getU0, localMinRow, localMaxRow,
+                                      getU0, U0ID, localMinRow, localMaxRow,
                                       spatialDOFs, t, bsize);
     }
 }
@@ -478,7 +503,7 @@ void FDadvection::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L
 // USING SPATIAL PARALLELISM: Get local CSR structure of FD spatial discretization matrix, L
 void FDadvection::get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0, int &localMinRow, int &localMaxRow,
+                                              bool getU0, int U0ID, int &localMinRow, int &localMaxRow,
                                               int &spatialDOFs, double t, int &bsize)
 {
     // Unpack variables frequently used
@@ -637,7 +662,7 @@ void FDadvection::get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
         }    
     
         // Set initial guess at the solution
-        if (getU0) U0[rowcount] = 1.0; // TODO : Set this to a random value?    
+        if (getU0) U0[rowcount] = GetInitialIterate(x, y, U0ID); 
     
         L_rowptr[rowcount+1] = dataInd;
         rowcount += 1;
@@ -665,7 +690,7 @@ void FDadvection::get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
 parallel version, but the indexing is made simpler */
 void FDadvection::get2DSpatialDiscretizationL(int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0,
+                                              bool getU0, int U0ID,
                                               int &spatialDOFs, double t, int &bsize)
 {
     // Unpack variables frequently used
@@ -795,7 +820,7 @@ void FDadvection::get2DSpatialDiscretizationL(int *&L_rowptr,
         }    
         
         // Set initial guess at the solution
-        if (getU0) U0[rowcount] = 1.0; // TODO : Set this to a random value?       
+        if (getU0) U0[rowcount] = GetInitialIterate(x, y, U0ID);
 
         L_rowptr[rowcount+1] = dataInd;
         rowcount += 1;
@@ -920,7 +945,7 @@ void FDadvection::get2DSpatialDiscretizationL(int *&L_rowptr,
 // Get local CSR structure of FD spatial discretization matrix, L
 void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
                                               int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0, int &localMinRow, int &localMaxRow,
+                                              bool getU0, int U0ID, int &localMinRow, int &localMaxRow,
                                               int &spatialDOFs, double t, int &bsize) 
 {
     // Unpack variables frequently used
@@ -1047,7 +1072,7 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
         }     
     
         // Set initial guess at the solution
-        if (getU0) U0[rowcount] = 1.0; // TODO : Set this to a random value?    
+        if (getU0) U0[rowcount] = GetInitialIterate(x, U0ID);
         
         L_rowptr[rowcount+1] = dataInd;
         rowcount += 1;

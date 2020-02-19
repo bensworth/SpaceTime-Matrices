@@ -70,31 +70,31 @@ private:
                                     int &localMinRow, int &localMaxRow, int &spatialDOFs, double t);                               
     void getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &L_rowptr, 
                                     int* &L_colinds, double* &L_data,
-                                    double* &U0, bool getU0, 
+                                    double* &U0, bool getU0, int U0ID,
                                     int &localMinRow, int &localMaxRow, int &spatialDOFs,
                                     double t, int &bsize);                                            
     
     // Call when NOT using spatial parallelism                                        
     void getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t); 
     void getSpatialDiscretizationL(int* &L_rowptr, int* &L_colinds, double* &L_data,
-                                    double* &U0, bool getU0, int &spatialDOFs,
-                                    double t, int &bsize);                                            
+                                    double* &U0, bool getU0, int U0ID, 
+                                    int &spatialDOFs, double t, int &bsize);                                            
                                          
     /* Uses spatial parallelism */                                
     void get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
                                         int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double * &U0, bool getU0,
+                                        double * &U0, bool getU0, int U0ID,
                                         int &localMinRow, int &localMaxRow, int &spatialDOFs, 
                                         double t, int &bsize);
     void get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
                                         int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double * &U0, bool getU0,
+                                        double * &U0, bool getU0, int U0ID,
                                         int &localMinRow, int &localMaxRow, int &spatialDOFs, 
                                         double t, int &bsize);                                
                                     
     /* No spatial parallelism */
     void get2DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double *&U0, bool getU0,
+                                        double *&U0, bool getU0, int U0ID,
                                         int &spatialDOFs, double t, int &bsize);
                                 
     /* Uses spatial parallelism */  
@@ -140,6 +140,9 @@ private:
                                         int nWeights);
     double MeshIndToPoint(int meshInd, int dim);
     void get1DUpwindStencil(int * &inds, double * &weight, int dim);
+    double GetInitialIterate(double x, int U0ID);       /* 1D initial iterate for iterative solver */
+    double GetInitialIterate(double x, double y,        /* 2D initial iterate for iterative solver */
+                        int U0ID); 
     double InitCond(double x);                          /* 1D initial condition */
     double InitCond(double x, double y);                /* 2D initial condition */
     double WaveSpeed(double x, double t);               /* 1D wave speed */
