@@ -9,6 +9,7 @@
 #include <functional>
 #include <vector>
 #include <cmath>
+#include <map>
 
 #define PI 3.14159265358979323846
 
@@ -36,6 +37,18 @@ NOTES:
         must(!) specify the number of processors in each of the x- and y-directions
 */
 
+
+/* Parameters for adding numerical dissipation into advection discretization */
+struct Num_dissipation {
+    int degree; /* Degree of dissipation/derivative. Can be 2 or 4 */
+    
+    /* Dissipation coefficient takes the form c0*dx^c1. c0 > 0 corresponds to 
+        dissipation while c0 < 0 corresponds to anti-dissipation (growth!) */
+    double c0;
+    int    c1;
+};
+
+
 class FDadvection : public SpaceTimeMatrix
 {
 private:
@@ -62,8 +75,8 @@ private:
     std::vector<int>    m_neighboursLocalMinRow;/* Global index of first DOF owned by neighbouring procs */
     std::vector<int>    m_neighboursNxOnProc;   /* Number of DOFs in each direction owned by neighbouring procs */
     
-    int div_ceil(int numerator, int denominator);
-
+    bool                m_dissipation;          /* Numerical dissipation added to advection terms */
+    Num_dissipation     m_dissipation_params;   /* Parameters describing numerical dissipation */
 
     // Call when using spatial parallelism                          
     void getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
@@ -140,6 +153,8 @@ private:
                                         int nWeights);
     double MeshIndToPoint(int meshInd, int dim);
     void get1DUpwindStencil(int * &inds, double * &weight, int dim);
+    void Get1DDissipationStencil(int * &inds, double *&weights, int &nnz); 
+    
     double GetInitialIterate(double x, int U0ID);       /* 1D initial iterate for iterative solver */
     double GetInitialIterate(double x, double y,        /* 2D initial iterate for iterative solver */
                         int U0ID); 
@@ -168,12 +183,20 @@ private:
     void GetInflowValues(std::map<int, double> &uGhost, double t, int dim);
     double GetCentralFDApprox(std::function<double(double)> f, double x0, int order, double h);
 
+    
+    /* Utility-type functions */
+    void Merge1DStencilsIntoMap(int * indsIn1, double * weightsIn1, int nnzIn1, 
+                                int * indsIn2, double * weightsIn2, int nnzIn2,
+                                std::map<int, double> &out);
+                                
+    int div_ceil(int numerator, int denominator);                            
 public:
-
     /* Constructors */
 	FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt);
 	FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt, 
                     int dim, int refLevels, int order, int problemID, std::vector<int> px = {});
     ~FDadvection();
-
+    
+    /* Add numerical dissipation into pure advection discretization  */
+    void SetNumDissipation(Num_dissipation dissipation_params);
 };

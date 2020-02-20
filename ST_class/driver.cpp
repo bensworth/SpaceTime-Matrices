@@ -94,8 +94,11 @@ int main(int argc, char *argv[])
 
     // Finite-difference specific parameters
     int FD_ProblemID = 1;
-    int px = -1;
-    int py = -1;
+    int px           = -1;
+    int py           = -1;
+    int ndis         = 2;
+    double ndis_c0   = 0.0;
+    int ndis_c1      = 0;
 
 
     // Initialize solver options struct with default parameters */
@@ -171,12 +174,20 @@ int main(int argc, char *argv[])
                   "Number levels mesh refinement; FD uses 2^refLevels DOFs.");
     args.AddOption(&dim, "-d", "--dim",
                   "Problem dimension.");
+    args.AddOption(&py, "-py", "--procy",
+                  "FD: Number of procs in y-direction.");                          
+    
+    /* FD-specific options */          
     args.AddOption(&FD_ProblemID, "-FD", "--FD-prob-ID",
                   "FD: Problem ID.");  
     args.AddOption(&px, "-px", "--procx",
                   "FD: Number of procs in x-direction.");
-    args.AddOption(&py, "-py", "--procy",
-                  "FD: Number of procs in y-direction.");                          
+    args.AddOption(&ndis, "-ndis", "--num-dissipation-degree", 
+                  "Degree of numerical dissipation");
+    args.AddOption(&ndis_c0, "-ndis_c0", "--num-dissipation-size0", 
+                  "Size of numerical dissipation is c0*dx^c1");
+    args.AddOption(&ndis_c1, "-ndis_c1", "--num-dissipation-size1", 
+                  "Size of numerical dissipation is c0*dx^c1");
 
     /* --- Text output of solution etc --- */              
     args.AddOption(&out, "-out", "--out",
@@ -371,6 +382,13 @@ int main(int argc, char *argv[])
         // Build SpaceTime object
         FDadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, 
                                 dt, dim, refLevels, order, FD_ProblemID, n_px);
+        
+        
+        // Add numerical dissipation into FD-advection discretization if meaningful parameters passed */
+        if (ndis > 0 && ndis_c0 > 0.0) {
+            Num_dissipation dissipation = {ndis, ndis_c0, ndis_c1};
+            STmatrix.SetNumDissipation(dissipation);
+        }
         
         // Set parameters
         STmatrix.SetAMGParameters(AMG);

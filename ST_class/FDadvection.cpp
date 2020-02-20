@@ -4,202 +4,18 @@
 */
 
 
-// Integer ceiling division
-int FDadvection::div_ceil(int numerator, int denominator)
+/* Copy external numerical dissipation parameters into member variable */
+void FDadvection::SetNumDissipation(Num_dissipation dissipation_params) 
 {
-        std::div_t res = std::div(numerator, denominator);
-        return res.rem ? (res.quot + 1) : res.quot;
-}
-
-/* Return data to be used as an initial iterate. Data depends on integer U0ID */
-double FDadvection::GetInitialIterate(double x, int U0ID) {
-    if (U0ID == -1) {  // PDE initial condition
-        return InitCond(x);
-    } else if (U0ID == 0) { // Zero  
-        return 0.0; 
-    } else { // Random number in [0,1]
-        return (double)rand() / (double)RAND_MAX;
-    }
-}
-
-/* Return data to be used as an initial iterate. Data depends on integer U0ID */
-double FDadvection::GetInitialIterate(double x, double y, int U0ID) {
-    if (U0ID == -1) {  // PDE initial condition
-        return InitCond(x, y);
-    } else if (U0ID == 0) { // Zero  
-        return 0.0; 
-    } else { // Random number in [0,1]
-        return (double)rand() / (double)RAND_MAX;
-    }
-}
-
-
-/* Exact solution for model problems. 
-
-This depends on initial conditions, source terms, wave speeds, and  mesh
-So if any of these are updated the solutions given here will be wrong...  */
-double FDadvection::PDE_Solution(double x, double t) {
-    if (m_problemID == 1 || m_problemID == 101) {
-        return InitCond( std::fmod(x + 1 - t, 2)  - 1 );
-    } else if (m_problemID == 2 || m_problemID == 3 || m_problemID == 102 || m_problemID == 103) {
-        return cos( PI*(x-t) ) * exp( cos( 2*PI*t ) - 1 );     
-    } else {
-        return 0.0; // Just so we're not given a compilation warning
-    }
-}
-
-
-double FDadvection::PDE_Solution(double x, double y, double t) {
-    if (m_problemID == 1) {
-        return InitCond( std::fmod(x + 1 - t, 2) - 1, std::fmod(y + 1 - t, 2)  - 1 );
-    } else if (m_problemID == 2 || m_problemID == 3) {
-        return cos( PI*(x-t) ) * cos( PI*(y-t) ) * exp( cos( 4*PI*t ) - 1 );     
-    } else {
-        return 0.0; // Just so we're not given a compilation warning
-    }
-}
-
- 
-double FDadvection::InitCond(double x) 
-{        
-    if (m_problemID == 1 || m_problemID == 101) {
-        return pow(sin(PI * x), 4.0);
-    } else if (m_problemID == 2 || m_problemID == 3 || m_problemID == 102 || m_problemID == 103) {
-        return cos(PI * x);
-    } else {
-        return 0.0;
-    }
-}
-
-double FDadvection::InflowBoundary(double t) 
-{
-    if (m_problemID == 101) {
-        return InitCond(1.0 - WaveSpeed(1.0, t)*t); // Set to be the analytical solution at the RHS boundary
-    }  else if (m_problemID == 102 || m_problemID == 103) {
-        return PDE_Solution(m_boundary0[0], t);     // Just evaluate the analytical PDE soln on the boundary
-    } else {
-        return 0.0;
-    }
-}
-
-double FDadvection::InitCond(double x, double y) 
-{        
-    if (m_problemID == 1) {
-        return pow(cos(PI * x), 4.0) * pow(sin(PI * y), 2.0);
-        //return ;
-        // if ((x >= 0) && (y >= 0)) return 1.0;
-        // if ((x < 0) && (y >= 0)) return 2.0;
-        // if ((x < 0) && (y < 0)) return 3.0;
-        // if ((x >= 0) && (y < 0)) return 4.0;
-    } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        return cos(PI * x) * cos(PI * y);
-    } else {
-        return 0.0;
-    }
-}
-
-
-// Wave speed for 1D problem
-// For inflow problems, this MUST be positive near and on the inflow and outflow boundaries!
-double FDadvection::WaveSpeed(double x, double t) {
-    if (m_problemID == 1 || m_problemID == 101) {
-        return 1.0;
-    } else if (m_problemID == 2 || m_problemID == 3) {
-        return cos( PI*(x-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
-    } else if (m_problemID == 102 || m_problemID == 103) {
-        return 0.5*(1.0 + pow(cos(PI*(x-t)), 2.0)) * exp( -pow(sin(2*PI*t), 2.0) ); 
-    }  else  {
-        return 0.0;
-    }
-}
-
-
-// Wave speed for 2D problem; need to choose component as 1 or 2.
-double FDadvection::WaveSpeed(double x, double y, double t, int component) {
-    if (m_problemID == 1) {
-        return 1.0;
-    } else if ((m_problemID == 2) || (m_problemID == 3)) {
-        if (component == 0) {
-            return cos( PI*(x-t) ) * cos(PI*y) * exp( -pow(sin(2*PI*t), 2.0) );
-        } else {
-            return sin(PI*x) * cos( PI*(y-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
-        }
-    } else {
-        return 0.0;
-    }
-}
-
-
-
-// Map grid index to grid point in specified dimension
-double FDadvection::MeshIndToPoint(int meshInd, int dim)
-{
-    return m_boundary0[dim] + meshInd * m_dx[dim];
-}
-
-
-// Mapping between global indexing of unknowns and true mesh indices
-// TODO: Add in support here for 2D problem both with and without spatial parallel...
-int FDadvection::GlobalIndToMeshInd(int globInd)
-{
-    if (m_periodic) {
-        return globInd;
-    } else {
-        return globInd+1; // The solution at inflow boundary is eliminated since it's prescribed by the boundary condition
-    }
-}
-
-
-// RHS of PDE 
-double FDadvection::PDE_Source(double x, double t)
-{
-    if (m_problemID == 1 || m_problemID == 101) {
-        return 0.0;
-    } else if (m_problemID == 2) {
-        return PI * exp( -2*pow(sin(PI*t), 2.0)*(cos(2*PI*t) + 2) ) * ( sin(2*PI*(t-x)) 
-                    - exp( pow(sin(2*PI*t), 2.0) )*(  sin(PI*(t-x)) + 2*sin(2*PI*t)*cos(PI*(t-x)) ) );
-    } else if (m_problemID == 3) {
-        return 0.5 * PI * exp( -2*pow(sin(PI*t), 2.0)*(cos(2*PI*t) + 2) ) * ( sin(2*PI*(t-x)) 
-                    - 2*exp( pow(sin(2*PI*t), 2.0) )*(  sin(PI*(t-x)) + 2*sin(2*PI*t)*cos(PI*(t-x)) ) );
+    m_dissipation = true;
+    m_dissipation_params = dissipation_params;
     
-    } else if (m_problemID == 102) {
-        return 0.5 * exp(-2.0*(2.0 + cos(2.0*PI*t))*pow(sin(PI*t), 2.0))
-                    * ( PI*(1.0 + 3.0*pow(cos(PI*(t-x)), 2.0))*sin(PI*(t-x))
-                    - 2.0*PI*exp(pow(sin(2*PI*t), 2.0))*(2.0*cos(PI*(t-x))*sin(2.0*PI*t) + sin(PI*(t-x))) );
-    
-    } else if (m_problemID == 103) {
-        return 0.5 * exp(-2.0*(2.0 + cos(2.0*PI*t))*pow(sin(PI*t), 2.0))
-                    * ( PI*(1.0 + pow(cos(PI*(t-x)), 2.0))*sin(PI*(t-x))
-                    - 2.0*PI*exp(pow(sin(2*PI*t), 2.0))*(2.0*cos(PI*(t-x))*sin(2.0*PI*t) + sin(PI*(t-x))) );
-                    
-    } else {
-        return 0.0;
+    if (m_dim > 1) {
+        if (m_spatialRank == 0) std::cout << "WARNING: Numerical dissipation only implemented for 1D problems..." << '\n';
+        MPI_Finalize();
+        exit(1);
     }
 }
-
-// RHS of PDE 
-double FDadvection::PDE_Source(double x, double y, double t)
-{
-    if (m_problemID == 1) {
-        return 0.0;
-    } else if (m_problemID == 2) {
-        return PI*exp(-3*pow(sin(2*PI*t), 2.0)) * 
-            (
-            cos(PI*(t-y))*( -exp(pow(sin(2*PI*t), 2.0)) * sin(PI*(t-x)) + cos(PI*y)*sin(2*PI*(t-x)) ) +
-            cos(PI*(t-x))*( -exp(pow(sin(2*PI*t), 2.0)) * (4*cos(PI*(t-y))*sin(4*PI*t) + sin(PI*(t-y))) + sin(PI*x)*sin(2*PI*(t-y)) )
-            );
-    } else if (m_problemID == 3) {
-        return 0.5*PI*exp(-3*pow(sin(2*PI*t), 2.0)) * 
-            (
-            cos(PI*(t-y))*( -2*exp(pow(sin(2*PI*t), 2.0)) * sin(PI*(t-x)) + cos(PI*y)*sin(2*PI*(t-x)) ) +
-            cos(PI*(t-x))*( -2*exp(pow(sin(2*PI*t), 2.0)) * (4*cos(PI*(t-y))*sin(4*PI*t) + sin(PI*(t-y))) + sin(PI*x)*sin(2*PI*(t-y)) )
-            );
-    } else {
-        return 0.0;
-    }
-}
-
-
 
 FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt): 
     SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt)
@@ -212,7 +28,7 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
                         double dt, int dim, int refLevels, int order, int problemID, std::vector<int> px): 
     SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
                         m_dim{dim}, m_refLevels{refLevels}, m_problemID{problemID}, m_px{px},
-                        m_periodic(false), m_inflow(false), m_PDE_soln_implemented(false)
+                        m_periodic(false), m_inflow(false), m_PDE_soln_implemented(false), m_dissipation(false)
 {    
     // Seed random number generator so results are consistent!
     srand(0);
@@ -453,6 +269,205 @@ FDadvection::FDadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
 FDadvection::~FDadvection()
 {
     
+}
+
+
+
+
+
+// Integer ceiling division
+int FDadvection::div_ceil(int numerator, int denominator)
+{
+        std::div_t res = std::div(numerator, denominator);
+        return res.rem ? (res.quot + 1) : res.quot;
+}
+
+/* Return data to be used as an initial iterate. Data depends on integer U0ID */
+double FDadvection::GetInitialIterate(double x, int U0ID) {
+    if (U0ID == -1) {  // PDE initial condition
+        return InitCond(x);
+    } else if (U0ID == 0) { // Zero  
+        return 0.0; 
+    } else { // Random number in [0,1]
+        return (double)rand() / (double)RAND_MAX;
+    }
+}
+
+/* Return data to be used as an initial iterate. Data depends on integer U0ID */
+double FDadvection::GetInitialIterate(double x, double y, int U0ID) {
+    if (U0ID == -1) {  // PDE initial condition
+        return InitCond(x, y);
+    } else if (U0ID == 0) { // Zero  
+        return 0.0; 
+    } else { // Random number in [0,1]
+        return (double)rand() / (double)RAND_MAX;
+    }
+}
+
+
+/* Exact solution for model problems. 
+
+This depends on initial conditions, source terms, wave speeds, and  mesh
+So if any of these are updated the solutions given here will be wrong...  */
+double FDadvection::PDE_Solution(double x, double t) {
+    if (m_problemID == 1 || m_problemID == 101) {
+        return InitCond( std::fmod(x + 1 - t, 2)  - 1 );
+    } else if (m_problemID == 2 || m_problemID == 3 || m_problemID == 102 || m_problemID == 103) {
+        return cos( PI*(x-t) ) * exp( cos( 2*PI*t ) - 1 );     
+    } else {
+        return 0.0; // Just so we're not given a compilation warning
+    }
+}
+
+
+double FDadvection::PDE_Solution(double x, double y, double t) {
+    if (m_problemID == 1) {
+        return InitCond( std::fmod(x + 1 - t, 2) - 1, std::fmod(y + 1 - t, 2)  - 1 );
+    } else if (m_problemID == 2 || m_problemID == 3) {
+        return cos( PI*(x-t) ) * cos( PI*(y-t) ) * exp( cos( 4*PI*t ) - 1 );     
+    } else {
+        return 0.0; // Just so we're not given a compilation warning
+    }
+}
+
+ 
+double FDadvection::InitCond(double x) 
+{        
+    if (m_problemID == 1 || m_problemID == 101) {
+        return pow(sin(PI * x), 4.0);
+    } else if (m_problemID == 2 || m_problemID == 3 || m_problemID == 102 || m_problemID == 103) {
+        return cos(PI * x);
+    } else {
+        return 0.0;
+    }
+}
+
+double FDadvection::InflowBoundary(double t) 
+{
+    if (m_problemID == 101) {
+        return InitCond(1.0 - WaveSpeed(1.0, t)*t); // Set to be the analytical solution at the RHS boundary
+    }  else if (m_problemID == 102 || m_problemID == 103) {
+        return PDE_Solution(m_boundary0[0], t);     // Just evaluate the analytical PDE soln on the boundary
+    } else {
+        return 0.0;
+    }
+}
+
+double FDadvection::InitCond(double x, double y) 
+{        
+    if (m_problemID == 1) {
+        return pow(cos(PI * x), 4.0) * pow(sin(PI * y), 2.0);
+        //return ;
+        // if ((x >= 0) && (y >= 0)) return 1.0;
+        // if ((x < 0) && (y >= 0)) return 2.0;
+        // if ((x < 0) && (y < 0)) return 3.0;
+        // if ((x >= 0) && (y < 0)) return 4.0;
+    } else if ((m_problemID == 2) || (m_problemID == 3)) {
+        return cos(PI * x) * cos(PI * y);
+    } else {
+        return 0.0;
+    }
+}
+
+
+// Wave speed for 1D problem
+// For inflow problems, this MUST be positive near and on the inflow and outflow boundaries!
+double FDadvection::WaveSpeed(double x, double t) {
+    if (m_problemID == 1 || m_problemID == 101) {
+        return 1.0;
+    } else if (m_problemID == 2 || m_problemID == 3) {
+        return cos( PI*(x-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
+    } else if (m_problemID == 102 || m_problemID == 103) {
+        return 0.5*(1.0 + pow(cos(PI*(x-t)), 2.0)) * exp( -pow(sin(2*PI*t), 2.0) ); 
+    }  else  {
+        return 0.0;
+    }
+}
+
+
+// Wave speed for 2D problem; need to choose component as 1 or 2.
+double FDadvection::WaveSpeed(double x, double y, double t, int component) {
+    if (m_problemID == 1) {
+        return 1.0;
+    } else if ((m_problemID == 2) || (m_problemID == 3)) {
+        if (component == 0) {
+            return cos( PI*(x-t) ) * cos(PI*y) * exp( -pow(sin(2*PI*t), 2.0) );
+        } else {
+            return sin(PI*x) * cos( PI*(y-t) ) * exp( -pow(sin(2*PI*t), 2.0) );
+        }
+    } else {
+        return 0.0;
+    }
+}
+
+
+
+// Map grid index to grid point in specified dimension
+double FDadvection::MeshIndToPoint(int meshInd, int dim)
+{
+    return m_boundary0[dim] + meshInd * m_dx[dim];
+}
+
+
+// Mapping between global indexing of unknowns and true mesh indices
+// TODO: Add in support here for 2D problem both with and without spatial parallel...
+int FDadvection::GlobalIndToMeshInd(int globInd)
+{
+    if (m_periodic) {
+        return globInd;
+    } else {
+        return globInd+1; // The solution at inflow boundary is eliminated since it's prescribed by the boundary condition
+    }
+}
+
+
+// RHS of PDE 
+double FDadvection::PDE_Source(double x, double t)
+{
+    if (m_problemID == 1 || m_problemID == 101) {
+        return 0.0;
+    } else if (m_problemID == 2) {
+        return PI * exp( -2*pow(sin(PI*t), 2.0)*(cos(2*PI*t) + 2) ) * ( sin(2*PI*(t-x)) 
+                    - exp( pow(sin(2*PI*t), 2.0) )*(  sin(PI*(t-x)) + 2*sin(2*PI*t)*cos(PI*(t-x)) ) );
+    } else if (m_problemID == 3) {
+        return 0.5 * PI * exp( -2*pow(sin(PI*t), 2.0)*(cos(2*PI*t) + 2) ) * ( sin(2*PI*(t-x)) 
+                    - 2*exp( pow(sin(2*PI*t), 2.0) )*(  sin(PI*(t-x)) + 2*sin(2*PI*t)*cos(PI*(t-x)) ) );
+    
+    } else if (m_problemID == 102) {
+        return 0.5 * exp(-2.0*(2.0 + cos(2.0*PI*t))*pow(sin(PI*t), 2.0))
+                    * ( PI*(1.0 + 3.0*pow(cos(PI*(t-x)), 2.0))*sin(PI*(t-x))
+                    - 2.0*PI*exp(pow(sin(2*PI*t), 2.0))*(2.0*cos(PI*(t-x))*sin(2.0*PI*t) + sin(PI*(t-x))) );
+    
+    } else if (m_problemID == 103) {
+        return 0.5 * exp(-2.0*(2.0 + cos(2.0*PI*t))*pow(sin(PI*t), 2.0))
+                    * ( PI*(1.0 + pow(cos(PI*(t-x)), 2.0))*sin(PI*(t-x))
+                    - 2.0*PI*exp(pow(sin(2*PI*t), 2.0))*(2.0*cos(PI*(t-x))*sin(2.0*PI*t) + sin(PI*(t-x))) );
+                    
+    } else {
+        return 0.0;
+    }
+}
+
+// RHS of PDE 
+double FDadvection::PDE_Source(double x, double y, double t)
+{
+    if (m_problemID == 1) {
+        return 0.0;
+    } else if (m_problemID == 2) {
+        return PI*exp(-3*pow(sin(2*PI*t), 2.0)) * 
+            (
+            cos(PI*(t-y))*( -exp(pow(sin(2*PI*t), 2.0)) * sin(PI*(t-x)) + cos(PI*y)*sin(2*PI*(t-x)) ) +
+            cos(PI*(t-x))*( -exp(pow(sin(2*PI*t), 2.0)) * (4*cos(PI*(t-y))*sin(4*PI*t) + sin(PI*(t-y))) + sin(PI*x)*sin(2*PI*(t-y)) )
+            );
+    } else if (m_problemID == 3) {
+        return 0.5*PI*exp(-3*pow(sin(2*PI*t), 2.0)) * 
+            (
+            cos(PI*(t-y))*( -2*exp(pow(sin(2*PI*t), 2.0)) * sin(PI*(t-x)) + cos(PI*y)*sin(2*PI*(t-x)) ) +
+            cos(PI*(t-x))*( -2*exp(pow(sin(2*PI*t), 2.0)) * (4*cos(PI*(t-y))*sin(4*PI*t) + sin(PI*(t-y))) + sin(PI*x)*sin(2*PI*(t-y)) )
+            );
+    } else {
+        return 0.0;
+    }
 }
 
 
@@ -956,13 +971,27 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
     int xDim        = 0;
     
     
+    int NnzPerRow = xStencilNnz; // Estimate of NNZ per row of L
+    // Get stencil information for numerical dissipation term if there is one, so total NNZ estimate can be updated */
+    int      dissNnz     = -1;
+    int    * dissInds    = NULL;
+    double * dissWeights = NULL;
+    if (m_dissipation) {
+        dissNnz = m_dissipation_params.degree + 1;
+        Get1DDissipationStencil(dissInds, dissWeights, dissNnz);
+        
+        // kth-degree dissipation uses k/2 points in both directions
+        // pth-order upwind uses floor[(p+2)/2] DOFs in upwind direction
+        NnzPerRow = 2 * std::max( (xFD_Order + 2)/2, m_dissipation_params.degree/2 ) + 1; // So this is a bound on nnz of total stencil
+    } 
+    
     /* ----------------------------------------------------------------------- */
     /* ------ Initialize variables needed to compute CSR structure of L ------ */
     /* ----------------------------------------------------------------------- */
     localMinRow  = m_localMinRow;                    // First row on proc
     localMaxRow  = m_localMinRow + m_onProcSize - 1; // Last row on proc
     spatialDOFs  = m_spatialDOFs;
-    int L_nnz    = xStencilNnz * m_onProcSize;  // Nnz on proc. This is a bound. Will be slightly less than this for inflow/outflow boudaries
+    int L_nnz    = NnzPerRow * m_onProcSize;  // Nnz on proc. This is a bound. Will always be slightly less than this for inflow/outflow boudaries
     L_rowptr     = new int[m_onProcSize + 1];
     L_colinds    = new int[L_nnz];
     L_data       = new double[L_nnz];
@@ -1001,6 +1030,7 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
     // Different components of the domain for inflow/outflow boundaries
     double xIntLeftBndry  = MeshIndToPoint(m_order[0]/2 + 2, 0); // For x < this, stencil has some dependence on inflow
     double xIntRightBndry = MeshIndToPoint(m_nx[0] - div_ceil(m_order[0], 2) + 1, 0); // For x > this, stencil has some dependence on outflow ghost points
+        
          
     /* ------------------------------------------------------------------- */
     /* ------ Get CSR structure of L for all rows on this processor ------ */
@@ -1021,14 +1051,36 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
                                         
         // Periodic BCs simply wrap stencil at both boundaries
         if (m_periodic) {
-            for (int count = 0; count < xStencilNnz; count++) {
-                L_colinds[dataInd] = (localInds[count] + row + nx) % nx; // Account for periodicity here. This always puts in range 0,nx-1
-                L_data[dataInd]    = localWeights[count];
-                dataInd += 1;
-            }   
+            if (!m_dissipation) {
+                for (int count = 0; count < xStencilNnz; count++) {
+                    L_colinds[dataInd] = (localInds[count] + row + nx) % nx; // Account for periodicity here. This always puts in range 0,nx-1
+                    L_data[dataInd]    = localWeights[count];
+                    dataInd += 1;
+                }
+            
+            /* Add numerical dissipation term to advection term. 
+                Note: It's easiest to just create new arrays and delete them everytime since the nnz 
+                and structure of the summed stencil can change depending on the upwinding direction */
+            } else {
+                std::map<int, double> sum; // The summed/combined stencil
+                Merge1DStencilsIntoMap(localInds, localWeights, xStencilNnz, dissInds, dissWeights, dissNnz, sum);
+                std::map<int, double>::iterator it;
+                for (it = sum.begin(); it != sum.end(); it++) {
+                    L_colinds[dataInd] = (it->first + row + nx) % nx; // Account for periodicity here. This always puts in range 0,nx-1
+                    L_data[dataInd]    = it->second;
+                    dataInd += 1;
+                }
+            }  
         
         // Inflow/outflow boundaries; need to adapt each boundary
         } else if (m_inflow) {
+            // Ensure no numerical dissipation: Code set up to handle this... Inflow BCs hard enough on their own
+            if (m_dissipation) {
+                std::cout << "WARNING: Numerical dissipation not implemented for inflow/outlow BCs!" << '\n';
+                MPI_Finalize();
+                exit(1);
+            }
+            
             // DOFs stencil is influenced by inflow and potentially ghost points 
             if (x < xIntLeftBndry) {
                 
@@ -1088,6 +1140,22 @@ void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *
     delete[] localWeights;
 }
 
+
+/* Merge two 1D stencils */
+void FDadvection::Merge1DStencilsIntoMap(int * indsIn1, double * weightsIn1, int nnzIn1, 
+                            int * indsIn2, double * weightsIn2, int nnzIn2,
+                            std::map<int, double> &out) 
+{
+    // Insert first stencil into map
+    for (int i = 0; i < nnzIn1; i++) {
+        out[indsIn1[i]] = weightsIn1[i];
+    }
+    
+    // Add second stencil into map
+    for (int i = 0; i < nnzIn2; i++) {
+        out[indsIn2[i]] += weightsIn2[i];
+    }
+}
 
 // Update stencil at outflow boundary by performing extrapolation of the solution from the interior
 
@@ -1583,6 +1651,58 @@ void FDadvection::getInitialCondition(double * &U0, int &spatialDOFs)
         std::function<double(double, double)> GridFunction = [this](double x, double y) { return InitCond(x, y); };
         GetGridFunction((void *) &GridFunction, U0, spatialDOFs);
     }  
+}
+
+
+/* Stencils for centred discretizations of diffusion operator, d^degree/dx^degree. degree \in {2,4} 
+
+NOTES:
+    degree == 2 uses a 2nd-order FD stencil
+    degree == 4 uses a 2nd-order FD stencil
+    assumes mesh spacing is same in all grid dimensions
+    Uses centred differences
+*/
+void FDadvection::Get1DDissipationStencil(int * &inds, double * &weights, int &nnz)
+{
+    // Using a 2nd-order difference means the stencil will use degree+1 nodes
+    nnz     = m_dissipation_params.degree + 1;
+    inds    = new int[nnz];
+    weights = new double[nnz];
+    
+    if (m_dissipation_params.degree == 2) {
+        inds[0] = -1;
+        inds[1] = +0;
+        inds[2] = +1;
+        weights[0] = +1.0;
+        weights[1] = -2.0;
+        weights[2] = +1.0;
+        
+    }  else if (m_dissipation_params.degree == 4) {
+        inds[0] = -2;
+        inds[1] = -1;
+        inds[2] = +0;
+        inds[3] = +1;
+        inds[4] = +2;
+        weights[0] = +1.0;
+        weights[1] = -4.0;
+        weights[2] = +6.0;
+        weights[3] = -4.0;
+        weights[4] = +1.0;
+        
+    } else {
+        std::cout << "WARNING: FD-advection numerical dissipation must be of degree 2 or 4" << '\n';
+        MPI_Finalize();
+        exit(1);
+    }
+    
+    // Mesh-dependent weighting of dissipation (c0*dx^c1) \times FD coefficient (dx^{-degree})
+    // Note the -1 here means that c0 > 0 corresponds to dissipation, while c0 < 0 means soln will blow up
+    double c = -1.0 * m_dissipation_params.c0 * pow(m_dx[0], 1.0*m_dissipation_params.c1) * pow(m_dx[0], -1.0*m_dissipation_params.degree);
+    
+    /* Scale discretization weights */
+    for (int i = 0; i < nnz; i++) {
+        weights[i] *= c;
+    }
 }
 
 
