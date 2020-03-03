@@ -348,24 +348,16 @@ public:
     SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists, int timeDisc, int numTimeSteps, double dt);
     virtual ~SpaceTimeMatrix();
 
-
     void Solve(); /* General solver! */
-
     void SetAMG();
     void SetAIR();
     void SetAIRHyperbolic();
-    void SetAMGParameters(AMG_parameters &AMG_params);
-    
+    void SetAMGParameters(AMG_parameters &AMG_params);    
     void SetSolverParametersDefaults();
     void SetSolverParameters(Solver_parameters &solver_params); 
-        
-    
     bool GetDiscretizationError(double &e2norm);
-    
     void PrintMeshData();
-
-    // TODO : Ben, Why the different string formats for A, b, x?
-    void SaveMatrix(const char* filename) { if (m_Aij) HYPRE_IJMatrixPrint(m_Aij, filename); else std::cout << "WARNING: m_Aij == NULL, cannot be printed!\n"; }
+    void SaveMatrix(std::string filename) { if (m_Aij) HYPRE_IJMatrixPrint(m_Aij, filename.c_str()); else std::cout << "WARNING: m_Aij == NULL, cannot be printed!\n"; }
     void SaveRHS(std::string filename)    { if (m_bij) HYPRE_IJVectorPrint(m_bij, filename.c_str()); else std::cout << "WARNING: m_bij == NULL, cannot be printed!\n";  }
     void SaveX(std::string filename)      { if (m_xij) HYPRE_IJVectorPrint(m_xij, filename.c_str()); else std::cout << "WARNING: m_xij == NULL, cannot be printed!\n";  }
     void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
