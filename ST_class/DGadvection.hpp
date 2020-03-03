@@ -30,7 +30,6 @@ private:
     BilinearForm* m_bform;
     LinearForm* m_lform;
     DG_FECollection *m_fec;
-    
 
     // TODO : Make all spatial discretization functions PURE VIRTUAL once they've been implemented!
     virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
