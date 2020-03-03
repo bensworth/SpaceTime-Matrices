@@ -15,6 +15,7 @@ class DGadvection : public SpaceTimeMatrix
 {
 private:
 
+    double m_tcurrent;
     bool m_lumped;
     bool m_is_refined;
     bool m_is_prefined;
@@ -22,9 +23,12 @@ private:
     int m_order;
     int m_basis_type;
     int m_dim;
+    int m_bsize;
     Vector m_omega;
     Mesh* m_mesh;
     ParMesh* m_pmesh;
+    ParFiniteElementSpace* m_pfes;
+    FiniteElementSpace* m_fes;
     ParBilinearForm* m_pbform;
     ParLinearForm* m_plform;
     BilinearForm* m_bform;
@@ -32,14 +36,12 @@ private:
     DG_FECollection *m_fec;
 
     // TODO : Make all spatial discretization functions PURE VIRTUAL once they've been implemented!
-    virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
-                                           double * &G, 
+    virtual void getSpatialDiscretizationG(double * &G, 
                                            int      &localMinRow, 
                                            int      &localMaxRow,
                                            int      &spatialDOFs, 
                                            double    t);                                   
-    virtual void getSpatialDiscretizationL(const MPI_Comm &spatialComm, 
-                                           int    * &A_rowptr, 
+    virtual void getSpatialDiscretizationL(int    * &A_rowptr, 
                                            int    * &A_colinds, 
                                            double * &A_data,
                                            double * &U0, 
@@ -64,12 +66,17 @@ private:
                                            double    t, 
                                            int      &bsize);                                            
     void getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data);  
-    void addInitialCondition(const MPI_Comm &spatialComm, double *B);
-    void addInitialCondition(double *B);
 
     // TODO :  Need to implement these functions... 
-    void getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs);
+    void getInitialCondition(double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs);
     void getInitialCondition(double * &B, int &spatialDOFs);
+
+    void Setup();
+    void ClearData();
+    void ClearForms();
+    void ConstructFormsPar(double t);
+    void ConstructForms(double t);
+
 
 public:
 

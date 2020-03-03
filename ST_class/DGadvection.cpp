@@ -9,14 +9,6 @@ using namespace mfem;
 Vector mesh_min;
 Vector mesh_max;
 
-// TODO :  Need to implement these functions... 
-void DGadvection::getInitialCondition(const MPI_Comm &spatialComm, double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) 
-{    
-}
-void DGadvection::getInitialCondition(double * &B, int &spatialDOFs) 
-{    
-}
-
 double sigma_function(const Vector &x) {
     return 0.0;
     // int dim = x.Size();
@@ -109,7 +101,8 @@ DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists,
     SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_order(1), m_refLevels(1), m_lumped(false), m_dim(2),
     m_basis_type(1), m_is_refined(false), m_plform(NULL), m_pbform(NULL),
-    m_lform(NULL), m_bform(NULL)
+    m_lform(NULL), m_bform(NULL), m_tcurrent(-1), m_pfes(NULL), m_fes(NULL),
+    m_bsize(-1)
 {
 
 }
@@ -121,7 +114,8 @@ DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists,
     SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_refLevels{refLevels}, m_order{order}, m_lumped(false), m_dim(2),
     m_basis_type(1), m_is_refined(false), m_plform(NULL), m_pbform(NULL),
-    m_lform(NULL), m_bform(NULL)
+    m_lform(NULL), m_bform(NULL), m_tcurrent(-1), m_pfes(NULL), m_fes(NULL),
+    m_bsize(-1)
 {
 
 }
@@ -132,7 +126,8 @@ DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
     SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}, m_dim(2),
     m_basis_type(1), m_is_refined(false), m_plform(NULL), m_pbform(NULL),
-    m_lform(NULL), m_bform(NULL)
+    m_lform(NULL), m_bform(NULL), m_tcurrent(-1), m_pfes(NULL), m_fes(NULL),
+    m_bsize(-1)
 {
 
 }
@@ -168,7 +163,7 @@ void DGadvection::Setup()
             m_mesh->UniformRefinement();
         }
         // Parallel refinement
-        m_pmesh = new ParMesh(spatialComm, *m_mesh);
+        m_pmesh = new ParMesh(m_spatialComm, *m_mesh);
         for (int lev = 0; lev<m_refLevels-3; lev++) {
             m_pmesh->UniformRefinement();
         }
@@ -185,12 +180,12 @@ void DGadvection::Setup()
     }
 
     // Size of DG element blocks
-    if (m_dim == 2) bsize = (m_order+1)*(m_order+1);
-    else  bsize = (m_order+1)*(m_order+1)*(m_order+1);
+    if (m_dim == 2) m_bsize = (m_order+1)*(m_order+1);
+    else  m_bsize = (m_order+1)*(m_order+1)*(m_order+1);
 
     // Construct initial matrices at time t=0
-    // TODO : this is implicitly used in SpaceTimeMatrix, but we should either
-    // make that more flexible (t0 != 0) or make it more clear. 
+    // TODO : t0 --> t=0 is implicitly used in SpaceTimeMatrix, but we should
+    // either make that more flexible (initial time t0 != 0) or make it more clear. 
     if (m_useSpatialParallel) ConstructFormsPar(0);
     else ConstructForms(0);
 }
@@ -239,7 +234,7 @@ void DGadvection::ConstructFormsPar(double t)
     if (m_pmesh->bdr_attributes.Size()) {
         Array<int> ess_bdr(m_pmesh->bdr_attributes.Max());
         ess_bdr = 1;
-        m_pfes.GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+        m_pfes -> GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
     }
 
     // Define functions and coefficients 
@@ -286,7 +281,7 @@ void DGadvection::ConstructFormsPar(double t)
         delete m;
     }
 
-    t_current = t;
+    m_tcurrent = t;
 }
 
 
@@ -331,17 +326,23 @@ void DGadvection::ConstructForms(double t)
         delete m;
     }
 
-    t_current = t;
+    m_tcurrent = t;
 }
 
 
 
-void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_rowptr,
-                                           int* &A_colinds, double* &A_data, double* &B,
-                                           double* &X, int &localMinRow, int &localMaxRow,
-                                           int &spatialDOFs, double t, int &bsize)
+void DGadvection::getSpatialDiscretizationL(int    * &A_rowptr, 
+                                           int    * &A_colinds, 
+                                           double * &A_data,
+                                           double * &U0, 
+                                           bool      getU0, 
+                                           int      &localMinRow, 
+                                           int      &localMaxRow, 
+                                           int      &spatialDOFs,
+                                           double    t, 
+                                           int      &bsize)
 {
-    if (m_L_isTimedependent && (std::abs(t - tcurrent) > 1e-14)) {
+    if (m_L_isTimedependent && (std::abs(t - m_tcurrent) > 1e-14)) {
         ClearForms();
         ConstructFormsPar(t);
     }
@@ -350,8 +351,8 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     HypreParMatrix A;
     Vector B0;
     Vector X0;
-    p_bform -> Finalize();
-    p_bform -> FormLinearSystem(ess_tdof_list, x, *l_form, A, X0, B0);
+    m_pbform -> Finalize();
+    m_pbform -> FormLinearSystem(ess_tdof_list, x, *m_lform, A, X0, B0);
 
     spatialDOFs = A.GetGlobalNumRows();
     int *rowStarts = A.GetRowStarts();
@@ -359,8 +360,8 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
     localMaxRow = rowStarts[1]-1;
 
     // Steal vector data to pointers
-    B = B0.StealData();
-    X = X0.StealData();
+    // B = B0.StealData();
+    // X = X0.StealData();
 
     // Compress diagonal and off-diagonal blocks of hypre matrix to local CSR
     SparseMatrix A_loc;
@@ -372,21 +373,27 @@ void DGadvection::getSpatialDiscretization(const MPI_Comm &spatialComm, int* &A_
 
     double temp0, temp1;
     m_pmesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
+    bsize = m_bsize;
 }
 
 
 /* Time-independent DG spatial discretization of advection */
-void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
-                                           double* &A_data, double* &B, double* &X,
-                                           int &spatialDOFs, double t, int &bsize)
+void DGadvection::getSpatialDiscretizationL(int    * &A_rowptr, 
+                                           int    * &A_colinds, 
+                                           double * &A_data,
+                                           double * &U0, 
+                                           bool      getU0, 
+                                           int      &spatialDOFs,
+                                           double    t, 
+                                           int      &bsize)
 {
-    if (m_L_isTimedependent && (std::abs(t - tcurrent) > 1e-14)) {
+    if (m_L_isTimedependent && (std::abs(t - m_tcurrent) > 1e-14)) {
         ClearForms();
         ConstructForms(t);        
     }
 
     // Change ownership of matrix data to sparse matrix from bilinear form
-    SparseMatrix* A = bl_form -> LoseMat();
+    SparseMatrix* A = m_bform -> LoseMat();
     spatialDOFs = A->NumRows();
     A_rowptr = A->GetI();
     A_colinds = A->GetJ();
@@ -395,13 +402,14 @@ void DGadvection::getSpatialDiscretization(int* &A_rowptr, int* &A_colinds,
     delete A; 
 
     // TODO : think I want to steal data from B0, X0, but they do not own
-    B = l_form->StealData();
-    Vector X0(fes.GetVSize());
-    X0 = 0.0;
-    X = X0.StealData();
+    // B = m_lform->StealData();
+    // Vector X0(m_fes.GetVSize());
+    // X0 = 0.0;
+    // X = X0.StealData();
 
     double temp0, temp1;
     m_mesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
+    bsize = m_bsize;
 }
 
 
@@ -419,7 +427,7 @@ void DGadvection::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data
     M_data = m_M_data;
 }
 
-
+#if 0
 void DGadvection::addInitialCondition(double *B)
 {
     // Define functions and coefficients 
@@ -428,32 +436,41 @@ void DGadvection::addInitialCondition(double *B)
     /* Form the right-hand side */
     FunctionCoefficient inflow_coeff(inflow_function);
     VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
-    LinearForm *l_form = new LinearForm(m_fes);
-    l_form -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
-    l_form -> AddDomainIntegrator(new DomainLFIntegrator(IC));
-    l_form -> Assemble();
+    LinearForm *m_lform = new LinearForm(m_fes);
+    m_lform -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
+    m_lform -> AddDomainIntegrator(new DomainLFIntegrator(IC));
+    m_lform -> Assemble();
 
-    for (int i=0; i<l_form->Size(); i++) {
-        B[i] = l_form->Elem(i);
+    for (int i=0; i<m_lform->Size(); i++) {
+        B[i] = m_lform->Elem(i);
     }
-    delete l_form;
+    delete m_lform;
 }
 
 
-void DGadvection::addInitialCondition(const MPI_Comm &spatialComm, double *B)
+void DGadvection::addInitialCondition(double *B)
 {
     /* Form the right-hand side */
     FunctionCoefficient inflow_coeff(inflow_function);
     VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega);
-    ParLinearForm *l_form = new ParLinearForm(m_pfes);
-    l_form -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
-    l_form -> AddDomainIntegrator(new DomainLFIntegrator(IC));
-    l_form -> Assemble();
+    ParLinearForm *m_lform = new ParLinearForm(m_pfes);
+    m_lform -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
+    m_lform -> AddDomainIntegrator(new DomainLFIntegrator(IC));
+    m_lform -> Assemble();
 
-    for (int i=0; i<l_form->Size(); i++) {
-        B[i] = l_form->Elem(i);
+    for (int i=0; i<m_lform->Size(); i++) {
+        B[i] = m_lform->Elem(i);
     }
-    delete l_form;
+    delete m_lform;
 }
 
+#endif
 
+// TODO :  Need to implement these functions... 
+void DGadvection::getInitialCondition(double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) 
+{    
+}
+
+void DGadvection::getInitialCondition(double * &B, int &spatialDOFs) 
+{    
+}

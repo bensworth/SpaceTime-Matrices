@@ -213,14 +213,12 @@ private:
     
     
     // TODO : Make all spatial discretization functions PURE VIRTUAL once they've been implemented!
-    virtual void getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
-                                           double * &G, 
+    virtual void getSpatialDiscretizationG(double * &G, 
                                            int      &localMinRow, 
                                            int      &localMaxRow,
                                            int      &spatialDOFs, 
                                            double    t);                                   
-    virtual void getSpatialDiscretizationL(const MPI_Comm &spatialComm, 
-                                           int    * &A_rowptr, 
+    virtual void getSpatialDiscretizationL(int    * &A_rowptr, 
                                            int    * &A_colinds, 
                                            double * &A_data,
                                            double * &U0, 
@@ -233,17 +231,17 @@ private:
                                           
                                           
     // Spatial discretization on one processor                                  
-    virtual void getSpatialDiscretizationG(double * &G, 
-                                           int      &spatialDOFs, 
-                                           double    t);
-    virtual void getSpatialDiscretizationL(int    * &A_rowptr, 
-                                           int    * &A_colinds, 
-                                           double * &A_data,
-                                           double * &U0, 
-                                           bool      getU0, 
-                                           int      &spatialDOFs,
-                                           double    t, 
-                                           int      &bsize);                                            
+    virtual void getSpatialDiscretizationG(double* &G, 
+                                           int     &spatialDOFs, 
+                                           double   t);
+    virtual void getSpatialDiscretizationL(int*    &A_rowptr, 
+                                           int*    &A_colinds, 
+                                           double* &A_data,
+                                           double* &U0, 
+                                           bool     getU0, 
+                                           int     &spatialDOFs,
+                                           double   t, 
+                                           int     &bsize);                                            
         
                                                                             
     // Get mass matrix for time integration; only for finite element discretizations.
@@ -254,7 +252,7 @@ private:
     void setIdentityMassLocalRange(int localMinRow, int localMaxRow);
     
     // TODO : these need to be implemented in CG and DG also...
-    virtual void getInitialCondition(const MPI_Comm &spatialComm, double * &B, 
+    virtual void getInitialCondition(double * &B, 
                                         int &localMinRow, int &localMaxRow, 
                                         int &spatialDOFs) = 0;
     virtual void getInitialCondition(double * &B, int &spatialDOFs) = 0;
@@ -262,8 +260,7 @@ private:
     // Optional function to obtain exact solution of PDE at time t. Boolean return value reflects whether such a solution is implemented
     virtual bool GetExactPDESolution(double * &U, int &spatialDOFs, double t) { return false; };
     
-    virtual bool GetExactPDESolution(const MPI_Comm &spatialComm, 
-                                        double * &U, int &localMinRow, 
+    virtual bool GetExactPDESolution(double * &U, int &localMinRow, 
                                         int &localMaxRow, 
                                         int &spatialDOFs, double t) { return false; };
     

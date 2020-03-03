@@ -284,7 +284,7 @@ bool SpaceTimeMatrix::GetDiscretizationError(double &e2norm)
     
     // Get PDE solution at final time on spatial communicator
     if (m_useSpatialParallel) {
-        got_uexact = GetExactPDESolution(m_spatialComm, uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, m_dt*m_nt);
+        got_uexact = GetExactPDESolution(uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, m_dt*m_nt);
     } else {
         got_uexact = GetExactPDESolution(uexact, spatialDOFs, m_dt*m_nt);
         spaceLocalMinRow = 0;
@@ -520,7 +520,7 @@ void SpaceTimeMatrix::getMassMatrix(int * &M_rowptr, int * &M_colinds, double * 
 
 
 // TODO remove these functions when implemented in all spatial discretizations..
-void SpaceTimeMatrix::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &A_rowptr, 
+void SpaceTimeMatrix::getSpatialDiscretizationL(int* &A_rowptr, 
                                             int* &A_colinds, double* &A_data,
                                             double* &U0, bool getU0, 
                                             int &localMinRow, int &localMaxRow, 
@@ -531,7 +531,7 @@ void SpaceTimeMatrix::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int
     MPI_Finalize();
     exit(1);
 }                                                                            
-void SpaceTimeMatrix::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
+void SpaceTimeMatrix::getSpatialDiscretizationG(double* &G, 
                                             int &localMinRow, int &localMaxRow,
                                             int &spatialDOFs, double t)
 {
@@ -870,7 +870,7 @@ void SpaceTimeMatrix::SetMultistepStartValues()
             
             // Attempt to get PDE solution
             if (m_useSpatialParallel) {
-                got_uexact = GetExactPDESolution(m_spatialComm, uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, n*m_dt);
+                got_uexact = GetExactPDESolution(uexact, spaceLocalMinRow, spaceLocalMaxRow, spatialDOFs, n*m_dt);
             } else {
                 got_uexact = GetExactPDESolution(uexact, spatialDOFs, n*m_dt);
                 spaceLocalMinRow = 0;
@@ -1783,7 +1783,7 @@ void SpaceTimeMatrix::GetHypreInitialCondition(HYPRE_ParVector &u0,
         iupper = spatialDOFs - 1; 
     // Spatial parallelism: Distribute initial condition across spatial communicator
     } else {
-        getInitialCondition(m_spatialComm, U, ilower, iupper, spatialDOFs);    
+        getInitialCondition(U, ilower, iupper, spatialDOFs);    
     }
 
     
@@ -1872,7 +1872,7 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationG(HYPRE_ParVector &g,
         iupper = spatialDOFs - 1; 
     // Spatial parallelism: Distribute spatial discretization across spatial communicator
     } else {
-        getSpatialDiscretizationG(m_spatialComm, G, ilower, iupper, spatialDOFs, t);
+        getSpatialDiscretizationG(G, ilower, iupper, spatialDOFs, t);
     }
 
     // Get global row indices
@@ -1924,7 +1924,7 @@ void SpaceTimeMatrix::GetHypreSpatialDiscretizationL(HYPRE_ParCSRMatrix &L,
         iupper = spatialDOFs - 1; 
     // Spatial parallelism: Distribute initial condition across spatial communicator    
     } else {
-        getSpatialDiscretizationL(m_spatialComm, L_rowptr, L_colinds, L_data, 
+        getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, 
                                     U0, getU0, ilower, iupper, spatialDOFs, 
                                     t, m_bsize);
     }
@@ -3615,9 +3615,9 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     int    * L_colinds;
     double * L_data;
     bool     getV0 = true; // Get initial guess at solution from getSpatialDiscretizationL
-    getSpatialDiscretizationG(m_spatialComm, B, localMinRow, localMaxRow, spatialDOFs, 
+    getSpatialDiscretizationG(B, localMinRow, localMaxRow, spatialDOFs, 
                                 m_t0 + (globalInd+m_s_multi)*m_dt);
-    getSpatialDiscretizationL(m_spatialComm, L_rowptr, L_colinds, L_data, 
+    getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, 
                                 V, getV0, localMinRow, localMaxRow, spatialDOFs, 
                                 m_t0 + (globalInd+m_s_multi)*m_dt, m_bsize);
     int onProcSize = localMaxRow - localMinRow + 1; // Number of rows on process
@@ -3770,8 +3770,8 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     bool     getV0 = true; // Get initial guess at solution from getSpatialDiscretizationL
     double   t = m_dt*blockInd + m_dt*m_c_butcher[localInd]; // Time to evaluate spatial discretization, as required by first DOF on process. 
     
-    getSpatialDiscretizationG(m_spatialComm, B, localMinRow, localMaxRow, spatialDOFs, t);
-    getSpatialDiscretizationL(m_spatialComm, L_rowptr, L_colinds, L_data, 
+    getSpatialDiscretizationG(B, localMinRow, localMaxRow, spatialDOFs, t);
+    getSpatialDiscretizationL(L_rowptr, L_colinds, L_data, 
                                 V, getV0, localMinRow, localMaxRow, spatialDOFs, t, m_bsize);
     int onProcSize = localMaxRow - localMinRow + 1; // Number of rows on process
     L_nnzOnProc    = L_rowptr[onProcSize] - L_rowptr[0]; 
@@ -3863,7 +3863,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     if (blockInd == 0) {
         
         // Get initial condition as HYPRE vector. 
-        getInitialCondition(m_spatialComm, u0_data, localMinRow, localMaxRow, spatialDOFs);
+        getInitialCondition(u0_data, localMinRow, localMaxRow, spatialDOFs);
         
         // Get local row indices for u0
         u0_indices = new int[onProcSize];
