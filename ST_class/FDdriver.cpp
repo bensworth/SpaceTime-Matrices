@@ -1,7 +1,6 @@
 #include <iostream>
 #include <fstream>
 // #include "CGdiffusion.hpp"
-#include "DGadvection.hpp"
 #include "FDadvection.hpp"
 #include "mfem.hpp"
 using namespace mfem;
@@ -39,6 +38,11 @@ mpirun -np 4 ./driver -pit 1 -s 3 -d 2 -nt 60 -t 122 -o 2 -l 6 -p 2 -gmres 1 -pp
     mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 121 -o 2 -l 7 -p 2 -gmres 0 -tol 1e-5 -FD 101 -save 2 
     mpirun -np 4 ./driver -pit 1 -s 3 -d 1 -t 32 -nt 241 -o 2 -l 8 -p 2 -gmres 0 -tol 1e-5 -FD 101 -save 2 
 */
+
+// Pretty acceptable results:
+srun -n128 ./FDdriver -s 3 -d 1 -t 32 -nt 1281 -o 2 -l 9 -p 2 -gmres 1 -tol 1e-5 -FD 1 -AsC 0.1 -AsR 0.1 -Ac 10 -Af 0.005 -Ar 3 -Ar1 N -Ar2 FA
+
+
 
 
 int main(int argc, char *argv[])
@@ -102,9 +106,6 @@ int main(int argc, char *argv[])
                                     AMGiters, precon_printLevel, rebuildRate, bool(binv_scale), bool(lump_mass), 
                                     multi_init};
 
-
-
-    
     // double distance_R;
     // std::string prerelax;
     // std::string postrelax;
@@ -117,12 +118,12 @@ int main(int argc, char *argv[])
     // double filter_tolA;
     // int cycle_type;
     //AMG_parameters AMG = {"", "FFC", 3, 100, 0.01, 6, 1, 0.1, 1e-6};
-    // AMG_parameters AMG = {1.5, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
+    // AMG_parameters AMG = {15, "", "FA", 100, 10, 10, 0.1, 0.05, 0.0, 1e-5, 1};
     // const char* temp_prerelax = "A";
     // const char* temp_postrelax = "FA";
 
     // The "standard" AIR parameters used in SetAIR()
-    AMG_parameters AMG = {1.5, "A", "FFC", 100, 0, 6, 0.005, 0.0, 0.0, 0.0, 1};
+    AMG_parameters AMG = {15, "A", "FFC", 100, 0, 6, 0.005, 0.0, 0.0, 0.0, 1};
     const char* temp_prerelax = "A";
     const char* temp_postrelax = "FFC";
     
@@ -233,204 +234,173 @@ int main(int argc, char *argv[])
 
     if (dt < 0) dt = 1.0/numTimeSteps;
 
-
     // For now have to keep SpaceTime object in scope so that MPI Communicators
     // get destroyed before MPI_Finalize() is called. 
-    /* ----------------------------------------------------------------- */
-    /* ------ Discontinuous-Galerkin discretizations of advection ------ */
-    /* ----------------------------------------------------------------- */
-    if (spatialDisc == 2) {
-        mass_exists = true; // Have a mass matrix
-        DGadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, dt, refLevels, order, lump_mass);
-        
-        STmatrix.SetAMGParameters(AMG);
-        STmatrix.SetSolverParameters(solver);
-        STmatrix.Solve();
-
-        STmatrix.PrintMeshData();
-    }
-    
-    /* -------------------------------------------------------------- */
-    /* ------ Continuous-Galerkin discretizations of diffusion ------ */
-    /* -------------------------------------------------------------- */
-#if 0
-    if (spatialDisc == 1) {
-        mass_exists = true; // Have a mass matrix
-        CGdiffusion STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, dt, refLevels, order, lump_mass);
-            
-        STmatrix.SetAMGParameters(AMG);
-        STmatrix.SetSolverParameters(solver);                 
-        STmatrix.Solve();                            
-        
-        STmatrix.PrintMeshData();
-    }
-#endif
-    
-    
     /* ------------------------------------------------------------ */
     /* ------ Finite-difference discretizations of advection ------ */
     /* ------------------------------------------------------------ */
-    else if (spatialDisc == 3) {
-        bool usingRK        = false;
-        bool usingMultistep = false;
-        int  smulti         = 0;
-        
-        double CFL_fraction;
-        double CFLlim;
-        // Set CFL number 
-        
-        // Explicit Runge-Kutta
-        if (timeDisc > 100 && timeDisc < 200) {
-            usingRK = true;
-            
-            // These limits apply for ERKp+Up schemes
-            CFL_fraction = 0.85;
-            if (order == 1)  {
-                CFLlim = 1.0;
-            } else if (order == 2) {
-                CFLlim = 0.5;
-            } else if (order == 3) {
-                CFLlim = 1.62589;
-            } else if (order == 4) {
-                CFLlim = 1.04449;
-            } else if  (order == 5) {
-                CFLlim = 1.96583;
-            }
-        // Implicit Runge-Kutta
-        } else if (timeDisc > 200 && timeDisc < 300) {
-            usingRK = true;
-            
-            CFLlim = 1.0;
-            CFL_fraction = 1.0; // Use a CFL number of ...
-        
-        // TODO: 
-        //--- Work out what sensible CFLs look like for multistep schemes!  ------
-        
-        // BDF (implicit)
-        } else if  (timeDisc >= 30 && timeDisc < 40) {
-            CFLlim = 0.8;
-            //CFLlim = 1.0;
-            CFL_fraction = 1.0; // Use a CFL number of ...
-            
-            usingMultistep = true;
-            smulti = timeDisc % 10;
-        }
-            
-        double dx, dy = -1.0;
-        
-        // Time step so that we run at CFL_fraction of the CFL limit 
-        if (dim == 1) {
-            dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
-            dt = dx * CFLlim;
-        } else if (dim == 2) {
-            dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
-            dy = dx;
-            dt = CFLlim/(1/dx + 1/dy);
-        }
-        
-        dt *= CFL_fraction;
-        
-        
-        // // Manually set time to integrate to (just comment or uncomment this...)
-        // double T = 2.0; // For 1D in space...
-        // //double T = 2.0  * dt; // For 1D in space...
-        // if (dim == 2) T = 0.5; // For 2D in space...
-        // 
-        // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
-        // nt = ceil(T / dt);
-        // //nt = 6;
-        // //dt = T / (nt - 1);
-        // 
-        // // Round up nt so that numProcess evenly divides number of unknowns. Assuming time-only parallelism...
-        // // NOTE: this will slightly change T... But actually, enforce this always so that 
-        // // tests are consistent accross time-stepping and space-time system
-        // if (usingRK) {
-        //     int rem = nt % numProcess; // There are s*nt DOFs for integer s
-        //     if (rem != 0) nt += (numProcess-rem); 
-        //     //nt = 4; 
-        // } else if (usingMultistep) {
-        //     int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
-        //     if (rem != 0) nt += (numProcess-rem); 
-        // }
-        // 
-        // // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
-        // dt = T / (nt - 1); 
-        // 
-        /* --- Get SPACETIMEMATRIX object --- */
-        std::vector<int> n_px = {};
-        if (px != -1) {
-            if (dim >= 1) {
-                n_px.push_back(px);
-            }
-            if (dim >= 2) {
-                n_px.push_back(py);
-            }
-        }
-        
-        // Build SpaceTime object
-        FDadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, 
-                                dt, dim, refLevels, order, FD_ProblemID, n_px);
-        
-        // Set parameters
-        STmatrix.SetAMGParameters(AMG);
-        STmatrix.SetSolverParameters(solver);
-        
-        //STmatrix.SetAIRHyperbolic();
-        //STmatrix.SetAIR();
-        //STmatrix.SetAMG();
-        
-        // Solve PDE
-        STmatrix.Solve();
-            
-                
-        if (saveLevel >= 1) {
-            std::string filename;
-            if (std::string(out) == "") {
-                filename =  "data/U" + std::to_string(pit); // Default filename...
-            } else {
-                filename = out;
-            }
-            
-            if (saveLevel >= 2) STmatrix.SaveX(filename);
-            if (saveLevel >= 3) STmatrix.SaveMatrix("A");
-            if (saveLevel >= 3) STmatrix.SaveRHS("b");
-            
-            
-            double discerror;    
-            bool gotdiscerror = STmatrix.GetDiscretizationError(discerror);
-            
-            
-            // Save data to file enabling easier inspection of solution            
-            if (rank == 0) {
-                int nx = pow(2, refLevels);
-                std::map<std::string, std::string> space_info;
+    bool usingRK        = false;
+    bool usingMultistep = false;
+    int  smulti         = 0;
     
-                space_info["space_order"]     = std::to_string(order);
-                space_info["nx"]              = std::to_string(nx);
-                space_info["space_dim"]       = std::to_string(dim);
-                space_info["space_refine"]    = std::to_string(refLevels);
-                space_info["problemID"]       = std::to_string(FD_ProblemID);
-                for (int d = 0; d < n_px.size(); d++) {
-                    space_info[std::string("p_x") + std::to_string(d)] = std::to_string(n_px[d]);
-                }
-                
-                // Not sure how else to ensure disc error is cast to a string in scientific format...
-                if (gotdiscerror) {
-                    space_info["discerror"].resize(16);
-                    space_info["discerror"].resize(std::snprintf(&space_info["discerror"][0], 16, "%.6e", discerror));
-                } 
-                
-                if (dx != -1.0) {
-                    space_info["dx"].resize(16);
-                    space_info["dx"].resize(std::snprintf(&space_info["dx"][0], 16, "%.6e", dx));
-                }
-
-                STmatrix.SaveSolInfo(filename, space_info);    
-            }
+    double CFL_fraction;
+    double CFLlim;
+    // Set CFL number 
+    
+    // Explicit Runge-Kutta
+    if (timeDisc > 100 && timeDisc < 200) {
+        usingRK = true;
+        
+        // These limits apply for ERKp+Up schemes
+        CFL_fraction = 0.85;
+        if (order == 1)  {
+            CFLlim = 1.0;
+        } else if (order == 2) {
+            CFLlim = 0.5;
+        } else if (order == 3) {
+            CFLlim = 1.62589;
+        } else if (order == 4) {
+            CFLlim = 1.04449;
+        } else if  (order == 5) {
+            CFLlim = 1.96583;
+        }
+    // Implicit Runge-Kutta
+    }
+    else if (timeDisc > 200 && timeDisc < 300) {
+        usingRK = true;
+        
+        CFLlim = 1.0;
+        CFL_fraction = 1.0; // Use a CFL number of ...
+    
+    // TODO: 
+    //--- Work out what sensible CFLs look like for multistep schemes!  ------
+    
+    // BDF (implicit)
+    }
+    else if  (timeDisc >= 30 && timeDisc < 40) {
+        CFLlim = 0.8;
+        //CFLlim = 1.0;
+        CFL_fraction = 1.0; // Use a CFL number of ...
+        
+        usingMultistep = true;
+        smulti = timeDisc % 10;
+    }
+        
+    double dx, dy = -1.0;
+    
+    // Time step so that we run at CFL_fraction of the CFL limit 
+    if (dim == 1) {
+        dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
+        dt = dx * CFLlim;
+    }
+    else if (dim == 2) {
+        dx = 2.0 / pow(2.0, refLevels); // Assumes nx = 2^refLevels, and x \in [-1,1] 
+        dy = dx;
+        dt = CFLlim/(1/dx + 1/dy);
+    }
+    
+    CFL_fraction = 5.0;
+    dt *= CFL_fraction;
+    
+    
+    // // Manually set time to integrate to (just comment or uncomment this...)
+    // double T = 2.0; // For 1D in space...
+    // //double T = 2.0  * dt; // For 1D in space...
+    // if (dim == 2) T = 0.5; // For 2D in space...
+    // 
+    // // Time step so that we run at approximately CFL_fraction of CFL limit, but integrate exactly up to T
+    // nt = ceil(T / dt);
+    // //nt = 6;
+    // //dt = T / (nt - 1);
+    // 
+    // // Round up nt so that numProcess evenly divides number of unknowns. Assuming time-only parallelism...
+    // // NOTE: this will slightly change T... But actually, enforce this always so that 
+    // // tests are consistent accross time-stepping and space-time system
+    // if (usingRK) {
+    //     int rem = nt % numProcess; // There are s*nt DOFs for integer s
+    //     if (rem != 0) nt += (numProcess-rem); 
+    //     //nt = 4; 
+    // } else if (usingMultistep) {
+    //     int rem = (nt + 1 - smulti) % numProcess; // There are nt+1-s unknowns
+    //     if (rem != 0) nt += (numProcess-rem); 
+    // }
+    // 
+    // // TODO : I get inconsistent results if I set this before I set nt... But it shouldn't really matter.... :/ 
+    // dt = T / (nt - 1); 
+    // 
+    /* --- Get SPACETIMEMATRIX object --- */
+    std::vector<int> n_px = {};
+    if (px != -1) {
+        if (dim >= 1) {
+            n_px.push_back(px);
+        }
+        if (dim >= 2) {
+            n_px.push_back(py);
+        }
+    }
+    
+    // Build SpaceTime object
+    FDadvection STmatrix(MPI_COMM_WORLD, pit, mass_exists, timeDisc, nt, 
+                            dt, dim, refLevels, order, FD_ProblemID, n_px);
+    
+    // Set parameters
+    STmatrix.SetAMGParameters(AMG);
+    STmatrix.SetSolverParameters(solver);
+    
+    //STmatrix.SetAIRHyperbolic();
+    //STmatrix.SetAIR();
+    //STmatrix.SetAMG();
+    
+    // Solve PDE
+    STmatrix.Solve();
+        
+            
+    if (saveLevel >= 1) {
+        std::string filename;
+        if (std::string(out) == "") {
+            filename =  "data/U" + std::to_string(pit); // Default filename...
+        } else {
+            filename = out;
         }
         
+        if (saveLevel >= 2) STmatrix.SaveX(filename);
+        if (saveLevel >= 3) STmatrix.SaveMatrix("A");
+        if (saveLevel >= 3) STmatrix.SaveRHS("b");
         
-    }                         
+        
+        double discerror;    
+        bool gotdiscerror = STmatrix.GetDiscretizationError(discerror);
+        
+        
+        // Save data to file enabling easier inspection of solution            
+        if (rank == 0) {
+            int nx = pow(2, refLevels);
+            std::map<std::string, std::string> space_info;
+
+            space_info["space_order"]     = std::to_string(order);
+            space_info["nx"]              = std::to_string(nx);
+            space_info["space_dim"]       = std::to_string(dim);
+            space_info["space_refine"]    = std::to_string(refLevels);
+            space_info["problemID"]       = std::to_string(FD_ProblemID);
+            for (int d = 0; d < n_px.size(); d++) {
+                space_info[std::string("p_x") + std::to_string(d)] = std::to_string(n_px[d]);
+            }
+            
+            // Not sure how else to ensure disc error is cast to a string in scientific format...
+            if (gotdiscerror) {
+                space_info["discerror"].resize(16);
+                space_info["discerror"].resize(std::snprintf(&space_info["discerror"][0], 16, "%.6e", discerror));
+            } 
+            
+            if (dx != -1.0) {
+                space_info["dx"].resize(16);
+                space_info["dx"].resize(std::snprintf(&space_info["dx"][0], 16, "%.6e", dx));
+            }
+
+            STmatrix.SaveSolInfo(filename, space_info);    
+        }
+    }
+        
     MPI_Finalize();
     return 0;
 }

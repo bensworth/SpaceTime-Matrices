@@ -1,0 +1,40 @@
+# Compiler, compile options, and link options
+MFEM_DIR  = /g/g19/bs/SpaceTime-Matrices/mfem
+HYPRE_DIR = /g/g19/bs/SpaceTime-Matrices/hypre/src/hypre
+METIS_DIR = /g/g19/bs/metis/build/Linux-x86_64
+CXX      = mpicxx
+FLAGS    = -g -std=c++11
+INC      = -I$(MFEM_DIR)/bens_build -I$(HYPRE_DIR)/include -I$(METIS_DIR)/include
+CXXFLAGS = $(FLAGS) $(INC)
+LDFLAGS  = -L$(MFEM_DIR)/bens_build -L$(HYPRE_DIR)/lib -L$(METIS_DIR)/libmetis
+LDLIBS   = -lmfem -lHYPRE -lmetis
+
+# Files to compile
+# SOURCE_FILES  = SpaceTimeMatrix.cpp CGdiffusion.cpp DGadvection.cpp FDadvection.cpp
+SOURCE_FILES  = SpaceTimeMatrix.cpp DGadvection.cpp
+OBJECT_FILES  = $(SOURCE_FILES:.cpp=.o)
+EXEC_FILES    = DGdriver
+
+.PHONY: all clean clean-build clean-exec
+
+# Compile source files if the hpp or cpp has changed.
+%.o: %.cpp %.hpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Recompile executables if cpp files or object dependencies have changed
+%: %.cpp $(OBJECT_FILES)
+	$(CXX) $(CXXFLAGS) $< -o $@ $(OBJECT_FILES) $(LDFLAGS) $(LDLIBS)
+
+# Specify that 'make' compiles all examples.
+all: $(OBJECT_FILES) $(EXEC_FILES)
+
+# Remove all object files and executables
+clean: clean-build clean-exec $(SUBDIRS_CLEAN)
+
+clean-build:
+	rm -f *.o *~ $(OBJECT_FILES) $(EXEC_FILES)
+	rm -rf *.dSYM *.TVD.*breakpoints
+
+clean-exec:
+	@rm -f refined.mesh displaced.mesh mesh.*
+

@@ -16,7 +16,7 @@
 
 /* Struct containing basis AMG/AIR parameters to pass to hypre. */
 struct AMG_parameters {
-   double distance_R;
+   int distance_R;
    std::string prerelax;
    std::string postrelax;
    int interp_type;
@@ -213,6 +213,7 @@ private:
     
     
     // TODO : Make all spatial discretization functions PURE VIRTUAL once they've been implemented!
+    // TODO : we should remove loclamin/localmax from getG and initial condition
     virtual void getSpatialDiscretizationG(double * &G, 
                                            int      &localMinRow, 
                                            int      &localMaxRow,
@@ -230,7 +231,7 @@ private:
                                            int      &bsize);                                            
                                           
                                           
-    // Spatial discretization on one processor                                  
+    // Spatial discretization on one processor                                
     virtual void getSpatialDiscretizationG(double* &G, 
                                            int     &spatialDOFs, 
                                            double   t);

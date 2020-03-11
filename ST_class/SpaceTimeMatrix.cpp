@@ -163,7 +163,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
         /* ---------------------------- */
         /* --- BDF time integration --- */
         /* ---------------------------- */
-        } else if (m_BDF) {
+        }
+        else if (m_BDF) {
             /* ------ Temporal + spatial parallelism ------ */
             if (m_numProc > m_nt + 1 - m_s_multi) {
                 if (m_globRank == 0) std::cout << "Space-time system: Spatial + temporal parallelism!\n";      
@@ -188,7 +189,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
             
             
             /* ------ Temporal parallelism only ------ */
-            } else {
+            }
+            else {
                 if (m_globRank == 0) {
                     if (m_numProc > 1) std::cout << "Space-time system: Temporal parallelism only!\n";    
                     else std::cout << "Space-time system: No parallelism!\n";    
@@ -214,7 +216,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
             }
             
-        } else {
+        } 
+        else {
             std::cout << "WARNING: Only RK and BDF space-time system implemented" << '\n';
             MPI_Finalize();
             exit(1);
@@ -2575,7 +2578,7 @@ void SpaceTimeMatrix::SetAMG()
 /* Set standard AIR parameters for BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIR()
 {
-    m_AMG_parameters.distance_R = 1.5;
+    m_AMG_parameters.distance_R = 15;
     m_AMG_parameters.prerelax = "A";
     m_AMG_parameters.postrelax = "FFC";
     m_AMG_parameters.relax_type = 3;
@@ -2593,7 +2596,7 @@ void SpaceTimeMatrix::SetAIR()
 /* Set AIR parameters assuming triangular matrix in BoomerAMG solve. */
 void SpaceTimeMatrix::SetAIRHyperbolic()
 {
-    m_AMG_parameters.distance_R = 1.5;
+    m_AMG_parameters.distance_R = 15;
     m_AMG_parameters.prerelax = "A";
     m_AMG_parameters.postrelax = "F";
     m_AMG_parameters.relax_type = 10;

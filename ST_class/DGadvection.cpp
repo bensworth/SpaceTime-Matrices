@@ -3,12 +3,12 @@
 #include <vector>
 #include <algorithm>
 #include <iostream>
-using namespace mfem;
 
 
 Vector mesh_min;
 Vector mesh_max;
 
+// Reaction term
 double sigma_function(const Vector &x) {
     return 0.0;
     // int dim = x.Size();
@@ -28,19 +28,12 @@ double sigma_function(const Vector &x) {
     // }
 }
 
-// Return top-hat like area close to x-border and slightly off of y border
+// Initial condition
+// - Currently top-hat like area close to x-border and slightly off of y border
 double initCond(const Vector &x) {
 
     int dim = x.Size();
     if (dim == 2) {
-        // double x0 = x(0);
-        // double x1 = x(1);
-        // double s0 = (mesh_max(0) - mesh_min(0));
-        // double s1 = (mesh_max(1) - mesh_min(1));
-        // if (x0 > mesh_min(0) && x0 < mesh_max(0)/10.0 &&
-        //     x1 > (mesh_min(1) + s1/10.0) && x1 < (mesh_min(1) + s1/5.0) ) {
-        //     return 200.0;
-        // }
         double x0 = x(0);
         double x1 = x(1);
         if (x0 > 0.1 && x0 < 0.5 &&
@@ -60,7 +53,8 @@ double initCond(const Vector &x) {
 }
 
 // TODO : allow for this to support time-dependent rhs??
-// double Q_function(const Vector &x, double t) {
+// --> double Q_function(const Vector &x, double t) {
+// Need to modify CoefficientWithState in .hpp file. 
 double Q_function(const Vector &x) {
     int dim = x.Size();
     // if (dim == 2) {
@@ -85,7 +79,7 @@ double Q_function(const Vector &x) {
 }
 
 
-// Zero inflow boundaries
+// Inflow boundaries
 double inflow_function(const Vector &x) {
     int dim = x.Size();
     if (dim == 2) {
@@ -96,16 +90,46 @@ double inflow_function(const Vector &x) {
     }
 }
 
+#if 1
 DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, 
-                            int timeDisc, int numTimeSteps, double dt): 
+                         int timeDisc, int numTimeSteps, double dt): 
     SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt),
     m_order(1), m_refLevels(1), m_lumped(false), m_dim(2),
     m_basis_type(1), m_is_refined(false), m_plform(NULL), m_pbform(NULL),
     m_lform(NULL), m_bform(NULL), m_tcurrent(-1), m_pfes(NULL), m_fes(NULL),
-    m_bsize(-1)
+    m_bsize(-1), m_mesh(NULL), m_pmesh(NULL), m_fec(NULL)
 {
-
+    m_G_isTimedependent = false;
+    m_L_isTimedependent = false;
+    Setup();
 }
+#else
+DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, 
+                         int timeDisc, int numTimeSteps, double dt): 
+    SpaceTimeMatrix(globComm, pit, M_exists, timeDisc, numTimeSteps, dt)
+{
+    m_order = 1;
+    m_refLevels = 1;
+    m_lumped = false;
+    m_dim = 2;
+
+    m_basis_type = 1;
+    m_is_refined = false;
+    m_plform = NULL;
+    m_pbform = NULL;
+
+    m_lform = NULL;
+    m_bform = NULL;
+    m_tcurrent = -1;
+    m_pfes = NULL;
+    m_fes = NULL;
+
+    m_bsize = -1;
+
+m_G_isTimedependent(false), m_L_isTimedependent(false)
+    Setup();
+}
+#endif
 
 
 DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, 
@@ -115,9 +139,11 @@ DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists,
     m_refLevels{refLevels}, m_order{order}, m_lumped(false), m_dim(2),
     m_basis_type(1), m_is_refined(false), m_plform(NULL), m_pbform(NULL),
     m_lform(NULL), m_bform(NULL), m_tcurrent(-1), m_pfes(NULL), m_fes(NULL),
-    m_bsize(-1)
+    m_bsize(-1), m_mesh(NULL), m_pmesh(NULL), m_fec(NULL)
 {
-
+    m_G_isTimedependent = false;
+    m_L_isTimedependent = false;
+    Setup();
 }
 
 
@@ -127,9 +153,11 @@ DGadvection::DGadvection(MPI_Comm globComm, bool pit, bool M_exists, int timeDis
     m_refLevels{refLevels}, m_order{order}, m_lumped{lumped}, m_dim(2),
     m_basis_type(1), m_is_refined(false), m_plform(NULL), m_pbform(NULL),
     m_lform(NULL), m_bform(NULL), m_tcurrent(-1), m_pfes(NULL), m_fes(NULL),
-    m_bsize(-1)
+    m_bsize(-1), m_mesh(NULL), m_pmesh(NULL), m_fec(NULL)
 {
-
+    m_G_isTimedependent = false;
+    m_L_isTimedependent = false;
+    Setup();
 }
 
 
@@ -230,16 +258,15 @@ void DGadvection::ConstructFormsPar(double t)
     // In this example, the boundary conditions are defined by marking all
     // the boundary attributes from the mesh as essential (Dirichlet) and
     // converting them to a list of true dofs.
-    Array<int> ess_tdof_list;
     if (m_pmesh->bdr_attributes.Size()) {
         Array<int> ess_bdr(m_pmesh->bdr_attributes.Max());
         ess_bdr = 1;
-        m_pfes -> GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+        m_pfes -> GetEssentialTrueDofs(ess_bdr, m_ess_tdof_list);
     }
 
     // Define functions and coefficients 
-    FunctionCoefficient inflow_coeff(inflow_function);
-    FunctionCoefficient Q_coeff(Q_function);  
+    CoefficientWithState inflow_coeff(inflow_function);
+    CoefficientWithState Q_coeff(Q_function);
     FunctionCoefficient sigma_coeff(sigma_function);
     VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
 
@@ -252,10 +279,11 @@ void DGadvection::ConstructFormsPar(double t)
     m_pbform = new ParBilinearForm(m_pfes);
     m_pbform -> AddDomainIntegrator(new MassIntegrator(sigma_coeff));
     m_pbform -> AddDomainIntegrator(new TransposeIntegrator(
-                new ConvectionIntegrator(*direction, -1.0), 0));
+                new ConvectionIntegrator(*direction, -1.0)));
     m_pbform -> AddInteriorFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));  // Interior face integrators
     m_pbform -> AddBdrFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));       // Boundary face integrators
     m_pbform -> Assemble();
+    m_pbform -> Finalize();
 
     /* Form the right-hand side */
     m_plform = new ParLinearForm(m_pfes);
@@ -270,14 +298,14 @@ void DGadvection::ConstructFormsPar(double t)
         else m->AddDomainIntegrator(new MassIntegrator);
         m->Assemble();
         m->Finalize();
-        HypreParMatrix M;
-        m->FormSystemMatrix(ess_tdof_list, M);
+        HypreParMatrix *M = m->ParallelAssemble();
         SparseMatrix M_loc;
-        M.GetProcRows(M_loc);
+        M -> GetProcRows(M_loc);
         m_M_rowptr = M_loc.GetI();
         m_M_colinds = M_loc.GetJ();
         m_M_data = M_loc.GetData();
         M_loc.LoseData();
+        delete M;
         delete m;
     }
 
@@ -288,9 +316,25 @@ void DGadvection::ConstructFormsPar(double t)
 // Construct linear and bilinear forms without using spatial parallelism
 void DGadvection::ConstructForms(double t)
 {
+    // TODO: support moving flow -> use FunctionCoefficient instead of VectorConstantCoefficient
+    /* Define angle of flow, coefficients and integrators */
+    m_omega.SetSize(m_dim);
+    if (m_dim == 2) {
+        double theta = PI/4.0;
+        m_omega(0) = cos(theta);
+        m_omega(1) = sin(theta);
+    }
+    else {
+        double theta1 = PI/4.0;
+        double theta2 = PI/4.0;
+        m_omega(0) = sin(theta1)*cos(theta2);
+        m_omega(1) = sin(theta1)*sin(theta2);       
+        m_omega(1) = cos(theta1);       
+    }
+
     // Define functions and coefficients 
-    FunctionCoefficient inflow_coeff(inflow_function);
-    FunctionCoefficient Q_coeff(Q_function);  
+    CoefficientWithState inflow_coeff(inflow_function);
+    CoefficientWithState Q_coeff(Q_function);
     FunctionCoefficient sigma_coeff(sigma_function);
     VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
 
@@ -302,7 +346,6 @@ void DGadvection::ConstructForms(double t)
     m_bform -> AddInteriorFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));  // Interior face integrators
     m_bform -> AddBdrFaceIntegrator(new DGTraceIntegrator(*direction, 1.0, 0.5));       // Boundary face integrators
     m_bform -> Assemble();
-    m_bform -> Finalize();
 
     /* Form the right-hand side */
     m_lform = new LinearForm(m_fes);
@@ -348,24 +391,21 @@ void DGadvection::getSpatialDiscretizationL(int    * &A_rowptr,
     }
 
     // Assemble bilinear form and corresponding linear system
-    HypreParMatrix A;
-    Vector B0;
-    Vector X0;
-    m_pbform -> Finalize();
-    m_pbform -> FormLinearSystem(ess_tdof_list, x, *m_lform, A, X0, B0);
+    HypreParMatrix* A = m_pbform -> ParallelAssemble();
 
-    spatialDOFs = A.GetGlobalNumRows();
-    int *rowStarts = A.GetRowStarts();
+    spatialDOFs = A -> GetGlobalNumRows();
+    int *rowStarts = A -> GetRowStarts();
     localMinRow = rowStarts[0];
     localMaxRow = rowStarts[1]-1;
 
     // Steal vector data to pointers
-    // B = B0.StealData();
-    // X = X0.StealData();
+    if (getU0) {
+        U0 = new double[spatialDOFs]();
+    }
 
     // Compress diagonal and off-diagonal blocks of hypre matrix to local CSR
     SparseMatrix A_loc;
-    A.GetProcRows(A_loc);
+    A -> GetProcRows(A_loc);
     A_rowptr = A_loc.GetI();
     A_colinds = A_loc.GetJ();
     A_data = A_loc.GetData();
@@ -374,6 +414,20 @@ void DGadvection::getSpatialDiscretizationL(int    * &A_rowptr,
     double temp0, temp1;
     m_pmesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
     bsize = m_bsize;
+    delete A;
+}
+
+void DGadvection::getSpatialDiscretizationG(double * &G, 
+                                            int      &localMinRow, 
+                                            int      &localMaxRow,
+                                            int      &spatialDOFs, 
+                                            double    t)
+{
+    if (m_G_isTimedependent && (std::abs(t - m_tcurrent) > 1e-14)) {
+        ClearForms();
+        ConstructFormsPar(t);
+    }
+    G = m_plform->StealData();
 }
 
 
@@ -393,6 +447,7 @@ void DGadvection::getSpatialDiscretizationL(int    * &A_rowptr,
     }
 
     // Change ownership of matrix data to sparse matrix from bilinear form
+    m_bform -> Finalize();
     SparseMatrix* A = m_bform -> LoseMat();
     spatialDOFs = A->NumRows();
     A_rowptr = A->GetI();
@@ -402,15 +457,28 @@ void DGadvection::getSpatialDiscretizationL(int    * &A_rowptr,
     delete A; 
 
     // TODO : think I want to steal data from B0, X0, but they do not own
-    // B = m_lform->StealData();
-    // Vector X0(m_fes.GetVSize());
-    // X0 = 0.0;
-    // X = X0.StealData();
+    if (getU0) {
+        U0 = new double[spatialDOFs]();
+    }
 
     double temp0, temp1;
     m_mesh->GetCharacteristics(m_hmin, m_hmax, temp0, temp1);
     bsize = m_bsize;
 }
+
+
+void DGadvection::getSpatialDiscretizationG(double* &G, 
+                                            int     &spatialDOFs, 
+                                            double   t)
+{
+    if (m_G_isTimedependent && (std::abs(t - m_tcurrent) > 1e-14)) {
+        ClearForms();
+        ConstructForms(t);        
+    }
+    G = m_lform->StealData();
+}
+
+
 
 
 void DGadvection::getMassMatrix(int* &M_rowptr, int* &M_colinds, double* &M_data)
@@ -467,10 +535,43 @@ void DGadvection::addInitialCondition(double *B)
 #endif
 
 // TODO :  Need to implement these functions... 
-void DGadvection::getInitialCondition(double * &B, int &localMinRow, int &localMaxRow, int &spatialDOFs) 
-{    
+void DGadvection::getInitialCondition(double * &B, int &localMinRow,
+                                      int &localMaxRow, int &spatialDOFs) 
+{
+        // Define functions and coefficients 
+    FunctionCoefficient IC(initCond);  
+
+    /* Form the right-hand side */
+    FunctionCoefficient inflow_coeff(inflow_function);
+    VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega);
+    ParLinearForm *plform = new ParLinearForm(m_pfes);
+    plform -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
+    plform -> AddDomainIntegrator(new DomainLFIntegrator(IC));
+    plform -> Assemble();
+
+    B = new double[plform->Size()];
+    for (int i=0; i<plform->Size(); i++) {
+        B[i] = plform->Elem(i);
+    }
+    delete plform;   
 }
 
 void DGadvection::getInitialCondition(double * &B, int &spatialDOFs) 
 {    
+    // Define functions and coefficients 
+    FunctionCoefficient IC(initCond);  
+
+    /* Form the right-hand side */
+    FunctionCoefficient inflow_coeff(inflow_function);
+    VectorConstantCoefficient *direction = new VectorConstantCoefficient(m_omega); 
+    LinearForm *lform = new LinearForm(m_fes);
+    lform -> AddBdrFaceIntegrator(new BoundaryFlowIntegrator(inflow_coeff, *direction, -1.0, -0.5));
+    lform -> AddDomainIntegrator(new DomainLFIntegrator(IC));
+    lform -> Assemble();
+
+    B = new double[lform->Size()];
+    for (int i=0; i<lform->Size(); i++) {
+        B[i] = lform->Elem(i);
+    }
+    delete lform;
 }

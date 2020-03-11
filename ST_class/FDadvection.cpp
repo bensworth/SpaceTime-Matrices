@@ -440,35 +440,31 @@ void FDadvection::getSpatialDiscretizationL(int * &L_rowptr, int * &L_colinds,
     if (m_dim == 1) {
         // Simply call the same routine as if using spatial parallelism
         int dummy1, dummy2;
-        get1DSpatialDiscretizationL(NULL, L_rowptr,
-                                      L_colinds, L_data, U0,
-                                      getU0, dummy1, dummy2,
-                                      spatialDOFs, t, bsize);
+        get1DSpatialDiscretizationL(L_rowptr, L_colinds, L_data,
+                                    U0, getU0, dummy1, dummy2,
+                                    spatialDOFs, t, bsize);
     } else if (m_dim == 2) {
         // Call a serial implementation of 2D code
-        get2DSpatialDiscretizationL(L_rowptr,
-                                      L_colinds, L_data, U0,
-                                      getU0,
-                                      spatialDOFs, t, bsize);
+        get2DSpatialDiscretizationL(L_rowptr, L_colinds, L_data,
+                                    U0, getU0, spatialDOFs, t, bsize);
     }
 }
 
 // USING SPATIAL PARALLELISM: Get local CSR structure of FD spatial discretization matrix, L
-void FDadvection::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                              int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0, int &localMinRow, int &localMaxRow,
-                                              int &spatialDOFs, double t, int &bsize) 
+void FDadvection::getSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data,
+                                            double *&U0, bool getU0, int &localMinRow,
+                                            int &localMaxRow, int &spatialDOFs, double t,
+                                            int &bsize) 
 {
     if (m_dim == 1) {
-        get1DSpatialDiscretizationL(spatialComm, L_rowptr,
-                                      L_colinds, L_data, U0,
-                                      getU0, localMinRow, localMaxRow,
-                                      spatialDOFs, t, bsize);
+        get1DSpatialDiscretizationL(L_rowptr,
+                                    L_colinds, L_data, U0,
+                                    getU0, localMinRow, localMaxRow,
+                                    spatialDOFs, t, bsize);
     } else if (m_dim == 2) {
-        get2DSpatialDiscretizationL(spatialComm, L_rowptr,
-                                      L_colinds, L_data, U0,
-                                      getU0, localMinRow, localMaxRow,
-                                      spatialDOFs, t, bsize);
+        get2DSpatialDiscretizationL(L_rowptr, L_colinds, L_data, U0,
+                                    getU0, localMinRow, localMaxRow,
+                                    spatialDOFs, t, bsize);
     }
 }
 
@@ -476,10 +472,10 @@ void FDadvection::getSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L
 
 
 // USING SPATIAL PARALLELISM: Get local CSR structure of FD spatial discretization matrix, L
-void FDadvection::get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                              int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0, int &localMinRow, int &localMaxRow,
-                                              int &spatialDOFs, double t, int &bsize)
+void FDadvection::get2DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data,
+                                              double *&U0, bool getU0, int &localMinRow,
+                                              int &localMaxRow, int &spatialDOFs, double t,
+                                              int &bsize)
 {
     // Unpack variables frequently used
     // x-related variables
@@ -821,7 +817,7 @@ void FDadvection::get2DSpatialDiscretizationL(int *&L_rowptr,
 
 
 // // Get local CSR structure of FD spatial discretization matrix, L
-// void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
+// void FDadvection::get1DSpatialDiscretizationL(int *&L_rowptr,
 //                                               int *&L_colinds, double *&L_data, double *&U0,
 //                                               bool getU0, int &localMinRow, int &localMaxRow,
 //                                               int &spatialDOFs, double t, int &bsize) 
@@ -918,10 +914,10 @@ void FDadvection::get2DSpatialDiscretizationL(int *&L_rowptr,
 
 
 // Get local CSR structure of FD spatial discretization matrix, L
-void FDadvection::get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, int *&L_rowptr,
-                                              int *&L_colinds, double *&L_data, double *&U0,
-                                              bool getU0, int &localMinRow, int &localMaxRow,
-                                              int &spatialDOFs, double t, int &bsize) 
+void FDadvection::get1DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data,
+                                              double *&U0, bool getU0, int &localMinRow,
+                                              int &localMaxRow, int &spatialDOFs, double t,
+                                              int &bsize) 
 {
     // Unpack variables frequently used
     int nx          = m_nx[0];
@@ -1211,11 +1207,10 @@ void FDadvection::GetGridFunction(void * GridFunction,
 
 // Evaluate grid-function when grid is distributed across multiple processes
 void FDadvection::GetGridFunction(void * GridFunction, 
-                                    const MPI_Comm &spatialComm, 
-                                    double * &B, 
-                                    int &localMinRow, 
-                                    int &localMaxRow, 
-                                    int &spatialDOFs) 
+                                  double * &B, 
+                                  int &localMinRow, 
+                                  int &localMaxRow, 
+                                  int &spatialDOFs) 
 {
     spatialDOFs  = m_spatialDOFs;
     localMinRow  = m_localMinRow;                    // First row on process
@@ -1250,21 +1245,20 @@ void FDadvection::GetGridFunction(void * GridFunction,
 
 
 // Get PDE solution
-bool FDadvection::GetExactPDESolution(const MPI_Comm &spatialComm, 
-                                            double * &U, 
-                                            int &localMinRow, 
-                                            int &localMaxRow, 
-                                            int &spatialDOFs, 
-                                            double t)
+bool FDadvection::GetExactPDESolution(double * &U, 
+                                      int &localMinRow, 
+                                      int &localMaxRow, 
+                                      int &spatialDOFs, 
+                                      double t)
 {
     if (m_PDE_soln_implemented) {
         // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
         if (m_dim == 1) {
             std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Solution(x, t); };
-            GetGridFunction((void *) &GridFunction, spatialComm, U, localMinRow, localMaxRow, spatialDOFs);
+            GetGridFunction((void *) &GridFunction, U, localMinRow, localMaxRow, spatialDOFs);
         } else if (m_dim == 2) {
             std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Solution(x, y, t); };
-            GetGridFunction((void *) &GridFunction, spatialComm, U, localMinRow, localMaxRow, spatialDOFs);
+            GetGridFunction((void *) &GridFunction, U, localMinRow, localMaxRow, spatialDOFs);
         }  
         return true;
     } else {
@@ -1291,8 +1285,7 @@ bool FDadvection::GetExactPDESolution(double * &U, int &spatialDOFs, double t)
 
 
 // Get solution-independent component of spatial discretization in vector  G
-void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm, 
-                                            double * &G, 
+void FDadvection::getSpatialDiscretizationG(double * &G, 
                                             int &localMinRow, 
                                             int &localMaxRow, 
                                             int &spatialDOFs, 
@@ -1301,7 +1294,7 @@ void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm,
     // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
     if (m_dim == 1) {
         std::function<double(double)> GridFunction = [this, t](double x) { return PDE_Source(x, t); };
-        GetGridFunction((void *) &GridFunction, spatialComm, G, localMinRow, localMaxRow, spatialDOFs);
+        GetGridFunction((void *) &GridFunction, G, localMinRow, localMaxRow, spatialDOFs);
         
         // Update G with inflow boundary information if necessary
         // All DOFs with coupling to inflow boundary are assumed to be on process 0 (there are very few of them)
@@ -1309,7 +1302,7 @@ void FDadvection::getSpatialDiscretizationG(const MPI_Comm &spatialComm,
         
     } else if (m_dim == 2) {
         std::function<double(double, double)> GridFunction = [this, t](double x, double y) { return PDE_Source(x, y, t); };
-        GetGridFunction((void *) &GridFunction, spatialComm, G, localMinRow, localMaxRow, spatialDOFs);
+        GetGridFunction((void *) &GridFunction, G, localMinRow, localMaxRow, spatialDOFs);
     }  
 }
 
@@ -1530,19 +1523,18 @@ void FDadvection::AppendInflowStencil1D(double * &G, double t) {
 
 
 // Allocate vector U0 memory and populate it with initial condition.
-void FDadvection::getInitialCondition(const MPI_Comm &spatialComm, 
-                                        double * &U0, 
-                                        int &localMinRow, 
-                                        int &localMaxRow, 
-                                        int &spatialDOFs) 
+void FDadvection::getInitialCondition(double * &U0, 
+                                      int &localMinRow, 
+                                      int &localMaxRow, 
+                                      int &spatialDOFs) 
 {
     // Just pass lambdas to GetGrid function; cannot figure out better way to do this...
     if (m_dim == 1) {
         std::function<double(double)> GridFunction = [this](double x) { return InitCond(x); };
-        GetGridFunction((void *) &GridFunction, spatialComm, U0, localMinRow, localMaxRow, spatialDOFs);
+        GetGridFunction((void *) &GridFunction, U0, localMinRow, localMaxRow, spatialDOFs);
     } else if (m_dim == 2) {
         std::function<double(double, double)> GridFunction = [this](double x, double y) { return InitCond(x, y); };
-        GetGridFunction((void *) &GridFunction, spatialComm, U0, localMinRow, localMaxRow, spatialDOFs);
+        GetGridFunction((void *) &GridFunction, U0, localMinRow, localMaxRow, spatialDOFs);
     }   
 }
 

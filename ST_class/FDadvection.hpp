@@ -66,53 +66,48 @@ private:
 
 
     // Call when using spatial parallelism                          
-    void getSpatialDiscretizationG(const MPI_Comm &spatialComm, double* &G, 
-                                    int &localMinRow, int &localMaxRow, int &spatialDOFs, double t);                               
-    void getSpatialDiscretizationL(const MPI_Comm &spatialComm, int* &L_rowptr, 
-                                    int* &L_colinds, double* &L_data,
-                                    double* &U0, bool getU0, 
-                                    int &localMinRow, int &localMaxRow, int &spatialDOFs,
-                                    double t, int &bsize);                                            
+    void getSpatialDiscretizationG(double* &G, int &localMinRow, int &localMaxRow,
+                                   int &spatialDOFs, double t);                               
+    void getSpatialDiscretizationL(int* &L_rowptr, int* &L_colinds, double* &L_data,
+                                   double* &U0, bool getU0, int &localMinRow,
+                                   int &localMaxRow, int &spatialDOFs,
+                                   double t, int &bsize);                                            
     
     // Call when NOT using spatial parallelism                                        
     void getSpatialDiscretizationG(double* &G, int &spatialDOFs, double t); 
     void getSpatialDiscretizationL(int* &L_rowptr, int* &L_colinds, double* &L_data,
-                                    double* &U0, bool getU0, int &spatialDOFs,
-                                    double t, int &bsize);                                            
+                                   double* &U0, bool getU0, int &spatialDOFs,
+                                   double t, int &bsize);                                            
                                          
     /* Uses spatial parallelism */                                
-    void get2DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
-                                        int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double * &U0, bool getU0,
-                                        int &localMinRow, int &localMaxRow, int &spatialDOFs, 
-                                        double t, int &bsize);
-    void get1DSpatialDiscretizationL(const MPI_Comm &spatialComm, 
-                                        int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double * &U0, bool getU0,
-                                        int &localMinRow, int &localMaxRow, int &spatialDOFs, 
-                                        double t, int &bsize);                                
+    void get2DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data, 
+                                     double * &U0, bool getU0,
+                                     int &localMinRow, int &localMaxRow, int &spatialDOFs, 
+                                     double t, int &bsize);
+    void get1DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data, 
+                                     double * &U0, bool getU0,
+                                     int &localMinRow, int &localMaxRow, int &spatialDOFs, 
+                                     double t, int &bsize);                                
                                     
     /* No spatial parallelism */
     void get2DSpatialDiscretizationL(int *&L_rowptr, int *&L_colinds, double *&L_data, 
-                                        double *&U0, bool getU0,
-                                        int &spatialDOFs, double t, int &bsize);
+                                     double *&U0, bool getU0,
+                                     int &spatialDOFs, double t, int &bsize);
                                 
     /* Uses spatial parallelism */  
-    void getInitialCondition(const MPI_Comm &spatialComm, 
-                                   double * &U0, 
-                                   int      &localMinRow, 
-                                   int      &localMaxRow, 
-                                   int      &spatialDOFs);
+    void getInitialCondition(double * &U0, 
+                             int      &localMinRow, 
+                             int      &localMaxRow, 
+                             int      &spatialDOFs);
                                 
     void getInitialCondition(double * &U0, 
                              int      &spatialDOFs);
     
-    bool GetExactPDESolution(const MPI_Comm &spatialComm, 
-                                                double * &U, 
-                                                int &localMinRow, 
-                                                int &localMaxRow, 
-                                                int &spatialDOFs, 
-                                                double t);
+    bool GetExactPDESolution(double * &U, 
+                             int &localMinRow, 
+                             int &localMaxRow, 
+                             int &spatialDOFs, 
+                             double t);
     
                              
     bool GetExactPDESolution(double * &U0, 
@@ -124,12 +119,11 @@ private:
                          double * &B, 
                          int      &spatialDOFs);
 
-    void GetGridFunction(      void     *  GridFunction, 
-                         const MPI_Comm   &spatialComm, 
-                               double   * &B, 
-                               int        &localMinRow, 
-                               int        &localMaxRow, 
-                               int        &spatialDOFs);
+    void GetGridFunction(void     *  GridFunction, 
+                         double   * &B, 
+                         int        &localMinRow, 
+                         int        &localMaxRow, 
+                         int        &spatialDOFs);
 
 
     /* Helper functions; shouldn't really be called outside of this class */
