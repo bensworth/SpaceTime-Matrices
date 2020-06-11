@@ -1,0 +1,17 @@
+-solver_ksp_monitor_true_residual
+-solver_ksp_monitor_lg_residualnorm
+
+# MINRES
+-solver_ksp_type minres
+-solver_pc_fieldsplit_type additive
+
+# Velocity Block
+-solver_fieldsplit_0_ksp_type richardson
+-solver_fieldsplit_0_ksp_rtol 0.0
+-solver_fieldsplit_0_ksp_atol 0.0
+-solver_fieldsplit_0_ksp_max_it 2
+-solver_fieldsplit_0_pc_type hypre
+
+# Pressure Block
+-solver_fieldsplit_1_ksp_type preonly
+-solver_fieldsplit_1_pc_type jacobi

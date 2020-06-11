@@ -1,3 +1,6 @@
+#ifndef SPACETIMEMATRIX_HPP
+#define SPACETIMEMATRIX_HPP
+
 #include <mpi.h>
 #include "HYPRE.h"
 #include <map>
@@ -9,7 +12,6 @@
 #include "_hypre_parcsr_mv.h"
 #include "_hypre_parcsr_ls.h"
 #include "HYPRE_krylov.h"
-#define SPACETIMEMATRIX
 
 // TODO :
 // - Make spatial communicator a protected variable so that spatial discretization constructor can see it/access it...
@@ -370,3 +372,12 @@ public:
     void SaveX(std::string filename)      { if (m_xij) HYPRE_IJVectorPrint(m_xij, filename.c_str()); else std::cout << "WARNING: m_xij == NULL, cannot be printed!\n";  }
     void SaveSolInfo(std::string filename, std::map<std::string, std::string> additionalInfo);
 };
+
+
+
+
+
+
+
+
+#endif //SPACETIMEMATRIX_HPP

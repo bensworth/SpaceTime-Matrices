@@ -6,6 +6,10 @@
 #include "mfem.hpp"
 using namespace mfem;
 
+// to test-run CG diffusion with Implicit Euler and both spatial and temporal discretisation
+// mpirun -np 4 ./driver -pit 1 -s 1 -d 1 -t 211 -nt 2 -o 2 -l 0 -p 2 -gmres 0 -tol 1e-5 -save 0
+
+
 // Sample command line:
 //  srun -n 240 ./driver -s 2 -l 6 -nt 40 -t 31 -Ar 10 -AsR 0.2 -AsC 0.25 -AIR 1 -dt 0.0025 -lump 0
 
@@ -430,7 +434,10 @@ int main(int argc, char *argv[])
         }
         
         
-    }                         
+    }       
+    
+    std::cout<<std::endl<<"All done!"<<std::endl;
+
     MPI_Finalize();
     return 0;
 }

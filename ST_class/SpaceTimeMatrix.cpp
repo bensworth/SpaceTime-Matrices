@@ -426,6 +426,8 @@ SpaceTimeMatrix::SpaceTimeMatrix(MPI_Comm globComm, bool pit, bool M_exists,
                 MPI_Comm_split(m_globComm, m_DOFInd, m_globRank, &m_spatialComm);
                 MPI_Comm_rank(m_spatialComm, &m_spatialRank);
                 MPI_Comm_size(m_spatialComm, &m_spatialCommSize);
+
+                // std::cout<<"I am proc "<<m_globRank<<" on global, belong to local "<<m_DOFInd<<" and have lcl rank "<<m_spatialRank<<std::endl;
             }
             
             /* ------ Temporal parallelism only ------ */
@@ -657,7 +659,7 @@ void SpaceTimeMatrix::DestroyHypreMemberVariables()
         HYPRE_IJMatrixDestroy(m_invMij);  
         m_invMij = NULL;
     }
-    for (int i = 0; i < m_u_multi_ij.size(); i++) {
+    for (unsigned int i = 0; i < m_u_multi_ij.size(); i++) {
         if (m_u_multi_ij[i]) {
             HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
             m_u_multi_ij[i] = NULL;
@@ -715,7 +717,7 @@ void SpaceTimeMatrix::SetMultistepSpaceTimeRHSValues()
                 exit(1);
             }
             
-            for (int i = 0; i < m_u_multi.size(); i++) {
+            for (unsigned int i = 0; i < m_u_multi.size(); i++) {
                 HYPRE_ParVectorCopy(m_u_multi[i], m_b); // b <- m_u_multi[i]
                 hypre_ParCSRMatrixMatvec(1.0, m_M, m_b, 0.0, m_u_multi[i]); // m_u_multi[i] <- 1.0*M*b + 0.0*m_u_multi[i]
             }
@@ -966,7 +968,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
 
     // Shallow copy vectors into variables with meaningful names
     HYPRE_ParVector b   = vectors[0];  // Temporary vector
-    HYPRE_IJVector  bij = vectorsij[0];
+    // HYPRE_IJVector  bij = vectorsij[0];
 
     // Mass matrix components
     int    * M_rowptr;
@@ -980,11 +982,11 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     int      onProcSize;
 
     // For monitoring convergence of linear solver
-    int    num_iters   = 0;
+    // int    num_iters   = 0;
     int    solve_count = 0; // Number of linear solves
-    double rel_res_norm;
+    // double rel_res_norm;
     double avg_iters   = 0;
-    double avg_convergence_rate;
+    // double avg_convergence_rate;
 
     // Is it necessary to build spatial discretization matrix/BDF matrix more than once?
     bool rebuildMatrix = m_L_isTimedependent;
@@ -1147,7 +1149,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     /* ---------------------------------------------------------- */
     /* ------------------------ Clean up ------------------------ */
     /* ---------------------------------------------------------- */
-    for (int i = 0; i < vectors.size(); i++) {
+    for (unsigned int i = 0; i < vectors.size(); i++) {
         HYPRE_IJVectorDestroy(vectorsij[i]);
     }
     
@@ -1155,7 +1157,7 @@ void SpaceTimeMatrix::BDFTimeSteppingSolve()
     if (BDF_matrixij && BDF_matrixij != Lij) HYPRE_IJMatrixDestroy(BDF_matrixij); // BDF_matrix is distinct from L
 
     // Free all starting values except the one holding the solution at the final time
-    for (int i = 0; i < m_u_multi_ij.size(); i++) {
+    for (unsigned int i = 0; i < m_u_multi_ij.size(); i++) {
         if (m_u_multi_ij[i] && i != headptr) {
             HYPRE_IJVectorDestroy(m_u_multi_ij[i]);
             m_u_multi_ij[i] = NULL;
@@ -1256,9 +1258,9 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
 
     // Shallow copy vectors into variables with meaningful names
     HYPRE_ParVector              b1   = vectors[0];  // Temporary vector
-    HYPRE_IJVector               b1ij = vectorsij[0];
+    // HYPRE_IJVector               b1ij = vectorsij[0];
     HYPRE_ParVector              b2   = vectors[1];  // Temporary vector
-    HYPRE_IJVector               b2ij = vectorsij[1];
+    // HYPRE_IJVector               b2ij = vectorsij[1];
     std::vector<HYPRE_ParVector> k; // Stage vectors
     std::vector<HYPRE_IJVector>  kij;    
     k.resize(m_s_butcher);
@@ -1280,10 +1282,10 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     int      onProcSize;
 
     // For monitoring convergence of linear solver
-    int    num_iters;
-    double rel_res_norm;
+    // int    num_iters;
+    // double rel_res_norm;
     double avg_iters = 0;
-    double avg_convergence_rate;
+    // double avg_convergence_rate;
 
 
     // Is it necessary to build spatial discretization matrix/DIRK matrix more than once?
@@ -1445,7 +1447,7 @@ void SpaceTimeMatrix::DIRKTimeSteppingSolve()
     /* ---------------------------------------------------------- */
     /* ------------------------ Clean up ------------------------ */
     /* ---------------------------------------------------------- */
-    for (int i = 0; i < vectors.size(); i++) {
+    for (unsigned int i = 0; i < vectors.size(); i++) {
         HYPRE_IJVectorDestroy(vectorsij[i]);
     }
     
@@ -1501,7 +1503,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
 
     // Shallow copy place-holder vectors into vectors with meaningful names
     HYPRE_ParVector              b   = vectors[0];  // Temporary vector
-    HYPRE_IJVector               bij = vectorsij[0];
+    // HYPRE_IJVector               bij = vectorsij[0];
     std::vector<HYPRE_ParVector> k; // Stage vectors
     std::vector<HYPRE_IJVector>  kij;    
     k.reserve(m_s_butcher);
@@ -1512,10 +1514,10 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     }
 
     // For monitoring convergence of linear solver
-    int    num_iters;
-    double rel_res_norm;
+    // int    num_iters;
+    // double rel_res_norm;
     double avg_iters;
-    double avg_convergence_rate;
+    // double avg_convergence_rate;
 
     /* ------------------------------------------------------------ */
     /* ------------------------ Time march ------------------------ */
@@ -1625,7 +1627,7 @@ void SpaceTimeMatrix::ERKTimeSteppingSolve()
     /* ---------------------------------------------------------- */
     /* ------------------------ Clean up ------------------------ */
     /* ---------------------------------------------------------- */
-    for (int i = 0; i < vectors.size(); i++) {
+    for (unsigned int i = 0; i < vectors.size(); i++) {
         HYPRE_IJVectorDestroy(vectorsij[i]);
     }
     
@@ -1841,7 +1843,7 @@ void SpaceTimeMatrix::InitializeHypreVectors(HYPRE_ParVector              &u,
         HYPRE_IJVectorGetValues(uij, onProcSize, rows, U);
         
         // Create and initialize all vectors in vectorsij, setting their values to those of u
-        for (int i = 0; i < vectors.size(); i++) {
+        for (unsigned int i = 0; i < vectors.size(); i++) {
             HYPRE_IJVectorCreate(m_spatialComm, ilower, iupper, &vectorsij[i]);
             HYPRE_IJVectorSetObjectType(vectorsij[i], HYPRE_PARCSR);
             HYPRE_IJVectorInitialize(vectorsij[i]);
@@ -2655,8 +2657,8 @@ void SpaceTimeMatrix::SetBoomerAMGOptions(int printLevel, int maxiter, double to
         
         // Array to store relaxation scheme and pass to Hypre
         //      TODO: does hypre clean up grid_relax_points
-        int ns_down = m_AMG_parameters.prerelax.length();
-        int ns_up = m_AMG_parameters.postrelax.length();
+        unsigned int ns_down = m_AMG_parameters.prerelax.length();
+        unsigned int ns_up   = m_AMG_parameters.postrelax.length();
         int ns_coarse = 1;
         std::string Fr("F");
         std::string Cr("C");
@@ -2667,6 +2669,8 @@ void SpaceTimeMatrix::SetBoomerAMGOptions(int printLevel, int maxiter, double to
         grid_relax_points[2] = new int [ns_up];
         grid_relax_points[3] = new int[1];
         grid_relax_points[3][0] = 0;
+
+
 
         // set down relax scheme 
         for(unsigned int i = 0; i<ns_down; i++) {
@@ -2709,7 +2713,7 @@ void SpaceTimeMatrix::SetBoomerAMGOptions(int printLevel, int maxiter, double to
         HYPRE_BoomerAMGSetCoarsenType(m_solver, m_AMG_parameters.coarsen_type);
         HYPRE_BoomerAMGSetAggNumLevels(m_solver, 0);
         HYPRE_BoomerAMGSetStrongThreshold(m_solver, m_AMG_parameters.strength_tolC);
-        HYPRE_BoomerAMGSetGridRelaxPoints(m_solver, grid_relax_points);
+        HYPRE_BoomerAMGSetGridRelaxPoints(m_solver, grid_relax_points);                 // TODO: THIS FUNCTION IS DEPRECATED!! nobody knows whose responsibility it is to free grid_relax_points
         if (m_AMG_parameters.relax_type > -1) {
             HYPRE_BoomerAMGSetRelaxType(m_solver, m_AMG_parameters.relax_type);
         }
@@ -3165,7 +3169,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     delete[] V0;
     
     // Information for initializing space-time RHS vector no longer needed.
-    for (int i = 0; i < m_w_multi.size(); i++) {
+    for (unsigned int i = 0; i < m_w_multi.size(); i++) {
         delete[] m_w_multi[i];
         m_w_multi[i] = NULL;
     }
@@ -3739,7 +3743,7 @@ void SpaceTimeMatrix::BDFSpaceTimeBlock(int    * &rowptr,
     delete[] M_data;
     
     // Information for initializing space-time RHS vector no longer needed.
-    for (int i = 0; i < m_w_multi.size(); i++) {
+    for (unsigned int i = 0; i < m_w_multi.size(); i++) {
         delete[] m_w_multi[i];
         m_w_multi[i] = NULL;
     }
@@ -3779,10 +3783,26 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     getSpatialDiscretizationG(m_spatialComm, B, localMinRow, localMaxRow, spatialDOFs, t);
     getSpatialDiscretizationL(m_spatialComm, L_rowptr, L_colinds, L_data, 
                                 V, getV0, localMinRow, localMaxRow, spatialDOFs, t, m_bsize);
+
     int onProcSize = localMaxRow - localMinRow + 1; // Number of rows on process
     L_nnzOnProc    = L_rowptr[onProcSize] - L_rowptr[0]; 
 
+    // {int uga;
+    // if(m_globRank==1){
+    //     std::cout<<"Diagonal Matrix";
+    //     for ( int i = 0; i < onProcSize; ++i ){
+    //         std::cout<<std::endl<<"Row "<<i<<" - Cols: ";
+    //         for ( int j = L_rowptr[i]; j < L_rowptr[i+1]; ++j ){
+    //             std::cout<<L_colinds[j]<<": "<<L_data[j]<<" - ";
+    //         }
+    //     }
+    //     std::cout<<std::endl<<"Am I breaking here?"<<std::endl;
+    // }
+    // std::cin>>uga;
+    // MPI_Barrier( m_spatialComm );
+    // MPI_Barrier( m_globComm );}
     
+
     /* --- Get mass matrix ---*/
     int      M_nnzOnProc;
     int    * M_rowptr;
@@ -3902,7 +3922,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
             temp = m_A_butcher[m_s_butcher-1][m_s_butcher-1] - m_b_butcher[m_s_butcher-1];
             if (temp != 0.0) hypre_ParCSRMatrixMatvec(m_dt*temp, L, u0, 1.0, b); // b <- dt*temp*L*u0 + 1.0*b
         }
-        
+
         // Copy data from HYPRE vector b into double array w
         HYPRE_IJVectorGetValues(bij, onProcSize, u0_indices, w);
     }
@@ -3953,8 +3973,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
             } else {
                 B[row] += w[row];
             }
-        
-        
+              
             /* ------ Coupling to stages ------ */
             // Loop over all stage DOFs
             for (int i = 0; i < m_s_butcher - 1; i++) {
@@ -4100,7 +4119,8 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     if (dataInd > onProcNnz) {
         std::cout << "WARNING: Space-time RK matrix has more nonzeros than allocated on process " << m_globRank << " of " << m_numProc << ".\n";
     }
-    
+
+
     /* --- Clean up --- */
     // Data from eliminating u0
     if (u0ij)       HYPRE_IJVectorDestroy(u0ij);
@@ -4117,6 +4137,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     delete[] M_rowptr;
     delete[] M_colinds;
     delete[] M_data;
+
 }
 
 
