@@ -13,19 +13,20 @@ void CGdiffusion::getInitialCondition(const MPI_Comm &spatialComm, double * &B, 
     if(!m_par_fespace)
         std::cerr<<"Initial conditions were requested before setting up mesh info (par ver)"<<std::endl;
 
-    // spatialDOFs = m_par_fespace->GetNDofs();
-
     ParGridFunction *u = new ParGridFunction( m_par_fespace );
     FunctionCoefficient u0( []( const Vector& x ){return 0.;} );        //TODO: use a more meaningful IC
     u->ProjectCoefficient(u0);
     HypreParVector *U = u->GetTrueDofs();
 
-    // int* rows = U->Partitioning();
-    // localMinRow = rows[0];
-    // localMaxRow = rows[1];
 
-    B = new double[spatialDOFs];                                        //TODO: separating memory allocation and destruction seems like terrible practice
-    for ( int i = 0; i < localMaxRow - localMinRow + 1; ++i ){          // but that's how it's handled in SpaceTimeMatrix.cpp ;_;
+    spatialDOFs = U->GlobalSize();
+
+    int* rows = U->Partitioning();
+    localMinRow = rows[0];
+    localMaxRow = rows[1] - 1;
+
+    B = new double[ rows[1] - rows[0] ];                  //TODO: separating memory allocation and destruction seems like terrible practice
+    for ( int i = 0; i < rows[1]-rows[0]; ++i ){          // but that's how it's handled in SpaceTimeMatrix.cpp ;_;
         B[i] = U->GetData()[i];    
     }
 
@@ -38,17 +39,16 @@ void CGdiffusion::getInitialCondition(double * &B, int &spatialDOFs) {
     if(!m_fespace)
         std::cerr<<"Initial conditions were requested before setting up mesh info (ser ver)"<<std::endl;
 
-    // spatialDOFs = m_fespace->GetNDofs();
+    spatialDOFs = m_fespace->GetNDofs();
 
     GridFunction *u = new GridFunction( m_fespace );
     FunctionCoefficient u0( []( const Vector& x ){return 0.;} );        //TODO: use a more meaningful IC
 
     u->ProjectCoefficient(u0);
-    Vector U = u->GetTrueVector();
 
     B = new double[spatialDOFs];                                        //TODO: separating memory allocation and destruction seems like terrible practice
     for ( int i = 0; i < spatialDOFs; ++i ){                            // but that's how it's handled in SpaceTimeMatrix.cpp ;_;
-        B[i] = U.GetData()[i];    
+        B[i] = u->GetData()[i];    
     }
 
     delete u;
@@ -328,10 +328,6 @@ void CGdiffusion::initialiseParMassMatrix( ){
 
 
 
-
-
-
-
     // This is handled elsewhere...?
     // // store mass matrix in hypre format   
     // // TODO: this re-assembles the whole thing. Can't I just steal it from M?
@@ -489,6 +485,7 @@ void CGdiffusion::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double*
     ParLinearForm *b = new ParLinearForm(m_par_fespace);
     ConstantCoefficient one(1.0);
     b->AddDomainIntegrator(new DomainLFIntegrator(one));
+    b->Assemble();
     HypreParVector *B = b->ParallelAssemble();
 
     spatialDOFs = B->GlobalSize();
@@ -499,7 +496,7 @@ void CGdiffusion::getSpatialDiscretizationG(const MPI_Comm &spatialComm, double*
     // Copy vector data to pointers
     G = new double[ rowStarts[1] - rowStarts[0] ];             //TODO: separating memory allocation and destruction seems like terrible practice
     for ( int i = 0; i < rowStarts[1] - rowStarts[0]; ++i ){   // but that's how it's handled in SpaceTimeMatrix.cpp ;_;
-        G[i] = B->GetData()[i];    
+        G[i] = B->GetData()[i];   
     }
 
 

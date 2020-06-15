@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include "SpaceTimeMatrix.hpp"
+#include "mfem.hpp"
 #include <iomanip> // Need this for std::setprecision
 #include <cmath> // OAK: I have to include this... There is some ambiguity with "abs". 
 // Something to do with how new OSX is setup now. But on stack exchage some people say this 
@@ -2412,6 +2413,7 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     //     MPI_Finalize();
     //     return;
     // }
+    
 
     // Initialize matrix
     int onProcSize = localMaxRow - localMinRow + 1;
@@ -2448,6 +2450,8 @@ void SpaceTimeMatrix::GetMatrix_ntLE1()
     HYPRE_IJVectorSetValues(m_xij, onProcSize, rows, X);
     HYPRE_IJVectorAssemble(m_xij);
     HYPRE_IJVectorGetObject(m_xij, (void **) &m_x);
+    
+
 
     // Remove pointers that should have been copied by Hypre
     delete[] rowptr;
@@ -3787,22 +3791,6 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     int onProcSize = localMaxRow - localMinRow + 1; // Number of rows on process
     L_nnzOnProc    = L_rowptr[onProcSize] - L_rowptr[0]; 
 
-    // {int uga;
-    // if(m_globRank==1){
-    //     std::cout<<"Diagonal Matrix";
-    //     for ( int i = 0; i < onProcSize; ++i ){
-    //         std::cout<<std::endl<<"Row "<<i<<" - Cols: ";
-    //         for ( int j = L_rowptr[i]; j < L_rowptr[i+1]; ++j ){
-    //             std::cout<<L_colinds[j]<<": "<<L_data[j]<<" - ";
-    //         }
-    //     }
-    //     std::cout<<std::endl<<"Am I breaking here?"<<std::endl;
-    // }
-    // std::cin>>uga;
-    // MPI_Barrier( m_spatialComm );
-    // MPI_Barrier( m_globComm );}
-    
-
     /* --- Get mass matrix ---*/
     int      M_nnzOnProc;
     int    * M_rowptr;
@@ -3883,7 +3871,7 @@ void SpaceTimeMatrix::RKSpaceTimeBlock(int    * &rowptr,
     /* ------ Build block row of space-time matrix for DOF ------ */
     /* ---------------------------------------------------------- */
     // Global space-time column index for first DOF in current block
-    blockColOffset = spatialDOFs * m_s_butcher * blockInd;
+    blockColOffset = spatialDOFs * m_s_butcher * blockInd + localMinRow;                // TODO: we need to add localMinRow: we are using spatial parallelisation too!
     
     /* --- Compute RHS data depending on u0 if DOF is in first block DOF v0 --- */
     if (blockInd == 0) {
