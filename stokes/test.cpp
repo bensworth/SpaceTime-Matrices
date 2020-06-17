@@ -22,11 +22,12 @@ int main(int argc, char *argv[])
 
    // for now, assume no spatial parallelisation: each processor handles a time-step
    int num_procs, myid;
-   double dt = 0.001, mu=1.;
    MPI_Init(&argc, &argv);
    MPI_Comm_size(MPI_COMM_WORLD, &num_procs);
    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
    bool verbose = (myid == 0);
+
+   double dt = 0.001 / num_procs, mu=1.;
 
    const char *mesh_file = "../../../3rdParty/MFEM/data/inline-tri.mesh";   
    int ordV = 2;
@@ -72,22 +73,124 @@ int main(int argc, char *argv[])
 
 
 
-  StokesSTOperatorAssembler stokesAssembler( MPI_COMM_WORLD, mesh_file, ordV, ordP,
+  // Assembles block matrices composing the system
+  StokesSTOperatorAssembler stokesAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordV, ordP,
                                              dt, mu, fFun, uFun_ex, pFun_ex );
 
-  // BlockOperator *stokesOp;
-  // BlockVector   *rhs;
-  // stokesAssembler.AssembleSystem( stokesOp, rhs );
+  HypreParMatrix *FFF, *BBB, *BBt;
+  Operator *FFi, *XXi;
+  HypreParVector  *frhs, *uEx, *pEx;
+  stokesAssembler.AssembleOperator( FFF, BBB );
+  stokesAssembler.AssemblePreconditioner( FFi, XXi );
+  stokesAssembler.AssembleRhs( frhs );
+  BBt = BBB->Transpose( );
 
-  HypreParMatrix *FFF, *BBB;
-  HypreParVector *frhs;
-  stokesAssembler.AssembleSystem( FFF, BBB, frhs );
 
-  Array<int> blockOffsets(3); // number of variables + 1
-  blockOffsets[0] = 0;
-  blockOffsets[1] = FFF->NumRows(); // * _numProcs; TODO: yeah, I know the actual size is different, but seems like it wants size on single proc.
-  blockOffsets[2] = BBB->NumRows(); // * _numProcs;
-  blockOffsets.PartialSum();
+  Array<int> offsets(3);
+  offsets[0] = 0;
+  offsets[1] = FFF->NumRows();
+  offsets[2] = BBB->NumRows();
+  offsets.PartialSum();
+
+  BlockVector sol(offsets), rhs(offsets);
+  rhs.GetBlock(0) = *frhs;
+
+  BlockOperator *stokesOp = new BlockOperator( offsets );
+  stokesOp->SetBlock(0, 0, FFF);
+  stokesOp->SetBlock(0, 1, BBt);
+  stokesOp->SetBlock(1, 0, BBB);
+
+  BlockOperator *stokesPr = new BlockOperator( offsets );
+  stokesPr->SetBlock(0, 0, FFi);
+  stokesPr->SetBlock(1, 1, XXi);
+
+
+  PetscLinearSolver *solver;
+  PetscPreconditioner *pstokesPr = NULL;
+  solver = new PetscLinearSolver(MPI_COMM_WORLD,"solver_");
+
+  pstokesPr = new PetscFieldSplitSolver(MPI_COMM_WORLD,*stokesPr,"solver_");
+  solver->SetOperator(*stokesOp);
+  solver->SetPreconditioner(*pstokesPr);
+  solver->SetTol(1e-12);
+  solver->SetAbsTol(0.0);
+  solver->SetMaxIter(300);
+  solver->Mult(rhs, sol);
+
+
+  if (myid == 0){
+    if (solver->GetConverged()){
+      std::cout << "Solver converged in "        << solver->GetNumIterations();
+    }else{
+      std::cout << "Solver did not converge in " << solver->GetNumIterations();
+    }
+    std::cout << " iterations. Residual norm is " << solver->GetFinalNorm() << ".\n";
+  }
+
+
+  // stokesAssembler.ExactSolution( uEx, pEx );
+
+
+  // HypreParVector fullRhs( *frhs );
+  // BBB->MultTranspose( *pEx, fullRhs );
+  // fullRhs.Neg();
+  // fullRhs += *frhs;
+
+  // HypreParVector *uh;
+  // stokesAssembler.TimeStepVelocity( fullRhs, uh );
+  // // - these should all print 0
+  // // for ( int i = 0; i < FFF->NumRows(); ++i ){
+  // //   std::cout<<uh->GetData()[i] - uEx->GetData()[i]<<", ";
+  // // }
+
+  // stokesAssembler.ComputeL2Error( *uh, *pEx );
+  
+
+
+  // delete uh;
+  delete FFF;
+  delete BBB;
+  delete BBt;
+  delete frhs;
+  // delete uEx;
+  // delete pEx;
+
+
+
+
+
+
+
+  // // Combine them all
+  // Array<int> blockOffsets(3); // number of variables + 1
+  // blockOffsets[0] = 0;
+  // blockOffsets[1] = FFF->NumRows(); // * _numProcs; TODO: yeah, I know the actual size is different, but seems like it wants size on single proc.
+  // blockOffsets[2] = BBB->NumRows(); // * _numProcs;
+  // blockOffsets.PartialSum();
+
+  // BlockOperator stokesOp( blockOffsets );
+  // BlockVector        rhs( blockOffsets ), sol( blockOffsets ), rhs2( blockOffsets );
+
+  // stokesOp.SetBlock( 0, 0, FFF );
+  // stokesOp.SetBlock( 0, 1, BBt );
+  // stokesOp.SetBlock( 1, 0, BBB );
+
+  // rhs.GetBlock( 0 ).SetData( frhs->StealData() );
+
+  // // test on residual:
+  // sol.GetBlock( 0 ).SetData( uEx->GetData() );
+  // sol.GetBlock( 1 ).SetData( pEx->GetData() );
+
+  // stokesOp.Mult( sol, rhs2 );
+
+  // // - these should all print 0
+  // for ( int i = 0; i < FFF->NumRows(); ++i ){
+  //   std::cout<<rhs.GetBlock(0).GetData()[i] - rhs2.GetBlock(0).GetData()[i]<<", ";
+  // }
+  // for ( int i = 0; i < BBB->NumRows(); ++i ){
+  //   std::cout<<rhs.GetBlock(1).GetData()[i] - rhs2.GetBlock(1).GetData()[i]<<", ";
+  // }
+
 
   // Array<double> temp( FFF->ColPart()[1] - FFF->ColPart()[0] );
   // for ( int i = 0; i < temp.Size(); ++i ){
@@ -95,21 +198,14 @@ int main(int argc, char *argv[])
   // }
   // frhs = new HypreParVector( MPI_COMM_WORLD, FFF->GetGlobalNumCols(), temp.GetData(), FFF->ColPart() );
 
-
-  BlockOperator stokesOp( blockOffsets );
-  BlockVector        rhs( blockOffsets );
-
-
-{  HypreParVector buga( *FFF, 1 );
-  FFF->Mult( *frhs, buga );
-  if ( myid==0 ){
-    for ( int i = 0; i < buga.Partitioning()[1] - buga.Partitioning()[0]; ++i ){
-      std::cout<<"Rank "<<myid<<": "<<buga.GetData()[i]<<std::endl;
-    }
-  }
-}
-
-
+// {  HypreParVector buga( *FFF, 1 );
+//   FFF->Mult( *frhs, buga );
+//   if ( myid==0 ){
+//     for ( int i = 0; i < buga.Partitioning()[1] - buga.Partitioning()[0]; ++i ){
+//       std::cout<<"Rank "<<myid<<": "<<buga.GetData()[i]<<std::endl;
+//     }
+//   }
+// }
 
 
   // SparseMatrix diag;
@@ -124,16 +220,6 @@ int main(int argc, char *argv[])
   //   }
   // }
 
-  // HypreParVector buga( *FFF, 1 );
-  // FFF->Mult( *frhs, buga );
-  // for ( int i = 0; i < buga.Partitioning()[1] - buga.Partitioning()[0]; ++i ){
-  //   std::cout<<"Rank "<<myid<<": "<<buga.GetData()[i]<<std::endl;
-  // }
-
-
-    delete FFF;
-    delete BBB;
-    delete frhs;
 
 
   // if(myid==0){
@@ -393,7 +479,7 @@ void uFun_ex(const Vector & x, const double t, Vector & u){
 double pFun_ex(const Vector & x, const double t ){
    double xx(x(0));
    double yy(x(1));
-   return -(t+1.) * sin(M_PI*xx) * cos(M_PI*yy);
+   return (t+1.) * sin(M_PI*xx) * cos(M_PI*yy);
 }
 //---------------------------------------------------------------------------
 void fFun(const Vector & x, const double t, Vector & f){
