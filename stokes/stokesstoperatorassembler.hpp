@@ -27,6 +27,7 @@ private:
   mutable HypreParVector* _X;
   mutable HypreParVector* _Y;
 
+	const bool _verbose;
 
 
 public:
@@ -62,6 +63,7 @@ private:
   const SparseMatrix *_Ap;
   const SparseMatrix *_Mp;
 
+	const bool _verbose;
 
 
 public:
@@ -106,9 +108,10 @@ private:
 	const double _dt; 	//time step (constant)
 	const double _mu;		//viscosity
   int _dim;						//domain dimension (R^d)
-	void(  *_fFunc)( const Vector &, double, Vector & );	// function returning rhs (time-dep)
-	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC and BC)
-	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC)
+	void(  *_fFunc)( const Vector &, double, Vector & );	// function returning forcing term (time-dep)
+	void(  *_nFunc)( const Vector &, double, Vector & );  // function returning mu * du/dn (time-dep, used to implement BC)
+	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
+	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC, and compute error)
 
 	const double _tol;	//tolerance for solvers
 
@@ -118,6 +121,9 @@ private:
   FiniteElementCollection *_QhFEColl;
   FiniteElementSpace      *_VhFESpace;
   FiniteElementSpace      *_QhFESpace;
+  const int _ordV;
+  const int _ordP;
+
 
   // relevant matrices
   // - blocks for single time-steps
@@ -148,12 +154,15 @@ private:
   // BlockOperator _STstokesPrec;      // space-time block preconditioner
 
 
+	const bool _verbose;
+
 
 
 public:
 	StokesSTOperatorAssembler( const MPI_Comm& comm, const char *meshName, const int refLvl,
 		                         const int ordV, const int ordP, const double dt, const double mu,
 		                         void(  *f)(const Vector &, double, Vector &),
+		                         void(  *n)(const Vector &, double, Vector &),
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
 		                         const double tol=1e-12 );
@@ -166,6 +175,8 @@ public:
 
 	void AssembleRhs( HypreParVector*& frhs );
 
+	void ApplySTOperatorVelocity( const HypreParVector*& u, HypreParVector*& res );
+
 
 	void ExactSolution( HypreParVector*& u, HypreParVector*& p );
 
@@ -173,7 +184,8 @@ public:
 	void TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol );
 
 	void ComputeL2Error( const HypreParVector& uh, const HypreParVector& ph );
-
+	void SaveSolution(   const HypreParVector& uh, const HypreParVector& ph );
+	void SaveExactSolution( );
 
 private:
 	// assemble blocks for single time-step 
