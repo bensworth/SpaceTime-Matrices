@@ -21,8 +21,15 @@ private:
 
   double _tol;
   
+  // relevant operators
   const SparseMatrix *_F;
   const SparseMatrix *_M;
+
+	// solvers for relevant operator (with corresponding preconditioner, if iterative)
+  Solver   *_Fsolve;
+	Operator *_Fprec;
+	int _solveType;
+
   
   mutable HypreParVector* _X;
   mutable HypreParVector* _Y;
@@ -32,14 +39,19 @@ private:
 
 public:
 
-	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, const SparseMatrix* M, const double tol=1e-12 );
+	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
+		               int solveType=0, double tol=1e-12, bool verbose=false);
 
   void Mult( const Vector& x, Vector& y ) const;
 
-  inline void SetF( const SparseMatrix* F ){ _F = F; height = F->Height(); width = F->Width(); }
-  inline void SetM( const SparseMatrix* M ){ _M = M; height = M->Height(); width = M->Width();  }
+  void SetF( const SparseMatrix* F, int solvetype );
+  void SetM( const SparseMatrix* M );
 
 	~SpaceTimeSolver();
+
+private:
+	void SetFSolve();
+
 
 }; //SpaceTimeSolver
 
@@ -60,21 +72,41 @@ private:
   double _dt;
   double _mu;
   double _tol;
+
+  // relevant operators
   const SparseMatrix *_Ap;
   const SparseMatrix *_Mp;
+
+  // solvers for relevant operators (with corresponding preconditioners, if iterative)
+  Solver   *_Asolve;
+  Solver   *_Msolve;
+  Operator *_Aprec;
+  Operator *_Mprec;
+	int _ASolveType;
+	int _MSolveType;
 
 	const bool _verbose;
 
 
 public:
 
-	StokesSTPreconditioner( const MPI_Comm& comm, const double dt, const double mu,
-		                      const SparseMatrix* Ap, const SparseMatrix* Mp, const double tol=1e-12 );
+	StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
+		                      const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL,
+		                      int ASolveType = 0, int MSolveType = 0,
+		                      double tol=1e-12, bool verbose = false );
+	~StokesSTPreconditioner();
+
+
 
   void Mult( const Vector& x, Vector& y ) const;
 
-  inline void SetAp( const SparseMatrix* Ap ){ _Ap = Ap; height = Ap->Height(); width = Ap->Width(); }
-  inline void SetMp( const SparseMatrix* Mp ){ _Mp = Mp; height = Mp->Height(); width = Mp->Width();  }
+  void SetAp( const SparseMatrix* Ap, int solvetype );
+  void SetMp( const SparseMatrix* Mp, int solvetype );
+
+private:
+	void SetMpSolve();
+	void SetApSolve();
+
 
 
 }; //StokesSTPreconditioner
@@ -121,7 +153,7 @@ private:
   FiniteElementCollection *_QhFEColl;
   FiniteElementSpace      *_VhFESpace;
   FiniteElementSpace      *_QhFESpace;
-  const int _ordV;
+  const int _ordU;
   const int _ordP;
 
 
@@ -160,18 +192,19 @@ private:
 
 public:
 	StokesSTOperatorAssembler( const MPI_Comm& comm, const char *meshName, const int refLvl,
-		                         const int ordV, const int ordP, const double dt, const double mu,
+		                         const int ordU, const int ordP, const double dt, const double mu,
 		                         void(  *f)(const Vector &, double, Vector &),
 		                         void(  *n)(const Vector &, double, Vector &),
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
-		                         const double tol=1e-12 );
+		                         double tol=1e-12 );
 	~StokesSTOperatorAssembler();
 
 
 	void AssembleOperator( HypreParMatrix*& FFF, HypreParMatrix*& BBB );
 
-	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX );
+	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX,
+		                           int MsolveType=0, int AsolveType=0, int FsolveType=0 );
 
 	void AssembleRhs( HypreParVector*& frhs );
 
@@ -198,8 +231,8 @@ private:
 	// assemble blocks for whole Space-time operators 
 	void AssembleFF();
 	void AssembleBB();
-	void AssemblePS();
-	void AssembleFFinv();
+	void AssemblePS( int Msolvetype, int Asolvetype );
+	void AssembleFFinv( int FsolveType );
 
 
 	void TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol );

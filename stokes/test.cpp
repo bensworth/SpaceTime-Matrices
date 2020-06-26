@@ -28,6 +28,13 @@ int main(int argc, char *argv[])
    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
    bool verbose = (myid == 0);
    double Tend = 1.;
+   // Types of solver for preconditioner:
+   // 0 -> CG+jacobi precon (doesn't work well for Ap, probably because it's singular?)
+   // 1 -> 1 jacobi iteration
+   // 2 -> 1 jacobi iteration with lumped operator (not available for A)
+   int MpsolveType = 0;
+   int ApsolveType = 1;
+   int FsolveType  = 0;
 
    const char *mesh_file = "../../../3rdParty/MFEM/data/inline-tri.mesh";   
    int ordV = 2;
@@ -46,6 +53,12 @@ int main(int argc, char *argv[])
                   "Refinement level.");
    args.AddOption(&Tend, "-T", "--Tend",
                   "Final time.");
+   args.AddOption(&MpsolveType, "-M", "--Msolve",
+                  "Solver for pressure mass matrix: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator.");
+   args.AddOption(&ApsolveType, "-A", "--Asolve",
+                  "Solver for pressure 'laplacian': 0 -CG+Jacobi prec, 1 -Jacobi.");
+   args.AddOption(&FsolveType, "-F", "--Fsolve",
+                  "Solver for velocity spatial operator: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator");
    args.AddOption(&petscrc_file, "-petscopts", "--petscopts",
                   "PetscOptions file to use.");
    args.Parse();
@@ -79,7 +92,8 @@ int main(int argc, char *argv[])
   Operator *FFi, *XXi;
   HypreParVector  *frhs, *uEx, *pEx;
   stokesAssembler.AssembleOperator( FFF, BBB );
-  stokesAssembler.AssemblePreconditioner( FFi, XXi );
+
+  stokesAssembler.AssemblePreconditioner( FFi, XXi, MpsolveType, ApsolveType, FsolveType );
   stokesAssembler.AssembleRhs( frhs );
   BBt = BBB->Transpose( );
 
@@ -124,7 +138,7 @@ int main(int argc, char *argv[])
   // solver = new PetscLinearSolver(MPI_COMM_WORLD,"ksp_type gmres");
   // PetscPreconditioner *pstokesPr = NULL;
 
-  GMRESSolver solver(MPI_COMM_WORLD);
+  FGMRESSolver solver(MPI_COMM_WORLD);
   BlockDiagonalPreconditioner pstokesPr(offsets);
   pstokesPr.SetDiagonalBlock( 0, FFi );
   pstokesPr.SetDiagonalBlock( 1, XXi );
@@ -138,7 +152,7 @@ int main(int argc, char *argv[])
   solver.SetAbsTol(1e-10);
   // solver.SetMaxIter((stokesOp->NumRows())*numProcs);
   solver.SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
-  solver.SetPrintLevel(0);
+  solver.SetPrintLevel(1);
   solver.Mult(rhs, sol);
   // solver.Mult(rhsEx, sol);
 

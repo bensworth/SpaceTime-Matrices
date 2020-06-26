@@ -10,66 +10,203 @@
 using namespace mfem;
 
 
+//##############################################################################
+//
+// SPACE-TIME BLOCK PRECONDITIONING
+//
+//##############################################################################
+
+
 //******************************************************************************
-// Space-time block preconditioning
+// Pressure block
 //******************************************************************************
-StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, const double dt, const double mu,
-                                                const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL, const double tol ):
-  _comm(comm), _dt(dt), _mu(mu), _tol(tol),
-  _Ap(Ap), _Mp(Mp), _verbose(false){
-
-  if( Ap != NULL ){
-    height = Ap->Height();
-    width  = Ap->Width();
-  }else if( Mp != NULL ){
-    height = Mp->Height();
-    width  = Mp->Width();
-  }
-
-  MPI_Comm_size( comm, &_numProcs );
-  MPI_Comm_rank( comm, &_myRank );
-}
-
-
-
-SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F = NULL, const SparseMatrix* M = NULL, const double tol ):
-  _comm(comm), _tol(tol), _F(F), _M(M), _X(NULL), _Y(NULL), _verbose(false){
-
-  if( F != NULL ){
-    height = F->Height();
-    width  = F->Width();
-  }else if( M != NULL ){
-    height = M->Height();
-    width  = M->Width();
-  }
-
-  MPI_Comm_size( comm, &_numProcs );
-  MPI_Comm_rank( comm, &_myRank );
-}
-
-
-
-
-// Define multiplication by preconditioner (ie, approx inverse of schur complement)
-// This is defined as XX^-1 = D(Mp)^-1 * FFp * D(Ap)^-1, where
-// - D(*) represents the block-diagonal matrix with (*) as blocks
-// - Mp is the pressure mass matrix
-// - Ap is the pressure "laplacian" (or stabilised/lumped version thereof)
-// - FFp is the space-time matrix associated to time-stepping for pressure
+// These functions are used to ais in the application of the pressure part of
+//  the block preconditioner (ie, approximating the inverse of pressure schur
+//  complement)
+// This is defined as XX^-1 = D(Mp)^-1 * FFp * D(Ap)^-1, where:
+//  - D(*) represents the block-diagonal matrix with (*) as blocks
+//  - FFp is the space-time matrix representing time-stepping on pressure
+//  - Mp is the pressure mass matrix
+//  - Ap is the pressure "laplacian" (or its stabilised/approximated version)
 // After some algebra, it can be simplified to the block bi-diagonal
-// XX^-1 = ⌈ Ap^-1/dt + mu*Mp^-1                            ⌉
-//         |      -Ap^-1/dt      Ap^-1/dt + mu*Mp^-1        |
+//         ⌈ Ap^-1/dt + mu*Mp^-1                            ⌉
+// XX^-1 = |      -Ap^-1/dt      Ap^-1/dt + mu*Mp^-1        |,
 //         |                          -Ap^-1/dt          \\ |
 //         ⌊                                             \\ ⌋
-// which boils down to a couple of parallel solves with Mp and Ap
+//  which boils down to a couple of parallel solves involving Mp and Ap
+
+// Constructor:
+// - ASolveType = 0 (CG), 1 (inverse diagonal)
+// - MSolveType = 0 (CG), 1 (inverse diagonal), 2 (lumped)
+StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
+                                                const SparseMatrix* Ap, const SparseMatrix* Mp,
+                                                int ASolveType , int MSolveType,
+                                                double tol, bool verbose ):
+  _comm(comm), _dt(dt), _mu(mu), _tol(tol),
+  _Asolve(NULL), _Msolve(NULL), _Aprec(NULL), _Mprec(NULL),
+  _ASolveType(ASolveType), _MSolveType(MSolveType),
+  _verbose(verbose){
+
+  if( Ap != NULL ) SetAp(Ap, ASolveType );
+  if( Mp != NULL ) SetMp(Mp, MSolveType );
+
+  MPI_Comm_size( comm, &_numProcs );
+  MPI_Comm_rank( comm, &_myRank );
+}
+
+
+
+StokesSTPreconditioner::~StokesSTPreconditioner(){
+  delete _Aprec;
+  delete _Mprec;
+  delete _Asolve;
+  delete _Msolve;
+}
+
+
+
+// initialise info on pressure 'laplacian'
+void StokesSTPreconditioner::SetAp( const SparseMatrix* Ap, int ASolveType ){
+  _Ap = Ap;
+  _ASolveType = ASolveType;
+
+  height = Ap->Height();
+  width  = Ap->Width();
+  SetApSolve();
+}
+
+
+
+// initialise solver for pressure 'laplacian'
+void StokesSTPreconditioner::SetApSolve(){
+  delete _Aprec;
+  delete _Asolve;
+
+  switch (_ASolveType){
+
+    // use conjugate gradient
+    case 0:{
+
+      _Asolve = new CGSolver();
+
+      // use the operator's diagonal as a preconditioner for this one - preconditioner inception :)
+      _Aprec = new DSmoother( *_Ap );
+
+      IterativeSolver *temp = dynamic_cast<IterativeSolver*>( _Asolve );
+      Solver *tempPr = dynamic_cast<Solver*>( _Aprec );
+      temp->SetPreconditioner( *tempPr );
+      temp->SetOperator( *_Ap );
+      temp->SetRelTol( _tol );
+      temp->SetAbsTol( _tol );
+      temp->SetMaxIter( height );
+      if ( _verbose ){
+        temp->SetPrintLevel(0);
+      }
+
+      if ( _verbose ){
+        temp->SetPrintLevel(0);
+      }
+      break;
+    }
+
+    // use inverse of diagonal of operator
+    case 1:{
+      _Asolve = new DSmoother( *_Ap );
+      break;
+
+    }
+    default:
+      std::cerr<<"SetApSolve: solver type "<<_ASolveType<<" not recognised."<<std::endl;
+
+  }
+
+}
+
+
+
+// initialise info on pressure mass matrix
+void StokesSTPreconditioner::SetMp( const SparseMatrix* Mp, int MsolveType ){
+  _Mp = Mp;
+  _MSolveType = MsolveType;
+
+  height = Mp->Height();
+  width  = Mp->Width();
+  SetMpSolve();
+}
+
+
+
+// initialise solver for pressure mass matrix
+void StokesSTPreconditioner::SetMpSolve(){
+  delete _Mprec;
+  delete _Msolve;
+
+  switch (_MSolveType){
+
+    // use conjugate gradient
+    case 0:{
+
+      _Msolve = new CGSolver();
+
+      // use the operator's diagonal as a preconditioner for this one - preconditioner inception :)
+      _Mprec = new DSmoother( *_Mp );
+      
+      IterativeSolver *temp = dynamic_cast<IterativeSolver*>( _Msolve );
+      Solver *tempPr = dynamic_cast<Solver*>( _Mprec );
+      temp->SetPreconditioner( *tempPr );
+      temp->SetOperator( *_Mp );
+      temp->SetRelTol( _tol );
+      temp->SetAbsTol( _tol );
+      temp->SetMaxIter( height );
+      if ( _verbose ){
+        temp->SetPrintLevel(0);
+      }
+
+      if ( _verbose ){
+        temp->SetPrintLevel(0);
+      }
+      break;
+
+    }
+    // use inverse of diagonal of operator
+    case 1:{
+      _Msolve = new DSmoother( *_Mp );
+      break;
+
+    }
+    // use lumped version of operator
+    case 2:{
+      Vector ones( _Mp->Width() ), diag( _Mp->Height() );
+      ones = 1.;
+      _Mp->Mult(ones,diag);
+      //TODO: bit of a workaround, here: I'm using the preconditioner as a
+      // place-holder for the lumped operator, since otherwise there'd be
+      // memory leak (I can't seem to make the solver "own" the preconditioner)
+      _Mprec  = new SparseMatrix( diag );
+      SparseMatrix *tempPr = dynamic_cast<SparseMatrix*>( _Mprec );
+      _Msolve = new DSmoother( *tempPr );
+      break;
+
+    }
+    default:
+      std::cerr<<"SetMpSolve: solver type "<<_MSolveType<<" not recognised."<<std::endl;
+
+  }
+
+}
+
+
+
+// Define multiplication by preconditioner - the most relevant function here
 void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
-  MFEM_ASSERT(_Ap != NULL, "Pressure 'laplacian' not initialised" );
-  MFEM_ASSERT(_Mp != NULL, "Pressure mass matrix not initialised" );
+  MFEM_ASSERT( _Asolve!=NULL, "Solver for press 'laplacian' not initialised" );
+  MFEM_ASSERT( _Msolve!=NULL, "Solver for press mass matrix not initialised" );
   MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
               << ", expected size = " << Width());
   MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
               << ", expected size = " << Height());
 
+  // Initialise
   const int     lclSize = x.Size();
   const double* lclData = x.GetData();
 
@@ -77,7 +214,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
     std::cout<<"Applying pressure block preconditioner"<<std::endl;
   }
 
-  // TODO: do I really need to copy this? Isn't there a way to force lclx to point at lxlData and still be const?
+  // TODO: do I really need to copy this? Isn't there a way to force lclx to point at lclData and still be const?
   Vector lclx( lclSize );
   for ( int i = 0; i < lclSize; ++i ){
     lclx.GetData()[i] = lclData[i];
@@ -86,42 +223,37 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   Vector invAxMine( lclSize ), invAxPrev( lclSize ), lcly( lclSize );
 
   for ( int i = 0; i < lclSize; ++i ){
-    invAxMine.GetData()[i] = 0.0;   // shouldn't be necessary, but vargrind complains if data is not set S_S
-    invAxPrev.GetData()[i] = 0.0;
+    // TODO: if iterative solvers are set, these act as initial guesses. Improve them!
+    invAxMine.GetData()[i] = 0.0;
     lcly.GetData()[i]      = 0.0;
+    // invAxPrev.GetData()[i] = 0.0;
   }
 
-  // have each processor solve for the "laplacian"
-  CGSolver solverA;
-  solverA.SetOperator( *_Ap );
-  solverA.SetRelTol( _tol );
-  solverA.SetAbsTol( _tol );
-  solverA.SetMaxIter( lclSize );
-  if ( _verbose ){
-    solverA.SetPrintLevel(0);
-  }
 
-  solverA.Mult( lclx, invAxMine );
+  // Have each processor solve for the "laplacian"
+  _Asolve->Mult( lclx, invAxMine );
   invAxMine *= 1./_dt;   //scale by dt
 
   if (_verbose ){
     for ( int rank = 0; rank < _numProcs; ++rank ){
       if ( rank==_myRank ){
-        std::cout<<"Rank "<<_myRank<<" inverting pressure stiffness matrix: ";
-        if (solverA.GetConverged()){
-          std::cout << "Solver converged in "         << solverA.GetNumIterations();
-        }else{
-          std::cout << "Solver did not converge in "  << solverA.GetNumIterations();
+        // print extra info if solver is iterative (not the best programming practice)
+        if (_ASolveType == 0){
+          const IterativeSolver *temp = dynamic_cast<const IterativeSolver*>( _Asolve );
+          if (temp->GetConverged()){
+            std::cout <<": Solver converged in "        << temp->GetNumIterations();
+          }else{
+            std::cout <<": Solver did not converge in " << temp->GetNumIterations();
+          }
+          std::cout << " iterations. Residual norm is " << temp->GetFinalNorm() << ".\n";
         }
-        std::cout << " iterations. Residual norm is " << solverA.GetFinalNorm() << ".\n";
       }
       MPI_Barrier(_comm);
     }
   }
 
 
-
-  // send this partial result to the following processor  
+  // Send this partial result to the following processor  
   MPI_Request reqSend, reqRecv;
 
   if( _myRank < _numProcs ){
@@ -132,42 +264,39 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   }
 
 
-  // have each processor solve for the mass matrix
-  CGSolver solverM;
-  solverM.SetOperator( *_Mp );
-  solverM.SetRelTol( _tol );
-  solverM.SetAbsTol( _tol );
-  solverM.SetMaxIter( lclSize );
-  if ( _verbose ){
-    solverM.SetPrintLevel(0);
-  }
-
-  solverM.Mult( lclx, lcly );
+  // Have each processor solve for the mass matrix
+  _Msolve->Mult( lclx, lcly );
 
   if (_verbose ){
     for ( int rank = 0; rank < _numProcs; ++rank ){
       if ( rank==_myRank ){
-        std::cout<<"Rank "<<_myRank<<" inverting pressure mass matrix: ";
-        if (solverM.GetConverged()){
-          std::cout << "Solver converged in "         << solverM.GetNumIterations();
-        }else{
-          std::cout << "Solver did not converge in "  << solverM.GetNumIterations();
+        std::cout<<"Rank "<<_myRank<<" inverted pressure mass matrix";
+        // print extra info if solver is iterative (not the best programming practice)
+        if (_MSolveType == 0){
+          const IterativeSolver *temp = dynamic_cast<const IterativeSolver*>( _Msolve );
+          if (temp->GetConverged()){
+            std::cout <<": Solver converged in "         << temp->GetNumIterations();
+          }else{
+            std::cout <<": Solver did not converge in "  << temp->GetNumIterations();
+          }
+          std::cout << " iterations. Residual norm is " << temp->GetFinalNorm() << ".\n";
         }
-        std::cout << " iterations. Residual norm is " << solverM.GetFinalNorm() << ".\n";
       }
       MPI_Barrier(_comm);
     }
   }
 
-  // combine all partial results together locally (once received necessary data, if necessary)
-  lcly *= _mu;
+
+  // Combine all partial results together locally (once received necessary data, if necessary)
+  lcly *= _mu;        //remember to include factor mu
   lcly += invAxMine;
   if( _myRank > 0 ){
     MPI_Wait( &reqRecv, MPI_STATUS_IGNORE );
     lcly -= invAxPrev;
   }
 
-  // assemble global vector
+
+  // Assemble global vector
   for ( int i = 0; i < lclSize; ++i ){
     y.GetData()[i] = lcly.GetData()[i];
   }
@@ -176,7 +305,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   // if( _myRank < _numProcs ){
   //   MPI_Wait( &reqSend, MPI_STATUS_IGNORE ); // this triggers a memory error on reqSend, for a reason...
   // }
-  MPI_Barrier( _comm );                         // but the barrier should do the same trick, and this seems to work
+  MPI_Barrier( _comm );                         // ...but the barrier should do the same trick, and this seems to work
 
 }
 
@@ -185,10 +314,179 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
 
 
-// Time-stepping on velocity block
+
+
+
+
+
+
+
+
+
+//******************************************************************************
+// Velocity block
+//******************************************************************************
+// These functions are used to ais in the application of the velocity part of
+//  the block preconditioner. That is, it approximates the inverse of the
+//  space-time velocity matrix FFu:
+//       ⌈ Fu*dt          ⌉
+// FFu = |  -M   Fu*dt    |,
+//       |        -M   \\ |
+//       ⌊             \\ ⌋
+//  where Fu = Mu/dt + mu Au is the spatial operator for the velocity
+
+SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, const SparseMatrix* M, int solveType, double tol, bool verbose ):
+  _comm(comm), _tol(tol), _F(F), _M(M), _Fsolve(NULL), _Fprec(NULL), _solveType(solveType), _X(NULL), _Y(NULL), _verbose(verbose){
+
+  if( F != NULL ) SetF( F, solveType );
+  if( M != NULL ) SetM(M);
+
+  MPI_Comm_size( comm, &_numProcs );
+  MPI_Comm_rank( comm, &_myRank );
+}
+
+
+
+SpaceTimeSolver::~SpaceTimeSolver(){
+  delete _Fsolve;
+  delete _Fprec;
+  delete _X;
+  delete _Y;
+}
+
+
+
+// initialise info on spatial operator for the velocity.
+void SpaceTimeSolver::SetF( const SparseMatrix* F, int solveType ){
+  _F = F;
+  _solveType = solveType;
+
+  height = F->Height();
+  width  = F->Width();
+  SetFSolve();
+}
+
+// initialise info on mass-matrix for the velocity.
+void SpaceTimeSolver::SetM( const SparseMatrix* M ){
+  _M = M;
+
+  height = M->Height();
+  width  = M->Width();
+}
+
+
+
+// initialise solver of spatial operator for the velocity.
+void SpaceTimeSolver::SetFSolve(){
+  delete _Fprec;
+  delete _Fsolve;
+
+  // Only master will take care of solving the system: this means that the same
+  //  spatial operator is considered throughout the whole time-stepping routine
+  //TODO: generalise this
+  if (_myRank==0){
+    std::cout<<"SpaceTimeSolver: Warning: spatial operator is assumed to be time-independent!"<<std::endl;
+    
+    switch (_solveType){
+
+      // use conjugate gradient
+      case 0:{
+        _Fsolve = new CGSolver();
+
+        // use the operator's diagonal as a preconditioner for this one - preconditioner inception :)
+        _Fprec = new DSmoother( *_F );
+        
+        IterativeSolver *temp = dynamic_cast<IterativeSolver*>( _Fsolve );
+        Solver *tempPr = dynamic_cast<Solver*>( _Fprec );
+        temp->SetPreconditioner( *tempPr );
+        temp->SetOperator( *_F );
+        temp->SetRelTol( _tol );
+        temp->SetAbsTol( _tol );
+        temp->SetMaxIter( height );
+        if ( _verbose ){
+          temp->SetPrintLevel(0);
+        }
+
+        break;
+
+      }
+
+
+      // use inverse of diagonal of operator
+      case 1:{
+        _Fsolve = new DSmoother( *_F );
+        break;
+
+      }
+
+
+      // use lumped version of operator
+      case 2:{
+        Vector ones( _F->Width() ), diag( _F->Height() );
+        ones = 1.;
+        _F->Mult(ones,diag);
+        //TODO: bit of a workaround, here: I'm using the preconditioner as a
+        // place-holder for the lumped operator, since otherwise there'd be
+        // memory leak (I can't seem to make the solver "own" the preconditioner)
+        _Fprec  = new SparseMatrix( diag );
+        SparseMatrix *tempPr = dynamic_cast<SparseMatrix*>( _Fprec );
+        _Fsolve = new DSmoother( *tempPr );
+        break;
+
+      }
+
+
+
+      case 3:{
+        _Fsolve = new HypreSmoother();
+        HypreSmoother *temp = dynamic_cast<HypreSmoother*>( _Fsolve );
+        temp->SetType( HypreSmoother::Type::Chebyshev, 5 );         // 5 iterations of Chebyshev smoother
+        temp->SetPolyOptions( 5, .3 );  // with order 5 polynomial
+
+        _Fsolve->SetOperator( *_F );
+
+        break;
+
+      }
+
+
+      // case 4:{
+      //   _Fsolve = new HypreBoomerAMG();
+      //   _Fsolve->SetOperator( *_F );
+
+      //   HypreBoomerAMG *temp = dynamic_cast<HypreBoomerAMG*>( _Fsolve );
+      //   temp->SetRelTol( _tol );
+      //   temp->SetAbsTol( _tol );
+      //   temp->SetMaxIter( height );
+      //   if ( _verbose ){
+      //     temp->SetPrintLevel(0);
+      //   }
+
+      //   if ( _verbose ){
+      //     temp->SetPrintLevel(0);
+      //   }
+
+      //   break;
+
+      // }
+
+
+      default:
+        std::cerr<<"SetFSolve: solver type "<<_solveType<<" not recognised."<<std::endl;
+
+    }
+
+  }
+
+}
+
+
+
+// Define multiplication by preconditioner (that is, time-stepping on the
+//  velocity space-time block)- the most relevant function here
 void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
-  MFEM_ASSERT( _F != NULL, "Velocity spatial operator not initialised" );
-  MFEM_ASSERT( _M != NULL, "Velocity mass matrix not initialised" );
+  MFEM_ASSERT( _Fsolve != NULL, "Solver for velocity spatial operator not initialised" );
+  MFEM_ASSERT( _M      != NULL, "Velocity mass matrix not initialised" );
   MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
               << ", expected size = " << Width());
   MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
@@ -198,10 +496,10 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     std::cout<<"Applying velocity block preconditioner (time-stepping)"<<std::endl;
   }
   
-
+  // Initialise
   const int spaceDofs = x.Size();
 
-  // convert data to internal HypreParVector for ease of use
+  // - convert data to internal HypreParVector for ease of use
   auto x_data = x.HostRead();
   auto y_data = y.HostReadWrite();
   if ( _X == NULL){
@@ -213,36 +511,27 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     _Y->SetData(y_data);
   }
 
-  // Broadcast rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
+  // - broadcast rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
   const Vector *glbRhs = _X->GlobalVector();
 
-  // Initialise local vector containing solution at single time-step
+  // - initialise local vector containing solution at single time-step
   Vector lclSol( spaceDofs );
   for ( int i = 0; i < spaceDofs; ++i ){
-    lclSol.GetData()[i] = 0.0;   // shouldn't be necessary, but vargrind complains if data is not set S_S
+    // TODO: if iterative solvers is set, this acts as initial guesses. Improve it!
+    lclSol.GetData()[i] = 0.0;
   }
 
-  // Mster performs time-stepping and sends solution to other processors
+
+  // Master performs time-stepping and sends solution to other processors
   if ( _myRank == 0 ){
 
-    std::cout<<"Warning: spatial operator is assumed to be time-independent!"<<std::endl;
-
-    // initialise solver
-    CGSolver solver;
-    solver.SetOperator( *_F );
-    solver.SetRelTol( _tol );
-    solver.SetAbsTol( _tol );
-    solver.SetMaxIter( spaceDofs );
-    if ( _verbose ){
-      solver.SetPrintLevel(0);
-    }
-
-
-    // Thise will contain rhs for each time-step
+    // - these will contain rhs for each time-step
     Vector b( spaceDofs );
-    for ( int i = 0; i < spaceDofs; ++i ){
-      b.GetData()[i]      = 0.0;
-    }
+    b = 0.;
+    // for ( int i = 0; i < spaceDofs; ++i ){
+    //   b.GetData()[i] = 0.0;
+    // }
+
 
     // Main time-stepping routine
     for ( int t = 0; t < _numProcs; ++t ){
@@ -252,28 +541,39 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
         b.GetData()[i] += glbRhs->GetData()[ i + spaceDofs * t ];
       }
 
-      // - solve for current time-step
-      solver.Mult( b, lclSol );
-      if (_verbose ){
-        std::cout<<"Rank "<<_myRank<<" solving for time-step "<<t<<": ";
-        if (solver.GetConverged()){
-          std::cout << "Solver converged in "         << solver.GetNumIterations();
-        }else{
-          std::cout << "Solver did not converge in "  << solver.GetNumIterations();
-        }
-        std::cout << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
-      }
 
+      // - solve for current time-step
+      //  - notice that this way, if an iterative solver is set, the initial
+      //     guess for the next time step is automatically set as the solution
+      //     to the previous one!
+      _Fsolve->Mult( b, lclSol );
+
+      if (_verbose ){
+        std::cout<<"Rank "<<_myRank<<" solved for time-step "<<t;
+        // print extra info if solver is iterative (not the best programming practice)
+        if (_solveType == 0){
+          const IterativeSolver *temp = dynamic_cast<const IterativeSolver*>( _Fsolve );
+          if (temp->GetConverged()){
+            std::cout <<": Solver converged in "         << temp->GetNumIterations();
+          }else{
+            std::cout <<": Solver did not converge in "  << temp->GetNumIterations();
+          }
+          std::cout << " iterations. Residual norm is " << temp->GetFinalNorm() << ".\n";
+        }
+      }
 
 
       // - send local solution to corresponding processor
       if( t==0 ){
+        // that is, myself if first time step
         for ( int j = 0; j < spaceDofs; ++j ){
           _Y->GetData()[j] = lclSol.GetData()[j];
         }
       }else{
-        MPI_Send( lclSol.GetData(), spaceDofs, MPI_DOUBLE, t, t,  _comm );   // TODO: non-blocking + wait before CG solve?
+        // or the right slave it if solution is later in time
+        MPI_Send( lclSol.GetData(), spaceDofs, MPI_DOUBLE, t, t,  _comm );   // TODO: non-blocking + wait before solve?
       }
+
 
       // - include solution as rhs for next time-step
       if( t < _numProcs-1 ){
@@ -284,21 +584,17 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     }
 
   }else{
-    // slaves receive data
+    // Slaves receive data
     MPI_Recv( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, _myRank, _comm, MPI_STATUS_IGNORE );
   }
 
-  // make sure we're all done
+
+  // Make sure we're all done
   MPI_Barrier( _comm );
 
 }
 
 
-
-SpaceTimeSolver::~SpaceTimeSolver( ){
-  delete _X;
-  delete _Y;
-}
 
 
 
@@ -318,13 +614,13 @@ SpaceTimeSolver::~SpaceTimeSolver( ){
 // These functions are useful for assembling all the necessary space-time operators
 
 StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, const char* meshName, const int refLvl,
-                                                      const int ordV, const int ordP, const double dt, const double mu,
+                                                      const int ordU, const int ordP, const double dt, const double mu,
                                                       void(  *f)(const Vector &, double, Vector &),
                                                       void(  *n)(const Vector &, double, Vector &),
 		                         							            void(  *u)(const Vector &, double, Vector &),
 		                         							            double(*p)(const Vector &, double ),
-                                                      const double tol ):
-	_comm(comm), _dt(dt), _mu(mu), _fFunc(f), _nFunc(n), _uFunc(u), _pFunc(p), _tol(tol), _ordV(ordV), _ordP(ordP),
+                                                      double tol ):
+	_comm(comm), _dt(dt), _mu(mu), _fFunc(f), _nFunc(n), _uFunc(u), _pFunc(p), _tol(tol), _ordU(ordU), _ordP(ordP),
   _MuAssembled(false), _FuAssembled(false), _MpAssembled(false), _ApAssembled(false), _BAssembled(false),
   _pSchur( comm, dt, mu, NULL, NULL, tol ),
   _FFinv( comm, NULL, NULL, tol ),
@@ -344,7 +640,7 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
   _dim = _mesh->Dimension();
 
   // - initialise FE info
-  _VhFEColl  = new H1_FECollection( ordV, _dim );  
+  _VhFEColl  = new H1_FECollection( ordU, _dim );  
 
   if( ordP > 0 )
     _QhFEColl  = new H1_FECollection( ordP, _dim );
@@ -536,6 +832,12 @@ void StokesSTOperatorAssembler::AssembleAp( ){
   BilinearForm *aVarf( new BilinearForm(_QhFESpace) );
   ConstantCoefficient one( 1.0 );
 	aVarf->AddDomainIntegrator(new DiffusionIntegrator( one ));
+  if ( _ordP == 0 ){  // DG
+    ConstantCoefficient sigma( -1.0 );
+    ConstantCoefficient kappa(  1.0 );
+    a->AddInteriorFaceIntegrator(new DGDiffusionIntegrator(one, sigma, kappa));
+    // a->AddBdrFaceIntegrator(     new DGDiffusionIntegrator(one, sigma, kappa));  // to weakly impose Dirichlet BC - don't bother for now
+  }
   aVarf->Assemble();
   aVarf->Finalize();
   
@@ -549,14 +851,16 @@ void StokesSTOperatorAssembler::AssembleAp( ){
   // }
   // aVarf->FormSystemMatrix( essQhTDOF, _Ap );
   // - once the matrix is generated, we can get rid of the operator
-  // _Ap = aVarf->SpMat();
-  // _Ap.SetGraphOwner(true);
-  // _Ap.SetDataOwner(true);
-  // aVarf->LoseMat();
-  Vector diag( aVarf->NumRows() );
-  ( aVarf->SpMat() ).GetDiag(diag); // TODO: not really the most efficient way..use pointers? in any case, this deep-copies
-  SparseMatrix temp(diag);
-  _Ap = temp;
+
+  _Ap = aVarf->SpMat();
+  _Ap.SetGraphOwner(true);
+  _Ap.SetDataOwner(true);
+  aVarf->LoseMat();
+
+  // Vector diag( aVarf->NumRows() );
+  // ( aVarf->SpMat() ).GetDiag(diag); // TODO: not really the most efficient way..use pointers? in any case, this deep-copies
+  // SparseMatrix temp(diag);
+  // _Ap = temp;
 
 
   delete aVarf;
@@ -874,7 +1178,7 @@ void StokesSTOperatorAssembler::AssembleBB( ){
 
 
 // Assemble XX (bottom-right in preconditioner)
-void StokesSTOperatorAssembler::AssemblePS(){
+void StokesSTOperatorAssembler::AssemblePS( int MSolveType, int ASolveType ){
   if ( _pSAssembled ){
     return;
   }
@@ -882,8 +1186,8 @@ void StokesSTOperatorAssembler::AssemblePS(){
   AssembleAp();
   AssembleMp();
 
-  _pSchur.SetAp( &_Ap );
-  _pSchur.SetMp( &_Mp );
+  _pSchur.SetAp( &_Ap, ASolveType );
+  _pSchur.SetMp( &_Mp, MSolveType );
 
 }
 
@@ -891,7 +1195,7 @@ void StokesSTOperatorAssembler::AssemblePS(){
 
 
 // Assemble FF^-1 (top-left in preconditioner)
-void StokesSTOperatorAssembler::AssembleFFinv(){
+void StokesSTOperatorAssembler::AssembleFFinv( int solveType ){
   if ( _FFinvAssembled ){
     return;
   }
@@ -899,7 +1203,7 @@ void StokesSTOperatorAssembler::AssembleFFinv(){
   AssembleFu();
   AssembleMu();
 
-  _FFinv.SetF( &_Fu );
+  _FFinv.SetF( &_Fu, solveType );
   _FFinv.SetM( &_Mu );
 
 }
@@ -1055,11 +1359,11 @@ void StokesSTOperatorAssembler::AssembleOperator( HypreParMatrix*& FFF, HyprePar
 //   P^-1 = [ FF^-1  0     ]
 //          [ 0      XX^-1 ],
 // where FF contains space-time matrix for velocity,
-void StokesSTOperatorAssembler::AssemblePreconditioner( Operator*& FFi, Operator*& XXi ){
+void StokesSTOperatorAssembler::AssemblePreconditioner( Operator*& FFi, Operator*& XXi, int MSolveType, int ASolveType, int FSolveType ){
 
   //Assemble top-left block
-  AssembleFFinv();
-  AssemblePS();
+  AssembleFFinv( FSolveType );
+  AssemblePS( MSolveType, ASolveType );
 
   FFi = &_FFinv;
   XXi = &_pSchur;
