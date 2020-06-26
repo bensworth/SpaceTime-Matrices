@@ -18,17 +18,13 @@ private:
 	const MPI_Comm _comm;
 	int _numProcs;
 	int _myRank;
-
-  double _tol;
   
   // relevant operators
-  const SparseMatrix *_F;
-  const SparseMatrix *_M;
+  const PetscParMatrix *_F;
+  const SparseMatrix   *_M;
 
 	// solvers for relevant operator (with corresponding preconditioner, if iterative)
-  Solver   *_Fsolve;
-	Operator *_Fprec;
-	int _solveType;
+  PetscLinearSolver *_Fsolve;
 
   
   mutable HypreParVector* _X;
@@ -39,12 +35,11 @@ private:
 
 public:
 
-	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
-		               int solveType=0, double tol=1e-12, bool verbose=false);
+	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL, bool verbose=false);
 
   void Mult( const Vector& x, Vector& y ) const;
 
-  void SetF( const SparseMatrix* F, int solvetype );
+  void SetF( const SparseMatrix* F );
   void SetM( const SparseMatrix* M );
 
 	~SpaceTimeSolver();
@@ -71,19 +66,14 @@ private:
 
   double _dt;
   double _mu;
-  double _tol;
 
   // relevant operators
-  const SparseMatrix *_Ap;
-  const SparseMatrix *_Mp;
+  const PetscParMatrix *_Ap;
+  const PetscParMatrix *_Mp;
 
-  // solvers for relevant operators (with corresponding preconditioners, if iterative)
-  Solver   *_Asolve;
-  Solver   *_Msolve;
-  Operator *_Aprec;
-  Operator *_Mprec;
-	int _ASolveType;
-	int _MSolveType;
+  // solvers for relevant operators
+  PetscLinearSolver *_Asolve;
+  PetscLinearSolver *_Msolve;
 
 	const bool _verbose;
 
@@ -92,16 +82,15 @@ public:
 
 	StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
 		                      const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL,
-		                      int ASolveType = 0, int MSolveType = 0,
-		                      double tol=1e-12, bool verbose = false );
+		                      bool verbose = false );
 	~StokesSTPreconditioner();
 
 
 
   void Mult( const Vector& x, Vector& y ) const;
 
-  void SetAp( const SparseMatrix* Ap, int solvetype );
-  void SetMp( const SparseMatrix* Mp, int solvetype );
+  void SetAp( const SparseMatrix* Ap );
+  void SetMp( const SparseMatrix* Mp );
 
 private:
 	void SetMpSolve();
@@ -145,7 +134,6 @@ private:
 	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
 	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC, and compute error)
 
-	const double _tol;	//tolerance for solvers
 
 	// info on FE
   Mesh *_mesh;
@@ -197,14 +185,13 @@ public:
 		                         void(  *n)(const Vector &, double, Vector &),
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
-		                         double tol=1e-12 );
+		                         bool verbose );
 	~StokesSTOperatorAssembler();
 
 
 	void AssembleOperator( HypreParMatrix*& FFF, HypreParMatrix*& BBB );
 
-	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX,
-		                           int MsolveType=0, int AsolveType=0, int FsolveType=0 );
+	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX );
 
 	void AssembleRhs( HypreParVector*& frhs );
 
@@ -231,8 +218,8 @@ private:
 	// assemble blocks for whole Space-time operators 
 	void AssembleFF();
 	void AssembleBB();
-	void AssemblePS( int Msolvetype, int Asolvetype );
-	void AssembleFFinv( int FsolveType );
+	void AssemblePS();
+	void AssembleFFinv();
 
 
 	void TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol );

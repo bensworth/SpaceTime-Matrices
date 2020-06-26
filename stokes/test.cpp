@@ -26,26 +26,19 @@ int main(int argc, char *argv[])
    MPI_Init(&argc, &argv);
    MPI_Comm_size(MPI_COMM_WORLD, &numProcs);
    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
-   bool verbose = (myid == 0);
    double Tend = 1.;
-   // Types of solver for preconditioner:
-   // 0 -> CG+jacobi precon (doesn't work well for Ap, probably because it's singular?)
-   // 1 -> 1 jacobi iteration
-   // 2 -> 1 jacobi iteration with lumped operator (not available for A)
-   int MpsolveType = 0;
-   int ApsolveType = 1;
-   int FsolveType  = 0;
 
    const char *mesh_file = "../../../3rdParty/MFEM/data/inline-tri.mesh";   
-   int ordV = 2;
+   int ordU = 2;
    int ordP = 1;
    int ref_levels = 0;
-   const char *petscrc_file = "";
+   const char *petscrc_file = "rc_SpaceTimeStokes";
+   int verbose = 0;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Mesh file to use.");
-   args.AddOption(&ordV, "-oU", "--order",
+   args.AddOption(&ordU, "-oU", "--order",
                   "Finite element order (polynomial degree) for velocity field.");
    args.AddOption(&ordP, "-oP", "--order",
                   "Finite element order (polynomial degree) for pressure field.");
@@ -53,25 +46,27 @@ int main(int argc, char *argv[])
                   "Refinement level.");
    args.AddOption(&Tend, "-T", "--Tend",
                   "Final time.");
-   args.AddOption(&MpsolveType, "-M", "--Msolve",
-                  "Solver for pressure mass matrix: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator.");
-   args.AddOption(&ApsolveType, "-A", "--Asolve",
-                  "Solver for pressure 'laplacian': 0 -CG+Jacobi prec, 1 -Jacobi.");
-   args.AddOption(&FsolveType, "-F", "--Fsolve",
-                  "Solver for velocity spatial operator: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator");
+   args.AddOption(&verbose, "-V", "--verbose",
+                  "Control how much info to print.");
+   // args.AddOption(&MpsolveType, "-M", "--Msolve",
+   //                "Solver for pressure mass matrix: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator.");
+   // args.AddOption(&ApsolveType, "-A", "--Asolve",
+   //                "Solver for pressure 'laplacian': 0 -CG+Jacobi prec, 1 -Jacobi.");
+   // args.AddOption(&FsolveType, "-F", "--Fsolve",
+   //                "Solver for velocity spatial operator: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator");
    args.AddOption(&petscrc_file, "-petscopts", "--petscopts",
                   "PetscOptions file to use.");
    args.Parse();
    if(!args.Good())
    {
-      if(verbose)
+      if(myid == 0)
       {
         args.PrintUsage(cout);
       }
       MPI_Finalize();
       return 1;
    }
-   if(verbose)
+   if(myid == 0)
    {
       args.PrintOptions(cout);
    }
@@ -85,16 +80,16 @@ int main(int argc, char *argv[])
 
 
   // Assembles block matrices composing the system
-  StokesSTOperatorAssembler stokesAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordV, ordP,
-                                             dt, mu, fFun, nFun, uFun_ex, pFun_ex );
+  StokesSTOperatorAssembler *stokesAssembler = new StokesSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP,
+                                                                              dt, mu, fFun, nFun, uFun_ex, pFun_ex, verbose );
 
   HypreParMatrix *FFF, *BBB, *BBt;
   Operator *FFi, *XXi;
   HypreParVector  *frhs, *uEx, *pEx;
-  stokesAssembler.AssembleOperator( FFF, BBB );
+  stokesAssembler->AssembleOperator( FFF, BBB );
 
-  stokesAssembler.AssemblePreconditioner( FFi, XXi, MpsolveType, ApsolveType, FsolveType );
-  stokesAssembler.AssembleRhs( frhs );
+  stokesAssembler->AssemblePreconditioner( FFi, XXi );
+  stokesAssembler->AssembleRhs( frhs );
   BBt = BBB->Transpose( );
 
 
@@ -117,7 +112,7 @@ int main(int argc, char *argv[])
   // stokesPr->SetBlock(1, 1, XXi);
 
 
-  stokesAssembler.ExactSolution( uEx, pEx );
+  stokesAssembler->ExactSolution( uEx, pEx );
   BlockVector solEx(offsets), rhsEx(offsets);
   solEx.GetBlock(0) = *uEx;
   solEx.GetBlock(1) = *pEx;
@@ -138,32 +133,32 @@ int main(int argc, char *argv[])
   // solver = new PetscLinearSolver(MPI_COMM_WORLD,"ksp_type gmres");
   // PetscPreconditioner *pstokesPr = NULL;
 
-  FGMRESSolver solver(MPI_COMM_WORLD);
-  BlockDiagonalPreconditioner pstokesPr(offsets);
-  pstokesPr.SetDiagonalBlock( 0, FFi );
-  pstokesPr.SetDiagonalBlock( 1, XXi );
+  PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
+  BlockDiagonalPreconditioner *stokesPr= new BlockDiagonalPreconditioner(offsets);
+  stokesPr->SetDiagonalBlock( 0, FFi );
+  stokesPr->SetDiagonalBlock( 1, XXi );
 
-  solver.SetPreconditioner(pstokesPr);
+  solver->SetPreconditioner(*stokesPr);
 
 
 
-  solver.SetOperator(*stokesOp);
+  solver->SetOperator(*stokesOp);
   // solver.SetTol(1e-10);
-  solver.SetAbsTol(1e-10);
+  solver->SetAbsTol(1e-10);
   // solver.SetMaxIter((stokesOp->NumRows())*numProcs);
-  solver.SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
-  solver.SetPrintLevel(1);
-  solver.Mult(rhs, sol);
+  solver->SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
+  solver->SetPrintLevel(1);
+  solver->Mult(rhs, sol);
   // solver.Mult(rhsEx, sol);
 
 
   if (myid == 0){
-    if (solver.GetConverged()){
-      std::cout << "Solver converged in "         << solver.GetNumIterations();
+    if (solver->GetConverged()){
+      std::cout << "Solver converged in "         << solver->GetNumIterations();
     }else{
-      std::cout << "Solver did not converge in "  << solver.GetNumIterations();
+      std::cout << "Solver did not converge in "  << solver->GetNumIterations();
     }
-    std::cout << " iterations. Residual norm is " << solver.GetFinalNorm() << ".\n";
+    std::cout << " iterations. Residual norm is " << solver->GetFinalNorm() << ".\n";
   }
 
   int colsV[2] = { myid*(FFF->NumRows()), (myid+1)*(FFF->NumRows()) };
@@ -172,8 +167,8 @@ int main(int argc, char *argv[])
   HypreParVector uh( MPI_COMM_WORLD, numProcs*(FFF->NumRows()), sol.GetBlock(0).GetData(), colsV ); 
   HypreParVector ph( MPI_COMM_WORLD, numProcs*(BBB->NumRows()), sol.GetBlock(1).GetData(), colsP ); 
 
-  stokesAssembler.SaveSolution( uh, ph );
-  stokesAssembler.SaveExactSolution( );
+  stokesAssembler->SaveSolution( uh, ph );
+  stokesAssembler->SaveExactSolution( );
 
   // {
   //   Vector uga( rhs.GetBlock(0).Size() );
@@ -213,13 +208,17 @@ int main(int argc, char *argv[])
   
 
 
-  // delete uh;
   delete FFF;
   delete BBB;
   delete BBt;
   delete frhs;
   delete uEx;
   delete pEx;
+
+  delete solver;
+  delete stokesOp;
+  delete stokesPr;
+  delete stokesAssembler;
 
    
 
