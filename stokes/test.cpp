@@ -1,6 +1,8 @@
 #include "mfem.hpp"
 // #include "petsc.h"
 #include "stokesstoperatorassembler.hpp"
+#include "blockUpperTriangularPreconditioner.hpp"
+#include <string>
 #include <fstream>
 #include <iostream>
 //---------------------------------------------------------------------------
@@ -34,6 +36,7 @@ int main(int argc, char *argv[])
    int ref_levels = 0;
    const char *petscrc_file = "rc_SpaceTimeStokes";
    int verbose = 0;
+   int precType = 0;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -48,6 +51,8 @@ int main(int argc, char *argv[])
                   "Final time.");
    args.AddOption(&verbose, "-V", "--verbose",
                   "Control how much info to print.");
+   args.AddOption(&precType, "-P", "--preconditioner",
+                  "Choose type of preconditioner: 0-block diagonal, 1-block triangular.");
    // args.AddOption(&MpsolveType, "-M", "--Msolve",
    //                "Solver for pressure mass matrix: 0 -CG+Jacobi prec, 1 -Jacobi, 2 -Jacobi with lumped operator.");
    // args.AddOption(&ApsolveType, "-A", "--Asolve",
@@ -107,49 +112,55 @@ int main(int argc, char *argv[])
   stokesOp->SetBlock(0, 1, BBt);
   stokesOp->SetBlock(1, 0, BBB);
 
-  // BlockOperator *stokesPr = new BlockOperator( offsets );
-  // stokesPr->SetBlock(0, 0, FFi);
-  // stokesPr->SetBlock(1, 1, XXi);
-
 
   stokesAssembler->ExactSolution( uEx, pEx );
-  BlockVector solEx(offsets), rhsEx(offsets);
-  solEx.GetBlock(0) = *uEx;
-  solEx.GetBlock(1) = *pEx;
-  stokesOp->Mult( solEx, rhsEx );
 
 
-  // HypreParVector myRhs( *FFF, 1 );
-  // HypreParVector *solU;
-  // BBB->MultTranspose( *pEx, myRhs );
-  // myRhs.Neg();
-  // myRhs += *frhs;
-  // stokesAssembler.TimeStepVelocity( myRhs, solU );
 
-  // stokesAssembler.ComputeL2Error( *solU, *pEx );
-
-
-  // PetscLinearSolver *solver;
-  // solver = new PetscLinearSolver(MPI_COMM_WORLD,"ksp_type gmres");
-  // PetscPreconditioner *pstokesPr = NULL;
-
+  // Define solver
   PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
-  BlockDiagonalPreconditioner *stokesPr= new BlockDiagonalPreconditioner(offsets);
-  stokesPr->SetDiagonalBlock( 0, FFi );
-  stokesPr->SetDiagonalBlock( 1, XXi );
+  
+
+  // Define preconditioner
+  Solver *stokesPr;
+
+  // std::string filename = "operator";
+  // stokesAssembler->PrintMatrices(filename);
+
+
+
+  switch(precType){
+    case 0:{
+      BlockDiagonalPreconditioner *temp = new BlockDiagonalPreconditioner(offsets);
+      temp->SetDiagonalBlock( 0, FFi );
+      temp->SetDiagonalBlock( 1, XXi );
+      stokesPr = temp;
+      break;
+    }
+    case 1:{
+      BlockUpperTriangularPreconditioner *temp = new BlockUpperTriangularPreconditioner(offsets);
+      temp->SetDiagonalBlock( 0, FFi );
+      temp->SetDiagonalBlock( 1, XXi );
+      temp->SetBlock( 0, 1, BBt );
+      stokesPr = temp;
+      break;
+    }
+    default:{
+      std::cerr<<"Option for preconditioner "<<precType<<" not recognised"<<std::endl;
+      break;
+    }
+  }
+
 
   solver->SetPreconditioner(*stokesPr);
 
 
 
   solver->SetOperator(*stokesOp);
-  // solver.SetTol(1e-10);
   solver->SetAbsTol(1e-10);
-  // solver.SetMaxIter((stokesOp->NumRows())*numProcs);
   solver->SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
   solver->SetPrintLevel(1);
   solver->Mult(rhs, sol);
-  // solver.Mult(rhsEx, sol);
 
 
   if (myid == 0){
@@ -159,7 +170,23 @@ int main(int argc, char *argv[])
       std::cout << "Solver did not converge in "  << solver->GetNumIterations();
     }
     std::cout << " iterations. Residual norm is " << solver->GetFinalNorm() << ".\n";
+  
+    double hmin, hmax, kmin, kmax;
+    stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
+
+    ofstream myfile;
+    string filename = string("./results/convergence_results") + "_Prec" + to_string(precType)
+                           + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) +
+                           + "_" + petscrc_file + ".txt";
+    myfile.open( filename, std::ios::app );
+    myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
+           << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
+           << solver->GetNumIterations() << std::endl;
+    myfile.close();
+
   }
+
+
 
   int colsV[2] = { myid*(FFF->NumRows()), (myid+1)*(FFF->NumRows()) };
   int colsP[2] = { myid*(BBB->NumRows()), (myid+1)*(BBB->NumRows()) };
@@ -170,42 +197,8 @@ int main(int argc, char *argv[])
   stokesAssembler->SaveSolution( uh, ph );
   stokesAssembler->SaveExactSolution( );
 
-  // {
-  //   Vector uga( rhs.GetBlock(0).Size() );
-  //   for ( int i = 0; i < uga.Size(); ++i ){
-  //     uga.GetData()[i] = rhs.GetBlock(0).GetData()[i] - rhsEx.GetBlock(0).GetData()[i];
-  //   }
-  //   std::cout<<"Delta between rhs: "<<uga.Max() <<", "<<uga.Min()<<std::endl;
-  // }
-
-
-  // stokesAssembler.ExactSolution( uEx, pEx );
-  // BlockVector solEx(offsets), rhsEx(offsets);
-  // solEx.GetBlock(0) = *uEx;
-  // solEx.GetBlock(1) = *pEx;
-
-  // stokesOp->Mult( solEx, rhsEx );
-  // // - these should all print 0   - pressure seems fine (duh), velocity not really
-  // if( myid == 1){
-  //   for ( int i = 0; i < rhsEx.Size(); ++i ){
-  //     std::cout<<rhsEx.GetData()[i] - rhs.GetData()[i]<<", ";
-  //   }
-  // }
-
-  // HypreParVector fullRhs( *uEx );
-  // BBB->MultTranspose( *pEx, fullRhs );
-  // fullRhs.Neg();
-  // fullRhs += *frhs;
-
-  // HypreParVector *uh2;
-  // stokesAssembler.TimeStepVelocity( fullRhs, uh2 );
-  // // // - these should all print 0
-  // // for ( int i = 0; i < FFF->NumRows(); ++i ){
-  // //   std::cout<<uh2->GetData()[i] - uEx->GetData()[i]<<", ";
-  // // }
-
-  // stokesAssembler.ComputeL2Error( *uh2, *pEx );
   
+
 
 
   delete FFF;

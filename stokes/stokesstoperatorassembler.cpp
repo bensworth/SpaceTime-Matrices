@@ -2,6 +2,7 @@
 
 #include <mpi.h>
 #include <string>
+#include <iostream>
 #include <mpi.h>
 #include "HYPRE.h"
 #include "petsc.h"
@@ -23,16 +24,16 @@ using namespace mfem;
 // These functions are used to ais in the application of the pressure part of
 //  the block preconditioner (ie, approximating the inverse of pressure schur
 //  complement)
-// This is defined as XX^-1 = D(Mp)^-1 * FFp * D(Ap)^-1, where:
+// This is defined as XX^-1 = - D(Mp)^-1 * FFp * D(Ap)^-1, where:
 //  - D(*) represents the block-diagonal matrix with (*) as blocks
 //  - FFp is the space-time matrix representing time-stepping on pressure
 //  - Mp is the pressure mass matrix
 //  - Ap is the pressure "laplacian" (or its stabilised/approximated version)
 // After some algebra, it can be simplified to the block bi-diagonal
-//         ⌈ Ap^-1/dt + mu*Mp^-1                            ⌉
-// XX^-1 = |      -Ap^-1/dt      Ap^-1/dt + mu*Mp^-1        |,
-//         |                          -Ap^-1/dt          \\ |
-//         ⌊                                             \\ ⌋
+//            ⌈ Ap^-1 + dt*mu*Mp^-1                          ⌉
+// XX^-1 = -1*|      -Ap^-1          Ap^-1 + dt*mu*Mp^-1     |,
+//            |                           -Ap^-1          \\ |
+//            ⌊                                           \\ ⌋
 //  which boils down to a couple of parallel solves involving Mp and Ap
 
 StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
@@ -59,6 +60,16 @@ StokesSTPreconditioner::~StokesSTPreconditioner(){
 // initialise info on pressure 'laplacian'
 void StokesSTPreconditioner::SetAp( const SparseMatrix* Ap ){
   _Ap = new PetscParMatrix( Ap );
+
+  // // This option can be passed at runtime with -ksp_constant_null_space TRUE
+  // if( _myRank == 0 ){
+  //   std::cout<<"Warning: assuming that pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl;
+  // }
+  // Mat petscA = Mat( *_Ap );
+  // MatNullSpace nsp;
+  // MatNullSpaceCreate( MPI_COMM_SELF, PETSC_TRUE, 0, NULL, &nsp);
+  // MatSetNullSpace( petscA, nsp );
+  // MatNullSpaceDestroy( &nsp );        // hopefully all info is stored
 
   height = Ap->Height();
   width  = Ap->Width();
@@ -224,7 +235,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
   // Have each processor solve for the "laplacian"
   _Asolve->Mult( lclx, invAxMine );
-  invAxMine *= 1./_dt;   //scale by dt
+  // invAxMine *= 1./_dt;   //scale by dt
 
   if (_verbose ){
     // for ( int rank = 0; rank < _numProcs; ++rank ){
@@ -281,7 +292,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
 
   // Combine all partial results together locally (once received necessary data, if necessary)
-  lcly *= _mu;        //remember to include factor mu
+  lcly *= _mu*_dt;        //remember to include factor mu*dt
   lcly += invAxMine;
   if( _myRank > 0 ){
     MPI_Wait( &reqRecv, MPI_STATUS_IGNORE );
@@ -291,7 +302,8 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
   // Assemble global vector
   for ( int i = 0; i < lclSize; ++i ){
-    y.GetData()[i] = lcly.GetData()[i];
+    // remember to flip sign!
+    y.GetData()[i] = - lcly.GetData()[i];
   }
 
   // lest we risk destroying invAxMine before it's been sent (probably unnecessary)
@@ -1606,6 +1618,54 @@ void StokesSTOperatorAssembler::SaveSolution( const HypreParVector& uh, const Hy
     delete uFun;
     delete pFun;
 
+  }
+}
+
+void StokesSTOperatorAssembler::GetMeshSize( double& h_min, double& h_max, double& k_min, double& k_max ) const{
+  if(_mesh == NULL)
+    std::cerr<<"Mesh not yet set"<<std::endl;
+  else
+    _mesh->GetCharacteristics( h_min, h_max, k_min, k_max );
+}
+
+
+
+
+void StokesSTOperatorAssembler::PrintMatrices( const std::string& filename ) const{
+
+  if( _myRank == 0){
+    if( ! ( _FuAssembled && _MuAssembled && _MpAssembled && _ApAssembled && _BAssembled ) ){
+      std::cerr<<"Make sure all matrices have been initialised, otherwise they can't be printed"<<std::endl;
+      return;
+    }
+
+    std::string myfilename;
+    std::ofstream myfile;
+
+    myfilename = filename + "_Fu.dat";
+    myfile.open( myfilename );
+    _Fu.PrintMatlab(myfile);
+    myfile.close( );
+
+    myfilename = filename + "_Mu.dat";
+    myfile.open( myfilename );
+    _Mu.PrintMatlab(myfile);
+    myfile.close( );
+
+    myfilename = filename + "_Mp.dat";
+    myfile.open( myfilename );
+    _Mp.PrintMatlab(myfile);
+    myfile.close( );
+
+    myfilename = filename + "_Ap.dat";
+    myfile.open( myfilename );
+    _Ap.PrintMatlab(myfile);
+    myfile.close( );
+
+    myfilename = filename + "_B.dat";
+    myfile.open( myfilename );
+    _B.PrintMatlab(myfile);
+    myfile.close( );
   }
 }
 

@@ -15,7 +15,14 @@ driver
 *.core
 makefile
 driver
+/stokes/test
+/stokes/stokesp
+/stokes/simpletest.cpp
+/stokes/simpletest
+/stokes/ParaView/
+/ST_class/results/
 *._*
+*.nfs*
 *.pyc
 *.npz
 
@@ -23,3 +30,5 @@ spacetime.pdf
 notes.pdf
 disc_notes.pdf
 
+*.mat
+*.dat

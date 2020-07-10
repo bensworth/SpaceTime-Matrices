@@ -1,0 +1,32 @@
+# Config for outer solver (for global space-time matrix)
+-solver_ksp_type gmres
+-solver_ksp_monitor_true_residual
+-solver_ksp_rtol   1e-10
+-solver_ksp_atol   1e-10
+-solver_ksp_max_it 1000
+-solver_ksp_gmres_restart 100	
+
+# Solver for Velocity Block preconditioner
+-VSolver_ksp_type 	preonly
+#-VSolver_ksp_rtol   1e-10
+#-VSolver_ksp_atol   1e-10
+#-VSolver_ksp_max_it 100
+-VSolver_pc_type lu
+
+
+# Solvers for Pressure Block preconditioner
+# - pressure 'laplacian'
+-PSolverLaplacian_ksp_type preonly
+#-PSolverLaplacian_ksp_rtol   0.0
+#-PSolverLaplacian_ksp_atol   0.0
+#-PSolverLaplacian_ksp_max_it 5
+-PSolverLaplacian_pc_type ilu
+
+# - pressure mass matrix
+-PSolverMass_ksp_type chebyshev
+# - -for linear triangles
+-PSolverMass_ksp_chebyshev_eigenvalues 0.5,2
+-PSolverMass_ksp_rtol 0.0
+-PSolverMass_ksp_atol 0.0
+-PSolverMass_ksp_max_it 8
+-PSolverMass_pc_type jacobi

@@ -3,6 +3,7 @@
 
 #include <mpi.h>
 #include "mfem.hpp"
+#include <string>
 
 
 
@@ -203,9 +204,11 @@ public:
 	void TimeStepVelocity( const HypreParVector& rhs, HypreParVector*& sol );
 	void TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol );
 
+	void GetMeshSize( double& h_min, double& h_max, double& k_min, double& k_max ) const;
 	void ComputeL2Error( const HypreParVector& uh, const HypreParVector& ph );
 	void SaveSolution(   const HypreParVector& uh, const HypreParVector& ph );
 	void SaveExactSolution( );
+	void PrintMatrices( const std::string& filename ) const;
 
 private:
 	// assemble blocks for single time-step 
