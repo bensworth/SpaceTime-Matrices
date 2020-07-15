@@ -10,6 +10,8 @@
 
 using namespace mfem;
 
+// Seems like multiplyinh every operator by dt gives slightly better results.
+#define SCALE_BY_DT
 
 //##############################################################################
 //
@@ -24,16 +26,16 @@ using namespace mfem;
 // These functions are used to ais in the application of the pressure part of
 //  the block preconditioner (ie, approximating the inverse of pressure schur
 //  complement)
-// This is defined as XX^-1 = - D(Mp)^-1 * FFp * D(Ap)^-1, where:
+// This is defined as: - XX^-1 = - D(Mp)^-1 * FFp * D(Ap)^-1, where:
 //  - D(*) represents the block-diagonal matrix with (*) as blocks
 //  - FFp is the space-time matrix representing time-stepping on pressure
 //  - Mp is the pressure mass matrix
 //  - Ap is the pressure "laplacian" (or its stabilised/approximated version)
 // After some algebra, it can be simplified to the block bi-diagonal
-//            ⌈ Ap^-1 + dt*mu*Mp^-1                          ⌉
-// XX^-1 = -1*|      -Ap^-1          Ap^-1 + dt*mu*Mp^-1     |,
-//            |                           -Ap^-1          \\ |
-//            ⌊                                           \\ ⌋
+//          ⌈ Ap^-1 + dt*mu*Mp^-1                          ⌉
+// XX^-1 =  |      -Ap^-1          Ap^-1 + dt*mu*Mp^-1     |,
+//          |                           -Ap^-1          \\ |
+//          ⌊                                           \\ ⌋
 //  which boils down to a couple of parallel solves involving Mp and Ap
 
 StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
@@ -235,7 +237,10 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
   // Have each processor solve for the "laplacian"
   _Asolve->Mult( lclx, invAxMine );
-  // invAxMine *= 1./_dt;   //scale by dt
+
+#ifndef SCALE_BY_DT
+  invAxMine *= (1./_dt);   //divide by dt
+#endif
 
   if (_verbose ){
     // for ( int rank = 0; rank < _numProcs; ++rank ){
@@ -292,17 +297,23 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
 
   // Combine all partial results together locally (once received necessary data, if necessary)
-  lcly *= _mu*_dt;        //remember to include factor mu*dt
+#ifndef SCALE_BY_DT
+  lcly *= _mu*_dt;    //remember to include factor mu*dt
+#else
+  lcly *= _mu;        //remember to include factor mu
+#endif
+
   lcly += invAxMine;
   if( _myRank > 0 ){
     MPI_Wait( &reqRecv, MPI_STATUS_IGNORE );
+    // if you want to ignore the "time-stepping" structure in the preconditioner, just comment out this line
     lcly -= invAxPrev;
   }
 
 
   // Assemble global vector
   for ( int i = 0; i < lclSize; ++i ){
-    // remember to flip sign!
+    // remember to flip sign! Notice the minus in front of XX^-1
     y.GetData()[i] = - lcly.GetData()[i];
   }
 
@@ -682,11 +693,20 @@ void StokesSTOperatorAssembler::AssembleFu( ){
     return;
   }
 
+#ifdef SCALE_BY_DT
   BilinearForm *fVarf( new BilinearForm(_VhFESpace) );
   ConstantCoefficient muDt( _mu*_dt );
   ConstantCoefficient one( 1.0 );
 	fVarf->AddDomainIntegrator(new VectorMassIntegrator( one ));
 	fVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( muDt ));
+#else
+  BilinearForm *fVarf( new BilinearForm(_VhFESpace) );
+  ConstantCoefficient mu( _mu );
+  ConstantCoefficient dtinv( 1./_dt );
+  fVarf->AddDomainIntegrator(new VectorMassIntegrator( dtinv ));
+  fVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( mu ));
+#endif
+
   fVarf->Assemble();
   fVarf->Finalize();
   
@@ -737,8 +757,13 @@ void StokesSTOperatorAssembler::AssembleMu( ){
   }
 
 	BilinearForm *mVarf( new BilinearForm(_VhFESpace) );
+#ifdef SCALE_BY_DT
   ConstantCoefficient mone( -1.0 );
-	mVarf->AddDomainIntegrator(new VectorMassIntegrator( mone ));
+  mVarf->AddDomainIntegrator(new VectorMassIntegrator( mone ));
+#else
+  ConstantCoefficient mdtinv( -1./_dt );
+  mVarf->AddDomainIntegrator(new VectorMassIntegrator( mdtinv ));
+#endif
   mVarf->Assemble();
   mVarf->Finalize();
 
@@ -788,8 +813,15 @@ void StokesSTOperatorAssembler::AssembleB( ){
   }
 
 	MixedBilinearForm *bVarf(new MixedBilinearForm( _VhFESpace, _QhFESpace ));
+
+#ifdef SCALE_BY_DT  
   ConstantCoefficient minusDt( -_dt );
   bVarf->AddDomainIntegrator(new VectorDivergenceIntegrator(minusDt) );
+#else
+  ConstantCoefficient mone( -1.0 );
+  bVarf->AddDomainIntegrator(new VectorDivergenceIntegrator(mone) );
+#endif
+
   bVarf->Assemble();
   bVarf->Finalize();
 
@@ -943,10 +975,18 @@ void StokesSTOperatorAssembler::TimeStepPressure( const HypreParVector& rhs, Hyp
   AssembleMp();
 
   SparseMatrix Fp = _Ap;
+
+#ifdef SCALE_BY_DT
   Fp *= _mu * _dt;
   Fp.Add( 1.0, _Mp );     // TODO: check that Mp falls into the sparsity pattern of A
   SparseMatrix Mp = _Mp;
   Mp *= -1.0;
+#else
+  Fp *= _mu;
+  Fp.Add( 1./_dt, _Mp );     // TODO: check that Mp falls into the sparsity pattern of A
+  SparseMatrix Mp = _Mp;
+  Mp *= -1./_dt;
+#endif
 
   TimeStep( Fp, Mp, rhs, sol );
 }
@@ -1276,7 +1316,11 @@ void StokesSTOperatorAssembler::AssembleRhs( HypreParVector*& frhs ){
   fRhsLoc.SetData( fform->StealData() );
   fRhsLoc += *nform;
   fRhsLoc += *pform;
+
+#ifdef SCALE_BY_DT
   fRhsLoc *= _dt;
+#endif
+
   delete fform;     // once data is stolen, we can delete the linear form
   delete nform;     // once data is stolen, we can delete the linear form
   delete pform;     // once data is stolen, we can delete the linear form
@@ -1291,7 +1335,13 @@ void StokesSTOperatorAssembler::AssembleRhs( HypreParVector*& frhs ){
     u0form->AddDomainIntegrator( new VectorDomainLFIntegrator( uFuncCoeff ) ); //int_\Omega u0*v
     u0form->Assemble();
 
+#ifdef SCALE_BY_DT
     fRhsLoc += *u0form;
+#else
+    Vector temp = *u0form;
+    temp *= (1./_dt);
+    fRhsLoc += temp;
+#endif
 
     if(_verbose){
       std::cout<<"Initial condition included "<<std::endl;
