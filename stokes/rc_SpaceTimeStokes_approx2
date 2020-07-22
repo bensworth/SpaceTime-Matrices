@@ -3,8 +3,9 @@
 -solver_ksp_monitor_true_residual
 -solver_ksp_rtol   1e-10
 -solver_ksp_atol   1e-10
--solver_ksp_max_it 1000
+-solver_ksp_max_it 200
 -solver_ksp_gmres_restart 100	
+-solver_ksp_initial_guess_nonzero
 
 # Solver for Velocity Block preconditioner
 -VSolver_ksp_type 	richardson
@@ -17,6 +18,7 @@
 -VSolver_pc_hypre_boomeramg_max_iter 1
 -VSolver_pc_hypre_boomeramg_max_levels 8
 -VSolver_pc_hypre_boomeramg_cycle_type W
+-VSolver_ksp_initial_guess_nonzero
 
 
 # Solvers for Pressure Block preconditioner
@@ -33,7 +35,6 @@
 -PSolverLaplacian_pc_hypre_boomeramg_max_iter 1
 -PSolverLaplacian_pc_hypre_boomeramg_max_levels 8
 -PSolverLaplacian_pc_hypre_boomeramg_cycle_type W
-
 # - pressure mass matrix
 -PSolverMass_ksp_type chebyshev
 # - -for linear triangles

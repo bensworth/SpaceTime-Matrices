@@ -3,8 +3,9 @@
 -solver_ksp_monitor_true_residual
 -solver_ksp_rtol   1e-10
 -solver_ksp_atol   1e-10
--solver_ksp_max_it 1000
+-solver_ksp_max_it 200
 -solver_ksp_gmres_restart 100	
+-solver_ksp_initial_guess_nonzero
 
 # Solver for Velocity Block preconditioner
 -VSolver_ksp_type 	preonly

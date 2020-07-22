@@ -10,8 +10,8 @@
 
 using namespace mfem;
 
-// Seems like multiplyinh every operator by dt gives slightly better results.
-#define SCALE_BY_DT
+// Seems like multiplying every operator by dt gives slightly better results.
+#define MULT_BY_DT
 
 //##############################################################################
 //
@@ -40,8 +40,8 @@ using namespace mfem;
 
 StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
                                                 const SparseMatrix* Ap, const SparseMatrix* Mp,
-                                                bool verbose ):
-  _comm(comm), _dt(dt), _mu(mu), _Asolve(NULL), _Msolve(NULL), _verbose(verbose){
+                                                const Array<int>& essQhTDOF, bool verbose ):
+  _comm(comm), _dt(dt), _mu(mu), _Asolve(NULL), _Msolve(NULL), _essQhTDOF(essQhTDOF), _verbose(verbose){
 
   if( Ap != NULL ) SetAp(Ap);
   if( Mp != NULL ) SetMp(Mp);
@@ -86,44 +86,6 @@ void StokesSTPreconditioner::SetApSolve(){
 
   _Asolve = new PetscLinearSolver( *_Ap, "PSolverLaplacian_" );
 
-  // switch (_ASolveType){
-
-  //   // use conjugate gradient
-  //   case 0:{
-
-  //     _Asolve = new CGSolver();
-
-  //     // use the operator's diagonal as a preconditioner for this one - preconditioner inception :)
-  //     _Aprec = new DSmoother( *_Ap );
-
-  //     IterativeSolver *temp = dynamic_cast<IterativeSolver*>( _Asolve );
-  //     Solver *tempPr = dynamic_cast<Solver*>( _Aprec );
-  //     temp->SetPreconditioner( *tempPr );
-  //     temp->SetOperator( *_Ap );
-  //     temp->SetRelTol( _tol );
-  //     temp->SetAbsTol( _tol );
-  //     temp->SetMaxIter( height );
-  //     if ( _verbose ){
-  //       temp->SetPrintLevel(0);
-  //     }
-
-  //     if ( _verbose ){
-  //       temp->SetPrintLevel(0);
-  //     }
-  //     break;
-  //   }
-
-  //   // use inverse of diagonal of operator
-  //   case 1:{
-  //     _Asolve = new DSmoother( *_Ap );
-  //     break;
-
-  //   }
-  //   default:
-  //     std::cerr<<"SetApSolve: solver type "<<_ASolveType<<" not recognised."<<std::endl;
-
-  // }
-
 }
 
 
@@ -145,58 +107,6 @@ void StokesSTPreconditioner::SetMpSolve(){
   delete _Msolve;
 
   _Msolve = new PetscLinearSolver( *_Mp, "PSolverMass_" );
-
-  // switch (_MSolveType){
-
-  //   // use conjugate gradient
-  //   case 0:{
-
-  //     _Msolve = new CGSolver();
-
-  //     // use the operator's diagonal as a preconditioner for this one - preconditioner inception :)
-  //     _Mprec = new DSmoother( *_Mp );
-      
-  //     IterativeSolver *temp = dynamic_cast<IterativeSolver*>( _Msolve );
-  //     Solver *tempPr = dynamic_cast<Solver*>( _Mprec );
-  //     temp->SetPreconditioner( *tempPr );
-  //     temp->SetOperator( *_Mp );
-  //     temp->SetRelTol( _tol );
-  //     temp->SetAbsTol( _tol );
-  //     temp->SetMaxIter( height );
-  //     if ( _verbose ){
-  //       temp->SetPrintLevel(0);
-  //     }
-
-  //     if ( _verbose ){
-  //       temp->SetPrintLevel(0);
-  //     }
-  //     break;
-
-  //   }
-  //   // use inverse of diagonal of operator
-  //   case 1:{
-  //     _Msolve = new DSmoother( *_Mp );
-  //     break;
-
-  //   }
-  //   // use lumped version of operator
-  //   case 2:{
-  //     Vector ones( _Mp->Width() ), diag( _Mp->Height() );
-  //     ones = 1.;
-  //     _Mp->Mult(ones,diag);
-  //     //TODO: bit of a workaround, here: I'm using the preconditioner as a
-  //     // place-holder for the lumped operator, since otherwise there'd be
-  //     // memory leak (I can't seem to make the solver "own" the preconditioner)
-  //     _Mprec  = new SparseMatrix( diag );
-  //     SparseMatrix *tempPr = dynamic_cast<SparseMatrix*>( _Mprec );
-  //     _Msolve = new DSmoother( *tempPr );
-  //     break;
-
-  //   }
-  //   default:
-  //     std::cerr<<"SetMpSolve: solver type "<<_MSolveType<<" not recognised."<<std::endl;
-
-  // }
 
 }
 
@@ -238,7 +148,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   // Have each processor solve for the "laplacian"
   _Asolve->Mult( lclx, invAxMine );
 
-#ifndef SCALE_BY_DT
+#ifndef MULT_BY_DT
   invAxMine *= (1./_dt);   //divide by dt
 #endif
 
@@ -297,7 +207,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
 
   // Combine all partial results together locally (once received necessary data, if necessary)
-#ifndef SCALE_BY_DT
+#ifndef MULT_BY_DT
   lcly *= _mu*_dt;    //remember to include factor mu*dt
 #else
   lcly *= _mu;        //remember to include factor mu
@@ -351,8 +261,9 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 //       ⌊             \\ ⌋
 //  where Fu = Mu/dt + mu Au is the spatial operator for the velocity
 
-SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, const SparseMatrix* M, bool verbose ):
-  _comm(comm), _Fsolve(NULL), _X(NULL), _Y(NULL), _verbose(verbose){
+SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, const SparseMatrix* M,
+                                  const Array<int>& essVhTDOF, bool verbose ):
+  _comm(comm), _Fsolve(NULL), _essVhTDOF(essVhTDOF), _X(NULL), _Y(NULL), _verbose(verbose){
 
   if( F != NULL ) SetF(F);
   if( M != NULL ) SetM(M);
@@ -402,95 +313,6 @@ void SpaceTimeSolver::SetFSolve(){
     
     _Fsolve = new PetscLinearSolver( *_F, "VSolver_" );
 
-    // switch (_solveType){
-
-    //   // use conjugate gradient
-    //   case 0:{
-    //     _Fsolve = new CGSolver();
-
-    //     // use the operator's diagonal as a preconditioner for this one - preconditioner inception :)
-    //     _Fprec = new DSmoother( *_F );
-        
-    //     IterativeSolver *temp = dynamic_cast<IterativeSolver*>( _Fsolve );
-    //     Solver *tempPr = dynamic_cast<Solver*>( _Fprec );
-    //     temp->SetPreconditioner( *tempPr );
-    //     temp->SetOperator( *_F );
-    //     temp->SetRelTol( _tol );
-    //     temp->SetAbsTol( _tol );
-    //     temp->SetMaxIter( height );
-    //     if ( _verbose ){
-    //       temp->SetPrintLevel(0);
-    //     }
-
-    //     break;
-
-    //   }
-
-
-    //   // use inverse of diagonal of operator
-    //   case 1:{
-    //     _Fsolve = new DSmoother( *_F );
-    //     break;
-
-    //   }
-
-
-    //   // use lumped version of operator
-    //   case 2:{
-    //     Vector ones( _F->Width() ), diag( _F->Height() );
-    //     ones = 1.;
-    //     _F->Mult(ones,diag);
-    //     //TODO: bit of a workaround, here: I'm using the preconditioner as a
-    //     // place-holder for the lumped operator, since otherwise there'd be
-    //     // memory leak (I can't seem to make the solver "own" the preconditioner)
-    //     _Fprec  = new SparseMatrix( diag );
-    //     SparseMatrix *tempPr = dynamic_cast<SparseMatrix*>( _Fprec );
-    //     _Fsolve = new DSmoother( *tempPr );
-    //     break;
-
-    //   }
-
-
-
-    //   case 3:{
-    //     _Fsolve = new HypreSmoother();
-    //     HypreSmoother *temp = dynamic_cast<HypreSmoother*>( _Fsolve );
-    //     temp->SetType( HypreSmoother::Type::Chebyshev, 5 );         // 5 iterations of Chebyshev smoother
-    //     temp->SetPolyOptions( 5, .3 );  // with order 5 polynomial
-
-    //     _Fsolve->SetOperator( *_F );
-
-    //     break;
-
-    //   }
-
-
-      // case 4:{
-      //   _Fsolve = new HypreBoomerAMG();
-      //   _Fsolve->SetOperator( *_F );
-
-      //   HypreBoomerAMG *temp = dynamic_cast<HypreBoomerAMG*>( _Fsolve );
-      //   temp->SetRelTol( _tol );
-      //   temp->SetAbsTol( _tol );
-      //   temp->SetMaxIter( height );
-      //   if ( _verbose ){
-      //     temp->SetPrintLevel(0);
-      //   }
-
-      //   if ( _verbose ){
-      //     temp->SetPrintLevel(0);
-      //   }
-
-      //   break;
-
-      // }
-
-
-    //   default:
-    //     std::cerr<<"SetFSolve: solver type "<<_solveType<<" not recognised."<<std::endl;
-
-    // }
-
   }
 
 }
@@ -526,16 +348,15 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     _Y->SetData(y_data);
   }
 
-  // - broadcast rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
+  // - broadcast IG and rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
   const Vector *glbRhs = _X->GlobalVector();
+  const Vector *glbIG  = _Y->GlobalVector();
 
   // - initialise local vector containing solution at single time-step
   Vector lclSol( spaceDofs );
   for ( int i = 0; i < spaceDofs; ++i ){
-    // TODO: if iterative solvers is set, this acts as initial guesses. Improve it!
-    lclSol.GetData()[i] = 0.0;
+    lclSol.GetData()[i] = glbIG->GetData()[i];
   }
-
 
   // Master performs time-stepping and sends solution to other processors
   if ( _myRank == 0 ){
@@ -543,9 +364,6 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     // - these will contain rhs for each time-step
     Vector b( spaceDofs );
     b = 0.;
-    // for ( int i = 0; i < spaceDofs; ++i ){
-    //   b.GetData()[i] = 0.0;
-    // }
 
 
     // Main time-stepping routine
@@ -558,9 +376,12 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
 
 
       // - solve for current time-step
-      //  - notice that this way, if an iterative solver is set, the initial
-      //     guess for the next time step is automatically set as the solution
-      //     to the previous one!
+      //  --if an iterative solver is set, lclSol acts as an initial guess
+      //  --if no changes are made to lclSol, it simply picks the solution at
+      //     the previous time-step
+      //  --here we copy from the IG of the global system for the dirichlet
+      //     nodes in the velocity solution
+      lclSol.SetSubVector( _essVhTDOF, &( glbIG->GetData()[spaceDofs * t] ) );
       _Fsolve->Mult( b, lclSol );
 
       if (_verbose ){
@@ -573,16 +394,6 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
           std::cout<<t<<std::endl;
         }
 
-        // // print extra info if solver is iterative (not the best programming practice)
-        // if (_solveType == 0){
-        //   const IterativeSolver *temp = dynamic_cast<const IterativeSolver*>( _Fsolve );
-        //   if (temp->GetConverged()){
-        //     std::cout <<": Solver converged in "         << temp->GetNumIterations();
-        //   }else{
-        //     std::cout <<": Solver did not converge in "  << temp->GetNumIterations();
-        //   }
-        //   std::cout << " iterations. Residual norm is " << temp->GetFinalNorm() << ".\n";
-        // }
       }
 
 
@@ -602,6 +413,7 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
       if( t < _numProcs-1 ){
         _M->Mult( lclSol, b );
         b.Neg();    //M has negative sign for velocity, so flip it
+        b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
       }
 
     }
@@ -636,17 +448,16 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
 //******************************************************************************
 // These functions are useful for assembling all the necessary space-time operators
 
-StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, const char* meshName, const int refLvl,
+StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName, const int refLvl,
                                                       const int ordU, const int ordP, const double dt, const double mu,
                                                       void(  *f)(const Vector &, double, Vector &),
+                                                      double(*g)(const Vector &, double ),
                                                       void(  *n)(const Vector &, double, Vector &),
 		                         							            void(  *u)(const Vector &, double, Vector &),
 		                         							            double(*p)(const Vector &, double ),
                                                       bool verbose ):
-	_comm(comm), _dt(dt), _mu(mu), _fFunc(f), _nFunc(n), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
+	_comm(comm), _dt(dt), _mu(mu), _fFunc(f), _gFunc(g), _nFunc(n), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
   _MuAssembled(false), _FuAssembled(false), _MpAssembled(false), _ApAssembled(false), _BAssembled(false),
-  _pSchur( comm, dt, mu, NULL, NULL, verbose ),
-  _FFinv( comm, NULL, NULL, verbose ),
   _FFAssembled(false), _BBAssembled(false), _pSAssembled(false), _FFinvAssembled(false),
   _verbose(verbose){
 
@@ -655,7 +466,7 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
 
 	// For each processor:
 	//- generate mesh
-	_mesh = new Mesh( meshName, 1, 1 );
+	_mesh = new Mesh( meshName.c_str(), 1, 1 );
   
   for (int i = 0; i < refLvl; i++)
     _mesh->UniformRefinement();
@@ -674,12 +485,31 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
   _VhFESpace = new FiniteElementSpace( _mesh, _VhFEColl, _dim );
   _QhFESpace = new FiniteElementSpace( _mesh, _QhFEColl );
 
-   if (_myRank == 0 ){
-      std::cout << "***********************************************************\n";
-      std::cout << "dim(Vh) = " << _VhFESpace->GetTrueVSize() << "\n";
-      std::cout << "dim(Qh) = " << _QhFESpace->GetTrueVSize() << "\n";
-      std::cout << "***********************************************************\n";
-   }
+  if ( _mesh->bdr_attributes.Size() > 0 ) {
+    Array<int> essBdrV( _mesh->bdr_attributes.Max() ), essBdrQ( _mesh->bdr_attributes.Max() );
+    essBdrV = 0; essBdrQ = 0;
+    for ( int i = 0; i < _mesh->bdr_attributes.Max(); ++i ){
+      if( _mesh->bdr_attributes[i] == 1 )
+        essBdrV[i] = 1;
+      if( _mesh->bdr_attributes[i] == 2 )
+        essBdrQ[i] = 1;
+    }
+
+    _VhFESpace->GetEssentialTrueDofs( essBdrV, _essVhTDOF );
+    _QhFESpace->GetEssentialTrueDofs( essBdrQ, _essQhTDOF );
+  }
+
+
+  _pSchur = new StokesSTPreconditioner( comm, dt, mu, NULL, NULL, _essQhTDOF, verbose );
+  _FFinv  = new SpaceTimeSolver(        comm,         NULL, NULL, _essVhTDOF, verbose );
+
+
+  if (_myRank == 0 ){
+    std::cout << "***********************************************************\n";
+    std::cout << "dim(Vh) = " << _VhFESpace->GetTrueVSize() << "\n";
+    std::cout << "dim(Qh) = " << _QhFESpace->GetTrueVSize() << "\n";
+    std::cout << "***********************************************************\n";
+  }
 
 }
 
@@ -693,41 +523,37 @@ void StokesSTOperatorAssembler::AssembleFu( ){
     return;
   }
 
-#ifdef SCALE_BY_DT
-  BilinearForm *fVarf( new BilinearForm(_VhFESpace) );
+  _fuVarf =  new BilinearForm(_VhFESpace);
+
+#ifdef MULT_BY_DT
   ConstantCoefficient muDt( _mu*_dt );
   ConstantCoefficient one( 1.0 );
-	fVarf->AddDomainIntegrator(new VectorMassIntegrator( one ));
-	fVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( muDt ));
+	_fuVarf->AddDomainIntegrator(new VectorMassIntegrator( one ));
+	_fuVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( muDt ));
 #else
-  BilinearForm *fVarf( new BilinearForm(_VhFESpace) );
   ConstantCoefficient mu( _mu );
   ConstantCoefficient dtinv( 1./_dt );
-  fVarf->AddDomainIntegrator(new VectorMassIntegrator( dtinv ));
-  fVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( mu ));
+  _fuVarf->AddDomainIntegrator(new VectorMassIntegrator( dtinv ));
+  _fuVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( mu ));
 #endif
 
-  fVarf->Assemble();
-  fVarf->Finalize();
+  _fuVarf->Assemble();
+  _fuVarf->Finalize();
   
-  // // TODO: extract boundary tagged to "1" and impose dirichlet there...but forget about this for now
-  // Array<int> essVhTDOF;
-  // if ( _mesh->bdr_attributes.Size() ) {
-  //   Array<int> ess_bdr( _mesh->bdr_attributes.Max() );
-  //   ess_bdr = 1;
-  //   _VhFESpace->GetEssentialTrueDofs( ess_bdr, essVhTDOF );
-  // }
-  // fVarf->FormSystemMatrix( essVhTDOF, _Fu );
 
-  // - once the matrix is generated, we can get rid of the operator
-  _Fu = fVarf->SpMat();
-  _Fu.SetGraphOwner(true);
-  _Fu.SetDataOwner(true);
-  fVarf->LoseMat();
-  delete fVarf;
+
+  _fuVarf->FormSystemMatrix( _essVhTDOF, _Fu );
+
 
   _FuAssembled = true;
 
+
+  // - once the matrix is generated, we can get rid of the operator
+  // _Fu = fVarf->SpMat();
+  // _Fu.SetGraphOwner(true);
+  // _Fu.SetDataOwner(true);
+  // fVarf->LoseMat();
+  // delete fVarf;
 
   if(_verbose ){
     // for ( int rank = 0; rank < _numProcs; ++rank ){
@@ -757,7 +583,7 @@ void StokesSTOperatorAssembler::AssembleMu( ){
   }
 
 	BilinearForm *mVarf( new BilinearForm(_VhFESpace) );
-#ifdef SCALE_BY_DT
+#ifdef MULT_BY_DT
   ConstantCoefficient mone( -1.0 );
   mVarf->AddDomainIntegrator(new VectorMassIntegrator( mone ));
 #else
@@ -766,15 +592,6 @@ void StokesSTOperatorAssembler::AssembleMu( ){
 #endif
   mVarf->Assemble();
   mVarf->Finalize();
-
-  // // TODO: extract boundary tagged to "1" and impose dirichlet there...but forget about this for now
-  // Array<int> essVhTDOF;
-  // if ( _mesh->bdr_attributes.Size() ) {
-  //   Array<int> ess_bdr( _mesh->bdr_attributes.Max() );
-  //   ess_bdr = 1;
-  //   _VhFESpace->GetEssentialTrueDofs( ess_bdr, essVhTDOF );
-  // }
-  // mVarf->FormSystemMatrix( essVhTDOF, _Mu );
 
   // - once the matrix is generated, we can get rid of the operator
   _Mu = mVarf->SpMat();
@@ -806,49 +623,41 @@ void StokesSTOperatorAssembler::AssembleMu( ){
 
 // Assemble -divergence operator:
 //  B = -dt * div
-void StokesSTOperatorAssembler::AssembleB( ){
+// TODO: it really bothers me that I cannot just use FormRectangularSystemMatrix here
+//  to recover the actual SparseMatrix representing B, and then reuse FormRectangularLinearSystem
+//  to include BC / initialise the system properly. It seems to work for Fu, but here it throws
+//  weird errors.
+void StokesSTOperatorAssembler::AssembleBvarf( ){
 
   if( _BAssembled ){
     return;
   }
 
-	MixedBilinearForm *bVarf(new MixedBilinearForm( _VhFESpace, _QhFESpace ));
+	_bVarf = new MixedBilinearForm( _VhFESpace, _QhFESpace );
 
-#ifdef SCALE_BY_DT  
+#ifdef MULT_BY_DT  
   ConstantCoefficient minusDt( -_dt );
-  bVarf->AddDomainIntegrator(new VectorDivergenceIntegrator(minusDt) );
+  _bVarf->AddDomainIntegrator(new VectorDivergenceIntegrator(minusDt) );
 #else
   ConstantCoefficient mone( -1.0 );
-  bVarf->AddDomainIntegrator(new VectorDivergenceIntegrator(mone) );
+  _bVarf->AddDomainIntegrator(new VectorDivergenceIntegrator(mone) );
 #endif
 
-  bVarf->Assemble();
-  bVarf->Finalize();
+  _bVarf->Assemble();
+  _bVarf->Finalize();
 
-  // TODO: extract boundary tagged to "1" and impose dirichlet there...?
-  // Array<int> essVhTDOF;
-  // Array<int> essQhTDOF;
-  // if ( _mesh->bdr_attributes.Size() ) {
-  //   Array<int> ess_bdr( _mesh->bdr_attributes.Max() );
-  //   ess_bdr = 1;
-  //   _VhFESpace->GetEssentialTrueDofs( ess_bdr, essVhTDOF );
-  //   _QhFESpace->GetEssentialTrueDofs( ess_bdr, essQhTDOF );
-  // }
-  // bVarf->FormRectangularSystemMatrix( essQhTDOF, essVhTDOF, _B );	//TODO: imposing essential nodes causes memory corruption??
 
-	// - once the matrix is generated, we can get rid of the operator
-  _B = bVarf->SpMat();
-  _B.SetGraphOwner(true);
-  _B.SetDataOwner(true);
-  bVarf->LoseMat();
-  delete bVarf;
-
-  _BAssembled = true;
+	// // - once the matrix is generated, we can get rid of the operator
+ //  _B = bVarf->SpMat();
+ //  _B.SetGraphOwner(true);
+ //  _B.SetDataOwner(true);
+ //  bVarf->LoseMat();
+ //  delete bVarf;
 
   if(_verbose ){
     // for ( int rank = 0; rank < _numProcs; ++rank ){
     //   if ( rank==_myRank ){        
-    std::cout<<"Rank "<<_myRank<<" - Divergence operator B assembled"<<std::endl;
+    std::cout<<"Rank "<<_myRank<<" - Bilinear for for -divergence operator B assembled"<<std::endl;
       //   for ( int i = 0; i < _B.NumRows(); ++i ){
       //     std::cout<<"Row "<<i<<" - Cols: ";
       //     for ( int j = _B.GetI()[i]; j < _B.GetI()[i+1]; ++j ){
@@ -957,6 +766,7 @@ void StokesSTOperatorAssembler::AssembleMp( ){
 
 
 
+// <<  Deprecated >>>
 // Solve Space-time system for velocity via SEQUENTIAL time-stepping
 void StokesSTOperatorAssembler::TimeStepVelocity( const HypreParVector& rhs, HypreParVector*& sol ){
 
@@ -968,6 +778,7 @@ void StokesSTOperatorAssembler::TimeStepVelocity( const HypreParVector& rhs, Hyp
 
 
 
+// <<  Deprecated >>>
 // Solve Space-time system for pressure via SEQUENTIAL time-stepping
 void StokesSTOperatorAssembler::TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol ){
 
@@ -976,7 +787,7 @@ void StokesSTOperatorAssembler::TimeStepPressure( const HypreParVector& rhs, Hyp
 
   SparseMatrix Fp = _Ap;
 
-#ifdef SCALE_BY_DT
+#ifdef MULT_BY_DT
   Fp *= _mu * _dt;
   Fp.Add( 1.0, _Mp );     // TODO: check that Mp falls into the sparsity pattern of A
   SparseMatrix Mp = _Mp;
@@ -994,7 +805,7 @@ void StokesSTOperatorAssembler::TimeStepPressure( const HypreParVector& rhs, Hyp
 
 
 
-
+// <<  Deprecated >>>
 // Actual Time-stepper. Reuses code for both pressure and velocity solve
 void StokesSTOperatorAssembler::TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol ){
 
@@ -1154,6 +965,12 @@ void StokesSTOperatorAssembler::AssembleFF( ){
   HYPRE_IJMatrixAssemble( _FF );
   _FFAssembled = true;
 
+
+  if(_verbose ){
+    std::cout<<"Rank "<<_myRank<<" - Space-time velocity operator FF assembled"<<std::endl;
+    MPI_Barrier(_comm);
+  }  
+
 }
 
 
@@ -1174,8 +991,12 @@ void StokesSTOperatorAssembler::AssembleBB( ){
     return;
   }
 
+  if(!_BAssembled){
+    std::cerr<<"Divergence operator matrix not initialised"<<std::endl;
+    return;
+  }
   // For each processor, define -div operator
-  AssembleB();
+  // AssembleB();
 
 
   // Assemble BB and BB^T blocks
@@ -1216,6 +1037,11 @@ void StokesSTOperatorAssembler::AssembleBB( ){
   HYPRE_IJMatrixAssemble( _BB );
   _BBAssembled = true;
 
+  if(_verbose ){
+    std::cout<<"Rank "<<_myRank<<" - Space-time divergence operator BB assembled"<<std::endl;
+    MPI_Barrier(_comm);
+  }  
+
 }
 
 
@@ -1238,8 +1064,13 @@ void StokesSTOperatorAssembler::AssemblePS(){
   AssembleAp();
   AssembleMp();
 
-  _pSchur.SetAp( &_Ap );
-  _pSchur.SetMp( &_Mp );
+  _pSchur->SetAp( &_Ap );
+  _pSchur->SetMp( &_Mp );
+
+  if(_verbose ){
+    std::cout<<"Rank "<<_myRank<<" - Approximate space-time pressure Schur complement XX assembled"<<std::endl;
+    MPI_Barrier(_comm);
+  }  
 
 }
 
@@ -1255,8 +1086,208 @@ void StokesSTOperatorAssembler::AssembleFFinv(){
   AssembleFu();
   AssembleMu();
 
-  _FFinv.SetF( &_Fu );
-  _FFinv.SetM( &_Mu );
+  _FFinv->SetF( &_Fu );
+  _FFinv->SetM( &_Mu );
+
+  if(_verbose ){
+    std::cout<<"Rank "<<_myRank<<" - (Approximate) inverse of space-time velocity operator FF^-1 assembled"<<std::endl;
+    MPI_Barrier(_comm);
+  }  
+
+}
+
+
+
+
+// Assembles space-time Stokes block system
+//   Ax = b <-> ⌈ FF  BB^T ⌉⌈u⌉_⌈f⌉
+//              ⌊ BB  0    ⌋⌊p⌋‾⌊g⌋,
+// where:
+//  - FF contains space-time matrix for velocity,
+//  - BB is block-diagonal with -div operator in it
+//  - f  is the velocity rhs
+//  - g  is the pressure rhs
+// Function also provides suitable initial guess for system (initialised with dirichlet BC)
+void StokesSTOperatorAssembler::AssembleSystem( HypreParMatrix*& FFF,  HypreParMatrix*& BBB,
+                                                HypreParVector*& frhs, HypreParVector*& grhs,
+                                                HypreParVector*& IGu,  HypreParVector*& IGp ){
+
+  // ASSEMBLE RHS -----------------------------------------------------------
+  // Initialise handy functions for rhs
+  VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
+  VectorFunctionCoefficient fFuncCoeff( _dim, _fFunc );
+  VectorFunctionCoefficient nFuncCoeff( _dim, _nFunc );
+  FunctionCoefficient       pFuncCoeff( _pFunc );
+  FunctionCoefficient       gFuncCoeff( _gFunc );
+  // - specify evaluation time
+  uFuncCoeff.SetTime( _dt*(_myRank+1) );
+  fFuncCoeff.SetTime( _dt*(_myRank+1) );
+  nFuncCoeff.SetTime( _dt*(_myRank+1) );
+  pFuncCoeff.SetTime( _dt*(_myRank+1) );
+  gFuncCoeff.SetTime( _dt*(_myRank+1) );
+
+  // Assemble local part of rhs
+  // - for velocity
+  LinearForm *fform( new LinearForm );
+  fform->Update( _VhFESpace );
+  fform->AddDomainIntegrator(   new VectorDomainLFIntegrator(       fFuncCoeff       ) );  //int_\Omega f*v
+  fform->AddBoundaryIntegrator( new VectorBoundaryLFIntegrator(     nFuncCoeff       ) );  //int_d\Omega \mu * du/dn *v
+  fform->AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator( pFuncCoeff, -1.0 ) );  //int_d\Omega -p*v*n
+
+  fform->Assemble();
+
+#ifdef MULT_BY_DT
+  fform->operator*=( _dt );
+#endif
+
+  // - include initial conditions
+  if( _myRank == 0 ){
+    uFuncCoeff.SetTime( 0.0 );
+    LinearForm *u0form( new LinearForm );
+    u0form->Update( _VhFESpace );
+    u0form->AddDomainIntegrator( new VectorDomainLFIntegrator( uFuncCoeff ) );  //int_\Omega u0*v
+    u0form->Assemble();
+
+#ifndef MULT_BY_DT
+    u0form->operator*=(1./_dt);
+#endif
+    fform->operator+=( *u0form );
+
+    // remember to reset function evaluation for u to the current time
+    uFuncCoeff.SetTime( _dt*(_myRank+1) );
+
+
+    delete u0form;
+
+    if(_verbose){
+      std::cout<<"Initial condition included "<<std::endl;
+    }
+  }
+
+
+
+  // - for pressure
+  LinearForm *gform( new LinearForm );
+  gform->Update( _QhFESpace );
+  gform->AddDomainIntegrator( new DomainLFIntegrator( gFuncCoeff ) );  //int_\Omega g*q
+  gform->Assemble();
+
+#ifdef MULT_BY_DT
+  gform->operator*=( _dt );
+#endif
+
+
+
+
+  // - adjust rhs to take dirichlet BC into account
+  // -- initialise relevant bilinear forms
+  AssembleFu();
+  AssembleBvarf();
+
+
+
+  // if ( _myRank == 0 ){        
+  //   std::cout<<"Rank "<<_myRank<<" - Space-operator matrix Fu assembled"<<std::endl;
+  //   for ( int i = 0; i < _Fu.NumRows(); ++i ){
+  //     std::cout<<"Row "<<i<<" - Cols: ";
+  //     for ( int j = _Fu.GetI()[i]; j < _Fu.GetI()[i+1]; ++j ){
+  //         std::cout<<_Fu.GetJ()[j]<<": "<< _Fu.GetData()[j]<<" - ";
+  //     }
+  //     std::cout<<std::endl;
+  //   }
+  // }
+
+
+  // -- initialise function with BC
+  GridFunction uBC(_VhFESpace), pBC(_QhFESpace);
+  uBC.ProjectCoefficient(uFuncCoeff);
+  pBC.ProjectCoefficient(pFuncCoeff);
+  // -- initialise local rhs
+  Vector fRhsLoc(  fform->Size() );
+  Vector gRhsLoc(  gform->Size() );
+  // -- initialise local initial guess to exact solution
+  Vector iguLoc( uBC ), igpLoc( pBC );
+  iguLoc.SetSubVectorComplement( _essVhTDOF, 0.0); // set to zero on interior (non-essential) nodes
+  igpLoc.SetSubVectorComplement( _essQhTDOF, 0.0);
+
+
+
+  // ASSEMBLE LOCAL LINEAR SYSTEMS ------------------------------------------
+  _fuVarf->FormLinearSystem(           _essVhTDOF,             uBC, *fform, _Fu, iguLoc, fRhsLoc );
+  _bVarf->FormRectangularLinearSystem( _essVhTDOF, _essQhTDOF, uBC, *gform, _B,  iguLoc, gRhsLoc );
+
+
+  _FuAssembled = true;
+  _BAssembled  = true;
+
+
+
+
+
+  if(_verbose ){
+    // for ( int rank = 0; rank < _numProcs; ++rank ){
+      // if ( rank==_myRank ){        
+    std::cout<<"Rank "<<_myRank<<" - RHS assembled: "<<std::endl;
+        // std::cout<<"\t\tf,\t\tn,\t\t-p:"<<std::endl;
+        // for ( int i = 0; i < fform->Size(); ++i ){
+        //   std::cout<<"Row: "<<i<<",\t\t"<<fform->GetData()[i]<<",\t\t"<<nform->GetData()[i]<<",\t\t"<<pform->GetData()[i]<<std::endl;
+        // }
+      // }
+    MPI_Barrier(_comm);
+    // } 
+  }
+
+
+
+
+
+  // ASSEMBLE GLOBAL (PARALLEL) RHS -----------------------------------------
+  // - for velocity
+  int colPartV[2] = {_myRank*fRhsLoc.Size(), (_myRank+1)*fRhsLoc.Size()};
+  frhs = new HypreParVector( _comm, fRhsLoc.Size()*_numProcs, fRhsLoc.StealData(), colPartV );
+  frhs->SetOwnership( 1 );
+
+  // - for pressure
+  int colPartP[2] = {_myRank*gRhsLoc.Size(), (_myRank+1)*gRhsLoc.Size()};
+  grhs = new HypreParVector( _comm, gRhsLoc.Size()*_numProcs, gRhsLoc.StealData(), colPartP );
+  grhs->SetOwnership( 1 );
+
+
+
+
+
+  // ASSEMBLE INITIAL GUESS -------------------------------------------------
+  // Assemble global vectors
+  IGu = new HypreParVector( _comm, iguLoc.Size()*_numProcs, iguLoc.StealData(), colPartV );
+  IGp = new HypreParVector( _comm, igpLoc.Size()*_numProcs, igpLoc.StealData(), colPartP );
+  IGu->SetOwnership( 1 );
+  IGp->SetOwnership( 1 );
+
+
+
+
+
+
+  // ASSEMBLE OPERATOR ------------------------------------------------------
+  //Assemble top-left block
+  AssembleFF();
+
+  // - convert to mfem operator
+  HYPRE_ParCSRMatrix  FFref;
+  HYPRE_IJMatrixGetObject( _FF, (void **) &FFref);
+  FFF = new HypreParMatrix( FFref, false ); //"false" doesn't take ownership of data
+
+
+
+  //Assemble bottom-left block
+  AssembleBB();
+
+  // - convert to mfem operator
+  HYPRE_ParCSRMatrix  BBref;
+  HYPRE_IJMatrixGetObject( _BB, (void **) &BBref);
+  BBB = new HypreParMatrix( BBref, false ); //"false" doesn't takes ownership of data
+
+
 
 }
 
@@ -1271,27 +1302,32 @@ void StokesSTOperatorAssembler::AssembleFFinv(){
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
 void StokesSTOperatorAssembler::AssembleRhs( HypreParVector*& frhs ){
   // Initialise handy functions
   VectorFunctionCoefficient fFuncCoeff(_dim,_fFunc);
   VectorFunctionCoefficient nFuncCoeff(_dim,_nFunc);
   FunctionCoefficient       pFuncCoeff(_pFunc);
+  FunctionCoefficient       gFuncCoeff(_gFunc);
   // - specify evaluation time
   fFuncCoeff.SetTime( _dt*(_myRank+1) );
   nFuncCoeff.SetTime( _dt*(_myRank+1) );
   pFuncCoeff.SetTime( _dt*(_myRank+1) );
+  gFuncCoeff.SetTime( _dt*(_myRank+1) );
 
-  // Assemble local part of rhs
-  // LinearForm *fform( new LinearForm );
-  // fform->Update( _VhFESpace );
-  // fform->AddDomainIntegrator(   new VectorDomainLFIntegrator(       fFuncCoeff       ) );  //int_\Omega f*v
-  // fform->AddBoundaryIntegrator( new VectorBoundaryLFIntegrator(     nFuncCoeff       ) );  //int_d\Omega \mu * du/dn *v
-  // fform->AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator( pFuncCoeff, -1.0 ) );  //int_d\Omega -p*v*n
-  // fform->Assemble();
-  // Vector fRhsLoc( fform->Size() );
-  // fRhsLoc.SetData( fform->StealData() );
-  // fRhsLoc *= _dt;
-  // delete fform;     // once data is stolen, we can delete the linear form
   // Assemble local part of rhs
   LinearForm *fform( new LinearForm ), *nform( new LinearForm ), *pform( new LinearForm );
   fform->Update( _VhFESpace ); nform->Update( _VhFESpace ); pform->Update( _VhFESpace );
@@ -1317,7 +1353,7 @@ void StokesSTOperatorAssembler::AssembleRhs( HypreParVector*& frhs ){
   fRhsLoc += *nform;
   fRhsLoc += *pform;
 
-#ifdef SCALE_BY_DT
+#ifdef MULT_BY_DT
   fRhsLoc *= _dt;
 #endif
 
@@ -1335,7 +1371,7 @@ void StokesSTOperatorAssembler::AssembleRhs( HypreParVector*& frhs ){
     u0form->AddDomainIntegrator( new VectorDomainLFIntegrator( uFuncCoeff ) ); //int_\Omega u0*v
     u0form->Assemble();
 
-#ifdef SCALE_BY_DT
+#ifdef MULT_BY_DT
     fRhsLoc += *u0form;
 #else
     Vector temp = *u0form;
@@ -1371,12 +1407,6 @@ void StokesSTOperatorAssembler::AssembleRhs( HypreParVector*& frhs ){
 
 
 
-
-
-
-
-
-
 // Assemble space-time Stokes operator
 //   A = [ FF  BB^T ]
 //       [ BB  0    ],
@@ -1403,7 +1433,7 @@ void StokesSTOperatorAssembler::AssembleOperator( HypreParMatrix*& FFF, HyprePar
   BBB = new HypreParMatrix( BBref, false ); //"false" doesn't takes ownership of data
 
 }
-
+*/
 
 
 
@@ -1427,8 +1457,8 @@ void StokesSTOperatorAssembler::AssemblePreconditioner( Operator*& FFi, Operator
   AssembleFFinv( );
   AssemblePS( );
 
-  FFi = &_FFinv;
-  XXi = &_pSchur;
+  FFi = _FFinv;
+  XXi = _pSchur;
 
 }
 
@@ -1438,7 +1468,7 @@ void StokesSTOperatorAssembler::AssemblePreconditioner( Operator*& FFi, Operator
 
 
 
-
+//<< deprecated >>
 void StokesSTOperatorAssembler::ApplySTOperatorVelocity( const HypreParVector*& u, HypreParVector*& res ){
   // Initialise handy functions
   const int     lclSize = u->Size();
@@ -1723,6 +1753,10 @@ void StokesSTOperatorAssembler::PrintMatrices( const std::string& filename ) con
 
 
 StokesSTOperatorAssembler::~StokesSTOperatorAssembler(){
+  delete _pSchur;
+  delete _FFinv;
+  delete _fuVarf;
+  delete _bVarf;
   delete _VhFESpace;
   delete _QhFESpace;
   delete _VhFEColl;

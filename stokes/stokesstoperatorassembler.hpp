@@ -27,7 +27,9 @@ private:
 	// solvers for relevant operator (with corresponding preconditioner, if iterative)
   PetscLinearSolver *_Fsolve;
 
-  
+  // dofs for velocity (useful not to dirty dirichlet BC in the solution procedure)
+ 	const Array<int> _essVhTDOF;
+
   mutable HypreParVector* _X;
   mutable HypreParVector* _Y;
 
@@ -36,7 +38,8 @@ private:
 
 public:
 
-	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL, bool verbose=false);
+	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
+		               const Array<int>& essVhTDOF=Array<int>(), bool verbose=false);
 
   void Mult( const Vector& x, Vector& y ) const;
 
@@ -76,6 +79,9 @@ private:
   PetscLinearSolver *_Asolve;
   PetscLinearSolver *_Msolve;
 
+  // dofs for pressure (useful not to dirty dirichlet BC in the solution procedure)
+	const Array<int> _essQhTDOF;
+
 	const bool _verbose;
 
 
@@ -83,6 +89,7 @@ public:
 
 	StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
 		                      const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL,
+		                      const Array<int>& essQhTDOF = Array<int>(),
 		                      bool verbose = false );
 	~StokesSTPreconditioner();
 
@@ -130,7 +137,8 @@ private:
 	const double _dt; 	//time step (constant)
 	const double _mu;		//viscosity
   int _dim;						//domain dimension (R^d)
-	void(  *_fFunc)( const Vector &, double, Vector & );	// function returning forcing term (time-dep)
+	void(  *_fFunc)( const Vector &, double, Vector & );	// function returning forcing term for velocity (time-dep)
+	double(*_gFunc)( const Vector &, double )          ;  // function returning forcing term for pressure (time-dep)
 	void(  *_nFunc)( const Vector &, double, Vector & );  // function returning mu * du/dn (time-dep, used to implement BC)
 	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
 	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC, and compute error)
@@ -145,9 +153,13 @@ private:
   const int _ordU;
   const int _ordP;
 
+	Array<int> _essVhTDOF;
+	Array<int> _essQhTDOF;
 
-  // relevant matrices
+  // relevant operators and corresponding matrices
   // - blocks for single time-steps
+  BilinearForm      *_fuVarf;
+  MixedBilinearForm *_bVarf;
   SparseMatrix _Mu;
   SparseMatrix _Fu;
   SparseMatrix _Mp;
@@ -162,8 +174,8 @@ private:
   // - space-time blocks
   HYPRE_IJMatrix _FF;								// Space-time velocity block
   HYPRE_IJMatrix _BB;								// space-time -div block
-  StokesSTPreconditioner _pSchur;   // Approximation to space-time pressure Schur complement
-  SpaceTimeSolver        _FFinv;    // Space-time velocity block solver
+  StokesSTPreconditioner *_pSchur;  // Approximation to space-time pressure Schur complement
+  SpaceTimeSolver        *_FFinv;   // Space-time velocity block solver
   bool _FFAssembled;
   bool _BBAssembled;
 	bool _pSAssembled;
@@ -180,9 +192,10 @@ private:
 
 
 public:
-	StokesSTOperatorAssembler( const MPI_Comm& comm, const char *meshName, const int refLvl,
+	StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string &meshName, const int refLvl,
 		                         const int ordU, const int ordP, const double dt, const double mu,
 		                         void(  *f)(const Vector &, double, Vector &),
+		                         double(*g)(const Vector &, double ),
 		                         void(  *n)(const Vector &, double, Vector &),
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
@@ -190,11 +203,14 @@ public:
 	~StokesSTOperatorAssembler();
 
 
-	void AssembleOperator( HypreParMatrix*& FFF, HypreParMatrix*& BBB );
+	// void AssembleOperator( HypreParMatrix*& FFF, HypreParMatrix*& BBB );
 
+	void AssembleSystem( HypreParMatrix*& FFF,  HypreParMatrix*& BBB,
+		                   HypreParVector*& frhs, HypreParVector*& grhs,
+		                   HypreParVector*& IGu,  HypreParVector*& IGp  );
 	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX );
 
-	void AssembleRhs( HypreParVector*& frhs );
+	// void AssembleRhs( HypreParVector*& frhs, HypreParVector*& grhs );
 
 	void ApplySTOperatorVelocity( const HypreParVector*& u, HypreParVector*& res );
 
@@ -216,7 +232,7 @@ private:
 	void AssembleMu();
 	void AssembleAp();
 	void AssembleMp();
-	void AssembleB();
+	void AssembleBvarf();
 
 	// assemble blocks for whole Space-time operators 
 	void AssembleFF();
