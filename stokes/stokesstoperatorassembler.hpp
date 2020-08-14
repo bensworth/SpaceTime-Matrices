@@ -13,7 +13,7 @@ using namespace mfem;
 
 
 // "Inverse" of space-time matrix
-class SpaceTimeSolver: public Operator{
+class SpaceTimeSolver: public Solver{
 
 private:
 	const MPI_Comm _comm;
@@ -35,6 +35,8 @@ private:
 
 	const bool _verbose;
 
+	mutable int _nCalls;			// count number of calls to solver - shouldn't be used
+
 
 public:
 
@@ -48,8 +50,16 @@ public:
 
 	~SpaceTimeSolver();
 
+// to ensure implementation of Solver interface
+  inline void SetOperator(const Operator &op){
+  	std::cerr<<"SpaceTimeSolver::SetOperator( op ): You shouldn't invoke this function"<<std::endl;
+  };
+
+
 private:
 	void SetFSolve();
+
+   
 
 
 }; //SpaceTimeSolver
@@ -61,7 +71,7 @@ private:
 
 
 // Approximation to pressure Schur complement
-class StokesSTPreconditioner: public Operator{
+class StokesSTPreconditioner: public Solver{
 
 private:
 	const MPI_Comm _comm;
@@ -72,14 +82,16 @@ private:
   double _mu;
 
   // relevant operators
-  const PetscParMatrix *_Ap;
-  const PetscParMatrix *_Mp;
+  const PetscParMatrix *_Ap;	//	pressure "laplacian"
+  const PetscParMatrix *_Mp;	//	pressure mass matrix
+  SparseMatrix          _Wp;	//  spatial part of pressure convection-diffusion operator
+	bool _WpEqualsAp;						//  allows for simplifications if Wp and Ap coincide
 
   // solvers for relevant operators
   PetscLinearSolver *_Asolve;
   PetscLinearSolver *_Msolve;
 
-  // dofs for pressure (useful not to dirty dirichlet BC in the solution procedure)
+  // dofs for pressure (useful not to dirty dirichlet BC in the solution procedure) - TODO: check this
 	const Array<int> _essQhTDOF;
 
 	const bool _verbose;
@@ -88,7 +100,7 @@ private:
 public:
 
 	StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
-		                      const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL,
+		                      const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL, const SparseMatrix* Wp = NULL,
 		                      const Array<int>& essQhTDOF = Array<int>(),
 		                      bool verbose = false );
 	~StokesSTPreconditioner();
@@ -99,6 +111,13 @@ public:
 
   void SetAp( const SparseMatrix* Ap );
   void SetMp( const SparseMatrix* Mp );
+  void SetWp( const SparseMatrix* Wp, bool WpEqualsAp=false );
+
+	// to ensure implementation of Solver interface
+  inline void SetOperator(const Operator &op){
+  	std::cerr<<"StokesSTPreconditioner::SetOperator( op ): You shouldn't invoke this function"<<std::endl;
+  };
+
 
 private:
 	void SetMpSolve();
@@ -159,23 +178,27 @@ private:
   // relevant operators and corresponding matrices
   // - blocks for single time-steps
   BilinearForm      *_fuVarf;
+  BilinearForm      *_muVarf;
   MixedBilinearForm *_bVarf;
   SparseMatrix _Mu;
   SparseMatrix _Fu;
   SparseMatrix _Mp;
   SparseMatrix _Ap;
+  SparseMatrix _Wp;
   SparseMatrix _B;
   bool _MuAssembled;
   bool _FuAssembled;
   bool _MpAssembled;
   bool _ApAssembled;
+  bool _WpAssembled;
   bool _BAssembled;
 
   // - space-time blocks
   HYPRE_IJMatrix _FF;								// Space-time velocity block
+  HypreParMatrix *_FFF;							// Space-time velocity block
   HYPRE_IJMatrix _BB;								// space-time -div block
   StokesSTPreconditioner *_pSchur;  // Approximation to space-time pressure Schur complement
-  SpaceTimeSolver        *_FFinv;   // Space-time velocity block solver
+  Solver                  *_FFinv;  // Space-time velocity block solver
   bool _FFAssembled;
   bool _BBAssembled;
 	bool _pSAssembled;
@@ -208,7 +231,7 @@ public:
 	void AssembleSystem( HypreParMatrix*& FFF,  HypreParMatrix*& BBB,
 		                   HypreParVector*& frhs, HypreParVector*& grhs,
 		                   HypreParVector*& IGu,  HypreParVector*& IGp  );
-	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX );
+	void AssemblePreconditioner( Operator*& Finv, Operator*& XXX, const int spaceTimeSolverType );
 
 	// void AssembleRhs( HypreParVector*& frhs, HypreParVector*& grhs );
 
@@ -228,18 +251,21 @@ public:
 
 private:
 	// assemble blocks for single time-step 
-	void AssembleFu();
-	void AssembleMu();
+	void AssembleFuVarf();
+	void AssembleMuVarf();
+	void AssembleBVarf();
 	void AssembleAp();
 	void AssembleMp();
-	void AssembleBvarf();
+	void AssembleWp();
 
 	// assemble blocks for whole Space-time operators 
 	void AssembleFF();
 	void AssembleBB();
 	void AssemblePS();
-	void AssembleFFinv();
+	void AssembleFFinv( const int spaceTimeSolverType );
 
+
+	void SetUpBoomerAMG( HYPRE_Solver& FFinv );
 
 	void TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol );
 

@@ -52,6 +52,12 @@ double pFun_ex_poiseuille( const Vector & x, const double t             );
 void   fFun_poiseuille(    const Vector & x, const double t, Vector & f );
 void   nFun_poiseuille(    const Vector & x, const double t, Vector & f );
 double gFun_poiseuille(    const Vector & x, const double t             );
+void   uFun_ex_poiseuilleC(const Vector & x, const double t, Vector & u );
+double pFun_ex_poiseuilleC(const Vector & x, const double t             );
+void   fFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
+void   nFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
+double gFun_poiseuilleC(   const Vector & x, const double t             );
+
 // - flow over step
 void   uFun_ex_step( const Vector & x, const double t, Vector & u );
 double pFun_ex_step( const Vector & x, const double t             );
@@ -77,6 +83,7 @@ int main(int argc, char *argv[])
   const char *petscrc_file = "rc_SpaceTimeStokes";
   int verbose = 0;
   int precType = 1;
+  int STSolveType = 0;
   int pbType = 1;   
   int outSol = 0;
 
@@ -90,19 +97,20 @@ int main(int argc, char *argv[])
                 "Refinement level.");
   args.AddOption(&Tend, "-T", "--Tend",
                 "Final time.");
-  args.AddOption(&verbose, "-V", "--verbose",
-                "Control how much info to print.");
-  args.AddOption(&precType, "-P", "--preconditioner",
-                "Type of preconditioner: 0-block diagonal, 1-block triangular.");
   args.AddOption(&pbType, "-Pb", "--problem",
                 "Problem: 0-driven cavity flow.");
+  args.AddOption(&precType, "-P", "--preconditioner",
+                "Type of preconditioner: 0-block diagonal, 1-block triangular.");
+  args.AddOption(&STSolveType, "-ST", "--spacetimesolve",
+                "Type of solver for velocity space-time matrix: 0-time stepping, 1-boomerAMG (AIR).");
   args.AddOption(&petscrc_file, "-petscopts", "--petscopts",
                 "PetscOptions file to use.");
+  args.AddOption(&verbose, "-V", "--verbose",
+                "Control how much info to print.");
   args.AddOption(&outSol, "-out", "--outputsol",
                 "Choose to print paraview-friendly file with exact (if available) and recovered solution: 0-no, 1-yes.");
   args.Parse();
-  if(!args.Good())
-  {
+  if(!args.Good()){
     if(myid == 0)
     {
       args.PrintUsage(cout);
@@ -110,9 +118,10 @@ int main(int argc, char *argv[])
     MPI_Finalize();
     return 1;
   }
-  if(myid == 0)
-  {
+  if(myid == 0){
     args.PrintOptions(cout);
+    std::cout<<"   --np "<<numProcs<<std::endl;
+    std::cout<<"   --dt "<<Tend/numProcs<<std::endl;
   }
 
   // -initialise remaining parameters
@@ -149,12 +158,15 @@ int main(int argc, char *argv[])
     }
     case 2:{
       mesh_file = "./meshes/tri-rectangle-poiseuille.mesh";
+      // mesh_file = "./meshes/tri-square-poiseuille.mesh";
       fFun    = &fFun_poiseuille;
       gFun    = &gFun_poiseuille;
       nFun    = &nFun_poiseuille;
       uFun_ex = &uFun_ex_poiseuille;
       pFun_ex = &pFun_ex_poiseuille;
-      std::cerr<<"Poiseuille flow still to implement."<<std::endl;
+      // if ( myid==0 ){
+      //   std::cerr<<"Remember to change mesh back to tri-rectangle-poiseuille, and poiseuille func to the non-C version."<<std::endl;
+      // }
       break;
     }
     case 3:{
@@ -176,7 +188,6 @@ int main(int argc, char *argv[])
 
 
 
-
   // ASSEMBLE OPERATORS -----------------------------------------------------
 
   // Assembles block matrices composing the system
@@ -188,7 +199,10 @@ int main(int argc, char *argv[])
   HypreParVector  *frhs, *grhs, *uEx, *pEx, *U0, *P0;
   stokesAssembler->AssembleSystem( FFF, BBB, frhs, grhs, U0, P0 );
 
-  stokesAssembler->AssemblePreconditioner( FFi, XXi );
+
+
+
+  stokesAssembler->AssemblePreconditioner( FFi, XXi, STSolveType );
   // stokesAssembler->AssembleRhs( frhs, grhs );
   BBt = BBB->Transpose( );
 
@@ -198,6 +212,7 @@ int main(int argc, char *argv[])
   offsets[1] = FFF->NumRows();
   offsets[2] = BBB->NumRows();
   offsets.PartialSum();
+
 
   BlockVector sol(offsets), rhs(offsets);
   rhs.GetBlock(0) = *frhs;
@@ -217,7 +232,9 @@ int main(int argc, char *argv[])
 
   // Define solver
   PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
-  
+  // TODO: iterative mode triggers use of initial guess: check if it is indeed iterative
+  bool isIterative = true;
+  solver->iterative_mode = isIterative;
 
   // Define preconditioner
   Solver *stokesPr;
@@ -230,13 +247,20 @@ int main(int argc, char *argv[])
   switch(precType){
     case 0:{
       BlockDiagonalPreconditioner *temp = new BlockDiagonalPreconditioner(offsets);
+      temp->iterative_mode = false;
       temp->SetDiagonalBlock( 0, FFi );
       temp->SetDiagonalBlock( 1, XXi );
       stokesPr = temp;
       break;
     }
     case 1:{
+      // BlockLowerTriangularPreconditioner *temp = new BlockLowerTriangularPreconditioner(offsets);
+      // temp->iterative_mode = false;
+      // temp->SetDiagonalBlock( 0, FFi );
+      // temp->SetDiagonalBlock( 1, XXi );
+      // temp->SetBlock( 1, 0, BBB );
       BlockUpperTriangularPreconditioner *temp = new BlockUpperTriangularPreconditioner(offsets);
+      temp->iterative_mode = false;
       temp->SetDiagonalBlock( 0, FFi );
       temp->SetDiagonalBlock( 1, XXi );
       temp->SetBlock( 0, 1, BBt );
@@ -255,14 +279,64 @@ int main(int argc, char *argv[])
 
 
   solver->SetOperator(*stokesOp);
-  solver->SetAbsTol(1e-10);
-  solver->SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
-  solver->SetPrintLevel(1);
+  // solver->SetAbsTol(1e-10);
+  // solver->SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
+  // solver->SetPrintLevel(1);
+
 
 
 
   // SOLVE SYSTEM -----------------------------------------------------------
+  // Vector *glb = U0->GlobalVector();
+  // if ( myid == 0 ){        
+  //   std::cout<<"Initial guess on u:"<<std::endl;
+  //   for ( int i = 0; i < glb->Size(); ++i ){
+  //     std::cout<<glb->GetData()[i]<<" ";
+  //   }
+  //   std::cout<<std::endl;
+  // }
+  // delete glb;
+  // glb = P0->GlobalVector();
+  // if ( myid == 0 ){        
+  //   std::cout<<"Initial guess on p:"<<std::endl;
+  //   for ( int i = 0; i < glb->Size(); ++i ){
+  //     std::cout<<glb->GetData()[i]<<" ";
+  //   }
+  //   std::cout<<std::endl;
+  // }
+  // delete glb;
+  // glb = frhs->GlobalVector();
+  // if ( myid == 0 ){        
+  //   std::cout<<"Global RHS for u:"<<std::endl;
+  //   for ( int i = 0; i < glb->Size(); ++i ){
+  //     std::cout<<glb->GetData()[i]<<" ";
+  //   }
+  //   std::cout<<std::endl;
+  // }
+  // delete glb;
+  // glb = grhs->GlobalVector();
+  // if ( myid == 0 ){        
+  //   std::cout<<"Global RHS for p:"<<std::endl;
+  //   for ( int i = 0; i < glb->Size(); ++i ){
+  //     std::cout<<glb->GetData()[i]<<" ";
+  //   }
+  //   std::cout<<std::endl;
+  // }
+  // delete glb;
+  // MPI_Barrier(MPI_COMM_WORLD);
+
+  // std::string myfilename = std::string("./results/IGu.dat");
+  // U0->Print( myfilename.c_str() );
+  // myfilename = std::string("./results/RHSu.dat");
+  // frhs->Print( myfilename.c_str() );
+  // myfilename = std::string("./results/IGp.dat");
+  // P0->Print( myfilename.c_str() );
+  // myfilename = std::string("./results/RHSp.dat");
+  // grhs->Print( myfilename.c_str() );
+  
+
   solver->Mult(rhs, sol);
+
 
 
   // OUTPUT -----------------------------------------------------------------
@@ -278,7 +352,7 @@ int main(int argc, char *argv[])
     stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
 
     ofstream myfile;
-    string filename = string("./results/convergence_results") + "_Prec" + to_string(precType)
+    string filename = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
                            + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType)
                            + "_" + petscrc_file + ".txt";
     myfile.open( filename, std::ios::app );
@@ -288,6 +362,7 @@ int main(int argc, char *argv[])
     myfile.close();
 
   }
+
 
 
 
@@ -606,6 +681,46 @@ double gFun_cavity(const Vector & x, const double t ){
 
 
 
+// Driven cavity flow (constant speed) --------------------------------------
+// Exact solution (velocity) - only for BC
+void uFun_ex_cavityC(const Vector & x, const double t, Vector & u){
+  double xx(x(0));
+  double yy(x(1));
+  u(0) = 0.0;
+  u(1) = 0.0;
+
+  if( yy==1.0 ){
+    u(0) = 8*xx*(1-xx)*(2.*xx*xx-2.*xx+1.);   // regularised (1-x^4 mapped from -1,1 to 0,1)
+    // u(0) = 1.0;                      // leaky
+    // if( xx > 1.0 && xx < 1.0 )
+    //   u(0) = 1.0;                    // watertight
+  }
+}
+
+// Exact solution (pressure) - unused
+double pFun_ex_cavityC(const Vector & x, const double t ){
+  return 0.0;
+}
+
+// Rhs (velocity) - no forcing
+void fFun_cavityC(const Vector & x, const double t, Vector & f){
+  f(0) = 0.0;
+  f(1) = 0.0;
+}
+
+// Normal derivative of velocity * mu - unused
+void nFun_cavityC(const Vector & x, const double t, Vector & n){
+  n(0) = 0.0;
+  n(1) = 0.0;
+}
+
+// Rhs (pressure) - unused
+double gFun_cavityC(const Vector & x, const double t ){
+  return 0.0;
+}
+
+
+
 
 
 
@@ -620,7 +735,7 @@ void uFun_ex_poiseuille(const Vector & x, const double t, Vector & u){
 // Exact solution (pressure)
 double pFun_ex_poiseuille(const Vector & x, const double t ){
   double xx(x(0));
-  return -8.*t*xx;
+  return -8.*t*(xx-8.);   // pressure is zero at outflow (xx=8)
 }
 
 // Rhs (velocity) - counterbalance dt term
@@ -640,6 +755,46 @@ void nFun_poiseuille(const Vector & x, const double t, Vector & n){
 double gFun_poiseuille(const Vector & x, const double t ){
   return 0.0;
 }
+
+
+
+
+
+// Poiseuille flow (constant speed) ----------------------------------------
+// Exact solution (velocity)
+void uFun_ex_poiseuilleC(const Vector & x, const double t, Vector & u){
+  double yy(x(1));
+  u(0) = 4.*yy*(1.-yy);
+  u(1) = 0.0;
+}
+
+// Exact solution (pressure)
+double pFun_ex_poiseuilleC(const Vector & x, const double t ){
+  double xx(x(0));
+  return -8.*(xx-8.);   // pressure is zero at outflow (xx=8)
+}
+
+// Rhs (velocity) - no source
+void fFun_poiseuilleC(const Vector & x, const double t, Vector & f){
+  f(0) = 0.0;
+  f(1) = 0.0;
+}
+
+// Normal derivative of velocity * mu - used only at outflow
+void nFun_poiseuilleC(const Vector & x, const double t, Vector & n){
+  n(0) = 0.0;
+  n(1) = 0.0;
+}
+
+// Rhs (pressure) - unused
+double gFun_poiseuilleC(const Vector & x, const double t ){
+  return 0.0;
+}
+
+
+
+
+
 
 
 

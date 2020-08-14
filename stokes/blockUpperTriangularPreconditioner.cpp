@@ -82,6 +82,13 @@ void BlockUpperTriangularPreconditioner::Mult (const Vector & x,
    yblock.Update(y.GetData(),offsets);
    xblock.Update(x.GetData(),offsets);
 
+   // int myid;
+   // MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+   // std::cout<<"Inside precon: Rank: "<<myid<< ", rhs for u: "; xblock.GetBlock(0).Print(std::cout, xblock.GetBlock(0).Size());
+   // std::cout<<"Inside precon: Rank: "<<myid<< ", IG  for u: "; yblock.GetBlock(0).Print(std::cout, yblock.GetBlock(0).Size());
+   // std::cout<<"Inside precon: Rank: "<<myid<< ", rhs for p: "; xblock.GetBlock(1).Print(std::cout, xblock.GetBlock(1).Size());
+   // std::cout<<"Inside precon: Rank: "<<myid<< ", IG  for p: "; yblock.GetBlock(1).Print(std::cout, yblock.GetBlock(1).Size());
+
    y = 0.0;
    for (int iRow=nBlocks-1; iRow >=0; --iRow)
    {

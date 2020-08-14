@@ -1,11 +1,13 @@
 # Config for outer solver (for global space-time matrix)
 -solver_ksp_type gmres
--solver_ksp_monitor_true_residual
+#-solver_ksp_monitor_true_residual
+-solver_ksp_monitor_short
 -solver_ksp_rtol   1e-10
 -solver_ksp_atol   1e-10
 -solver_ksp_max_it 200
 -solver_ksp_gmres_restart 100	
--solver_ksp_initial_guess_nonzero
+-solver_ksp_pc_side RIGHT
+-solver_ksp_initial_guess_nonzero TRUE
 
 # Solver for Velocity Block preconditioner
 -VSolver_ksp_type 	richardson
@@ -18,7 +20,6 @@
 -VSolver_pc_hypre_boomeramg_max_iter 1
 -VSolver_pc_hypre_boomeramg_max_levels 8
 -VSolver_pc_hypre_boomeramg_cycle_type W
--VSolver_ksp_initial_guess_nonzero
 
 
 # Solvers for Pressure Block preconditioner
