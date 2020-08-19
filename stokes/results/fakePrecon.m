@@ -14,9 +14,18 @@ f = reshape( b( 1:(nu*NT)     ), [nu,NT] );
 
 % Apply pressure schur complement approximation
 % - solve for pressure "laplacian" at each instant
-invAx = Ap\g;
-% invAx(essIdx,:) = 0.;			% include "dirichlet" BC on pressure
+if isempty(essIdx)					% if empty, then Ap is singular
+	invAx = zeros(size(g));		% so arbitrarily fix the first component to zero
+	invAx(2:end,:) = Ap(2:end,2:end)\g(2:end,:);
+else
+	invAx = Ap\g;
+end
 % - include contribution from spatial operator
+% if isempty(essIdx)					% again, if empty, also modify Wp accordingly
+% 	Wp(1,:) = sparse(1,size(Wp,2));
+% 	Wp(:,1) = sparse(size(Wp,1),1);
+% 	Wp(1,1) = 1;
+% end
 lclx  = mu*dt* Wp * invAx;
 % - solve for pressure mass matrix at each instant
 invMx = Mp\lclx;

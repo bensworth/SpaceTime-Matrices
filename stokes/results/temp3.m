@@ -1,6 +1,6 @@
 close all
-% clear all
-% clc
+clear all
+clc
 
 
 filename = 'out_original_B.dat';
@@ -23,6 +23,11 @@ filename = 'out_final_F.dat';
 Fd  = spconvert(load(filename));
 filename = 'out_final_M.dat';
 Md  = spconvert(load(filename));
+
+filename = 'out_essV.dat';
+essV  = load(filename);
+filename = 'out_essQ.dat';
+essQ  = load(filename);
 
 nu = size(Fo,1);
 np = size(Bo,1);
@@ -76,35 +81,35 @@ rhs = [ f0; g0 ];
 x0  = [ u0; p0 ];
 
 
-% check that dirichlet modifications to rhs are exact
-% - here's the output from the rhs before modifications
-rhs0 = [0.433333 -0.0111111 0.433333 -0.0111111 0.266667 0.0888889 0.133333 0.0888889 1.91111 0.444444 -1.66533e-16 -0.444444 1.66533e-16 0 0.888889 0 -0.888889 0 0.444444 0 0.444444 0 0 0 0 0 1.77778 0.444444 -1.66533e-16 -0.444444 1.66533e-16 0 0.888889 0 -0.888889 0 0.444444 0 0.444444 0 0 0 0 0 1.77778 0.444444 -1.66533e-16 -0.444444 1.66533e-16 0 0.888889 0 -0.888889 0 0 0 0 0 0 0 0 0 0 0 0 0]';
-
-essNodesV = [1:4,6,8:13,15,17,18];
-essNodesQ = [2,4];
-uBC = zeros(nu,1); uBC(9) = 1;
-
-uga = rhs0;
-
-diagFo = full(diag(Fo));
-
-for i=0:NT-1
-	if i==0
-		uga( (1:nu) + (i*nu) ) = uga( (1:nu) + (i*nu) )  - Fo*uBC;
-	else
-		uga( (1:nu) + (i*nu) ) = uga( (1:nu) + (i*nu) )  - Fo*uBC - Mo*uBC;	
-	end
-	uga( essNodesV + (i*nu) ) = diagFo(essNodesV).*uBC(essNodesV);
-	
-	uga( nu*NT + i*np + (1:np) )  = uga( nu*NT + i*np + (1:np) ) - Bo*uBC;
-end
-
-max(abs(uga-rhs))
+% % check that dirichlet modifications to rhs are exact
+% % - here's the output from the rhs before modifications
+% rhs0 = [0.433333 -0.0111111 0.433333 -0.0111111 0.266667 0.0888889 0.133333 0.0888889 1.91111 0.444444 -1.66533e-16 -0.444444 1.66533e-16 0 0.888889 0 -0.888889 0 0.444444 0 0.444444 0 0 0 0 0 1.77778 0.444444 -1.66533e-16 -0.444444 1.66533e-16 0 0.888889 0 -0.888889 0 0.444444 0 0.444444 0 0 0 0 0 1.77778 0.444444 -1.66533e-16 -0.444444 1.66533e-16 0 0.888889 0 -0.888889 0 0 0 0 0 0 0 0 0 0 0 0 0]';
+% 
+% essNodesV = [1:4,6,8:13,15,17,18];
+% essNodesQ = [2,4];
+% uBC = zeros(nu,1); uBC(9) = 1;
+% 
+% uga = rhs0;
+% 
+% diagFo = full(diag(Fo));
+% 
+% for i=0:NT-1
+% 	if i==0
+% 		uga( (1:nu) + (i*nu) ) = uga( (1:nu) + (i*nu) )  - Fo*uBC;
+% 	else
+% 		uga( (1:nu) + (i*nu) ) = uga( (1:nu) + (i*nu) )  - Fo*uBC - Mo*uBC;	
+% 	end
+% 	uga( essNodesV + (i*nu) ) = diagFo(essNodesV).*uBC(essNodesV);
+% 	
+% 	uga( nu*NT + i*np + (1:np) )  = uga( nu*NT + i*np + (1:np) ) - Bo*uBC;
+% end
+% 
+% max(abs(uga-rhs))
 
 
 
 %% Solve
 % GMRES
-prec = @(b) fakePrecon( b, Fd, Md, Bd, Ap, Mp, Wp, essNodesQ );
+prec = @(b) fakePrecon( b, Fd, Md, Bd, Ap, Mp, Wp, essQ );
 [ x, err, it ] = GMRESrp( A, rhs, 1e-10, 50, x0, prec );
-err
+it

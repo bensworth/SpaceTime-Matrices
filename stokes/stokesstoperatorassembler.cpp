@@ -1,4 +1,5 @@
 #include "stokesstoperatorassembler.hpp"
+#include "vectorconvectionintegrator.hpp"
 
 #include <mpi.h>
 #include <string>
@@ -86,8 +87,12 @@ void StokesSTPreconditioner::SetAp( const SparseMatrix* Ap ){
   if( _essQhTDOF.Size() == 0 ){
     if( _myRank == 0 ){
       // std::cout<<"Assuming that pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl;
-      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions) - ";
-      std::cout<<"make sure to flag that in the petsc options prescribing -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl;
+      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl
+               <<" make sure to flag that in the petsc options prescribing:"<<std::endl
+               <<" -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
+               <<" -for direct solver: ??? probably the best option is to just fix one unknown"<<std::endl;
+      // the manual recommends using these options for direct solvers, but it doesn't seem to work well...
+      // -PSolverLaplacian_pc_factor_shift_type NONZERO /and/ -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl;
     }
     // TODO: for some reason, the following causes memory leak
     // // extract the underlying petsc object
@@ -228,14 +233,19 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   // // - kill every contribution on outflow boundary
   // invAxMine.SetSubVector( _essQhTDOF, 0.0 );  // before, to improve initial guess
   // lclx.SetSubVector(      _essQhTDOF, 0.0 );  // to the rhs, to make sure it won't affect solution (not even afterwards)
+  // // TODO: if the system is singular, set the first unknown to zero to stabilise it
+  // //       NB: this must match the definition of Ap!!
+  // if( _essQhTDOF.Size() == 0 ){
+  //   lclx.GetData()[0] = 0.;
+  // }
   _Asolve->Mult( lclx, invAxMine );
   // invAxMine.SetSubVector( _essQhTDOF, 0.0 );  // and even afterwards, to really make sure it's 0
 
   if (_verbose ){
     std::cout<<"Rank "<<_myRank<<" inverted pressure 'laplacian'"<<std::endl;
     MPI_Barrier(_comm);
+    std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result after inverting 'laplacian': "; invAxMine.Print(std::cout, invAxMine.Size());
   }
-
 
   // Eventually include contribution from pressure (convection)-diffusion operator
   if ( !_WpEqualsAp ){
@@ -388,27 +398,19 @@ void SpaceTimeSolver::SetM( const SparseMatrix* M ){
 void SpaceTimeSolver::SetFSolve(){
   delete _Fsolve;
 
-  // Only master will take care of solving the system: this means that the same
-  //  spatial operator is considered throughout the whole time-stepping routine
-  //TODO: generalise this
-  if (_myRank==0){
-    std::cout<<"SpaceTimeSolver: Warning: spatial operator is assumed to be time-independent!"<<std::endl;
-    
-    _Fsolve = new PetscLinearSolver( *_F, "VSolver_" );
-    PetscBool set;
-    PetscErrorCode ierr;
-    char optName[PETSC_MAX_PATH_LEN];
+  _Fsolve = new PetscLinearSolver( *_F, "VSolver_" );
+  PetscBool set;
+  PetscErrorCode ierr;
+  char optName[PETSC_MAX_PATH_LEN];
 
-    _Fsolve->iterative_mode = true;  // trigger iterative mode...
-    ierr = PetscOptionsGetString( NULL ,"VSolver_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-    if( !strcmp( optName, "preonly" ) ){
-      char optName1[PETSC_MAX_PATH_LEN];
-      ierr = PetscOptionsGetString( NULL ,"VSolver_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-      if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
-        _Fsolve->iterative_mode = false;  // ...unless you're using ilu or lu
-      }
+  _Fsolve->iterative_mode = true;  // trigger iterative mode...
+  ierr = PetscOptionsGetString( NULL ,"VSolver_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+  if( !strcmp( optName, "preonly" ) ){
+    char optName1[PETSC_MAX_PATH_LEN];
+    ierr = PetscOptionsGetString( NULL ,"VSolver_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+    if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
+      _Fsolve->iterative_mode = false;  // ...unless you're using ilu or lu
     }
-
   }
 
   if ( _verbose && _myRank==0 && _Fsolve->iterative_mode ){
@@ -416,6 +418,8 @@ void SpaceTimeSolver::SetFSolve(){
   }
 
 }
+
+
 
 
 
@@ -449,120 +453,237 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     _Y->SetData(y_data);
   }
 
-  // - broadcast IG and rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
-  const Vector *glbRhs = _X->GlobalVector();
-  const Vector *glbIG  = _Y->GlobalVector();
 
-
-  if ( _verbose && _myRank == 0 ){
-    std::cout<<"Inside V-block, rhs for u: "; glbRhs->Print(std::cout, glbRhs->Size());
-    std::cout<<"Inside V-block, IG  for u: ";  glbIG->Print(std::cout,  glbIG->Size());
+  if ( _verbose ){
+    std::cout<<"Inside V-block, rank "<<_myRank<<", rhs for u: "; y.Print(std::cout, y.Size());
+    std::cout<<"Inside V-block, rank "<<_myRank<<", IG  for u: "; x.Print(std::cout, x.Size());
 
     std::ofstream myfile;
-    std::string myfilename = std::string("./results/rhsu") + std::to_string(_nCalls) + ".dat";
+    std::string myfilename = std::string("./results/rhsu.dat");
     myfile.open( myfilename, std::ios_base::app );
-    glbRhs->Print(myfile,1);
+    _X->Print_HYPRE(myfile);
     myfile.close( );
 
-    myfilename = std::string("./results/IGu") + std::to_string(_nCalls) + ".dat";
+    myfilename = std::string("./results/IGu.dat");
     myfile.open( myfilename, std::ios_base::app );
-    glbIG->Print(myfile,1);
+    _Y->Print_HYPRE(myfile);
     myfile.close( );
   }
 
 
+  // these will contain rhs for each time-step
+  Vector b( spaceDofs );
+  b = 0.;
 
-  // - initialise local vector containing solution at single time-step
-  Vector lclSol( spaceDofs );
+
+
+  // Main "time-stepping" routine
+  
+  // - receive solution from previous processor (unless initial time-step)
+  if ( _myRank > 0 ){
+    MPI_Recv( b.GetData(), spaceDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
+  }
+
+  // - define rhs for this step (including contribution from sol at previous time-step
   for ( int i = 0; i < spaceDofs; ++i ){
-    lclSol.GetData()[i] = glbIG->GetData()[i];
+    b.GetData()[i] += _X->GetData()[i];
   }
 
-  // Master performs time-stepping and sends solution to other processors
-  if ( _myRank == 0 ){
-
-    // - these will contain rhs for each time-step
-    Vector b( spaceDofs );
-    b = 0.;
+  // - solve for current time-step
+  //  --if an iterative solver is set, _Y acts as an initial guess
+  _Fsolve->Mult( b, *_Y );
 
 
-    // Main time-stepping routine
-    for ( int t = 0; t < _numProcs; ++t ){
 
-      // - define rhs for this step (including contribution from sol at previous time-step - see below)
-      for ( int i = 0; i < spaceDofs; ++i ){
-        b.GetData()[i] += glbRhs->GetData()[ i + spaceDofs * t ];
-      }
-
-
-      // - solve for current time-step
-      //  --if an iterative solver is set, lclSol acts as an initial guess
-      //  --if no changes are made to lclSol, it simply picks the solution at
-      //     the previous time-step
-      // //  --here we copy from the IG of the global system for the dirichlet
-      // //     nodes in the velocity solution
-      // lclSol.SetSubVector( _essVhTDOF, &( glbIG->GetData()[spaceDofs * t] ) );
-      _Fsolve->Mult( b, lclSol );
-
-      //  TODO: Maybe set to 0 the velocity solution on the dirichlet nodes?
-      // lclSol.SetSubVector( _essVhTDOF, &( glbIG->GetData()[spaceDofs * t] ) );
-
-
-      if (_verbose ){
-        if ( t==0 ){
-          std::cout<<"Rank "<<_myRank<<" solved for time-step ";
-        }
-        if ( t<_numProcs-1){
-          std::cout<<t<<", ";
-        }else{
-          std::cout<<t<<std::endl;
-        }
-
-      }
-
-      // - send local solution to corresponding processor
-      if( t==0 ){
-        // that is, myself if first time step
-        for ( int j = 0; j < spaceDofs; ++j ){
-          _Y->GetData()[j] = lclSol.GetData()[j];
-        }
-      }else{
-        // or the right slave it if solution is later in time
-        MPI_Send( lclSol.GetData(), spaceDofs, MPI_DOUBLE, t, t, _comm );   // TODO: non-blocking + wait before solve?
-      }
-
-
-      // - include solution as rhs for next time-step
-      if( t < _numProcs-1 ){
-        _M->Mult( lclSol, b );
-        b.Neg();    //M has negative sign for velocity, so flip it
-        // NB: _M should be defined so that essential BC are not dirtied! So the next command is useless
-        // b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
-      }
-
+  if (_verbose ){
+    if ( _myRank==0 ){
+      std::cout<<"Solved for time-step: ";
     }
-
-  }else{
-    // Slaves receive data
-    MPI_Recv( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, _myRank, _comm, MPI_STATUS_IGNORE );
+    if ( _myRank<_numProcs-1){
+      std::cout<<_myRank<<", ";
+    }else{
+      std::cout<<_myRank<<std::endl;
+    }
   }
 
-  // Make sure we're all done
-  MPI_Barrier( _comm );
+  // - send solution to following processor (unless last time-step)
+  if ( _myRank < _numProcs-1 ){
+    // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+    _M->Mult( *_Y, b );
+    // - M is stored with negative sign for velocity, so flip it
+    b.Neg();
+    // NB: _M should be defined so that essential BC are not dirtied! So the next command is useless
+    // b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
 
-
-  // delete glbRhs;
-  // delete glbIG;
+    MPI_Send( b.GetData(), spaceDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
+  }
 
 
   if ( _verbose ){
     std::cout<<"Inside V-block: Rank: "<<_myRank<< ", result for V: "; y.Print(std::cout, y.Size());
   }
-  // std::string myfilename = std::string("./results/usol") + std::to_string(_nCalls) + ".dat";
-  // _Y->Print( myfilename.c_str() );
-  // _nCalls++;
 
 }
+
+
+
+
+
+
+
+
+// // Define multiplication by preconditioner (that is, time-stepping on the
+// //  velocity space-time block)- the most relevant function here
+// // NB: in this version, the spatial operator is supposed to be se same for
+// //      every time-step (that is, the parameters of the PDE are not
+// //      time-dependent). To (slightly) increase performance, then, it is
+// //      the master which takes care of solving each time-step
+// void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
+//   MFEM_ASSERT( _Fsolve != NULL, "Solver for velocity spatial operator not initialised" );
+//   MFEM_ASSERT( _M      != NULL, "Velocity mass matrix not initialised" );
+//   MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
+//               << ", expected size = " << Width());
+//   MFEM_ASSERT(y.Size() == Height(), "invalid y.Size() = " << y.Size()
+//               << ", expected size = " << Height());
+
+//   if ( _verbose && _myRank==0 ){
+//     std::cout<<"Applying velocity block preconditioner (time-stepping)"<<std::endl;
+//   }
+  
+
+//   // Initialise
+//   const int spaceDofs = x.Size();
+
+//   // - convert data to internal HypreParVector for ease of use
+//   auto x_data = x.HostRead();
+//   auto y_data = y.HostReadWrite();
+//   if ( _X == NULL){
+//     int starts[2] = { spaceDofs*_myRank, spaceDofs*(_myRank+1) };
+//     _X = new HypreParVector( _comm, spaceDofs * _numProcs, const_cast<double*>(x_data), starts );
+//     _Y = new HypreParVector( _comm, spaceDofs * _numProcs, y_data,                      starts );
+//   }else{
+//     _X->SetData(const_cast<double*>(x_data));
+//     _Y->SetData(y_data);
+//   }
+
+//   // - broadcast IG and rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
+//   const Vector *glbRhs = _X->GlobalVector();
+//   const Vector *glbIG  = _Y->GlobalVector();
+
+
+//   if ( _verbose && _myRank == 0 ){
+//     std::cout<<"Inside V-block, rhs for u: "; glbRhs->Print(std::cout, glbRhs->Size());
+//     std::cout<<"Inside V-block, IG  for u: ";  glbIG->Print(std::cout,  glbIG->Size());
+
+//     std::ofstream myfile;
+//     std::string myfilename = std::string("./results/rhsu") + std::to_string(_nCalls) + ".dat";
+//     myfile.open( myfilename, std::ios_base::app );
+//     glbRhs->Print(myfile,1);
+//     myfile.close( );
+
+//     myfilename = std::string("./results/IGu") + std::to_string(_nCalls) + ".dat";
+//     myfile.open( myfilename, std::ios_base::app );
+//     glbIG->Print(myfile,1);
+//     myfile.close( );
+//   }
+
+
+
+//   // - initialise local vector containing solution at single time-step
+//   Vector lclSol( spaceDofs );
+//   for ( int i = 0; i < spaceDofs; ++i ){
+//     lclSol.GetData()[i] = glbIG->GetData()[i];
+//   }
+
+//   // Master performs time-stepping and sends solution to other processors
+//   if ( _myRank == 0 ){
+
+//     // - these will contain rhs for each time-step
+//     Vector b( spaceDofs );
+//     b = 0.;
+
+
+//     // Main time-stepping routine
+//     for ( int t = 0; t < _numProcs; ++t ){
+
+//       // - define rhs for this step (including contribution from sol at previous time-step - see below)
+//       for ( int i = 0; i < spaceDofs; ++i ){
+//         b.GetData()[i] += glbRhs->GetData()[ i + spaceDofs * t ];
+//       }
+
+
+//       // - solve for current time-step
+//       //  --if an iterative solver is set, lclSol acts as an initial guess
+//       //  --if no changes are made to lclSol, it simply picks the solution at
+//       //     the previous time-step
+//       // TODO: I feel like there's something terribly wrong here: if we change the IG
+//       //        to be influenced by the sol at previous time-step, and pick an iterative
+//       //        method as _Fsolve, then we are changing operator at each outer GMRES
+//       //        iteration, which is no good!
+//       // //  --here we copy from the IG of the global system for the dirichlet
+//       // //     nodes in the velocity solution
+//       // lclSol.SetSubVector( _essVhTDOF, &( glbIG->GetData()[spaceDofs * t] ) );
+//       _Fsolve->Mult( b, lclSol );
+
+//       //  TODO: Maybe set to 0 the velocity solution on the dirichlet nodes?
+//       // lclSol.SetSubVector( _essVhTDOF, &( glbIG->GetData()[spaceDofs * t] ) );
+
+
+//       if (_verbose ){
+//         if ( t==0 ){
+//           std::cout<<"Rank "<<_myRank<<" solved for time-step ";
+//         }
+//         if ( t<_numProcs-1){
+//           std::cout<<t<<", ";
+//         }else{
+//           std::cout<<t<<std::endl;
+//         }
+
+//       }
+
+//       // - send local solution to corresponding processor
+//       if( t==0 ){
+//         // that is, myself if first time step
+//         for ( int j = 0; j < spaceDofs; ++j ){
+//           _Y->GetData()[j] = lclSol.GetData()[j];
+//         }
+//       }else{
+//         // or the right slave it if solution is later in time
+//         MPI_Send( lclSol.GetData(), spaceDofs, MPI_DOUBLE, t, t, _comm );   // TODO: non-blocking + wait before solve?
+//       }
+
+
+//       // - include solution as rhs for next time-step
+//       if( t < _numProcs-1 ){
+//         _M->Mult( lclSol, b );
+//         b.Neg();    //M has negative sign for velocity, so flip it
+//         // NB: _M should be defined so that essential BC are not dirtied! So the next command is useless
+//         // b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
+//       }
+
+//     }
+
+//   }else{
+//     // Slaves receive data
+//     MPI_Recv( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, _myRank, _comm, MPI_STATUS_IGNORE );
+//   }
+
+//   // Make sure we're all done
+//   MPI_Barrier( _comm );
+
+
+//   // delete glbRhs;
+//   // delete glbIG;
+
+
+//   if ( _verbose ){
+//     std::cout<<"Inside V-block: Rank: "<<_myRank<< ", result for V: "; y.Print(std::cout, y.Size());
+//   }
+//   // std::string myfilename = std::string("./results/usol") + std::to_string(_nCalls) + ".dat";
+//   // _Y->Print( myfilename.c_str() );
+//   // _nCalls++;
+
+// }
 
 
 
@@ -583,15 +704,17 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
 //******************************************************************************
 // These functions are useful for assembling all the necessary space-time operators
 
-StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName, const int refLvl,
-                                                      const int ordU, const int ordP, const double dt, const double mu,
+StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName,
+                                                      const int refLvl, const int ordU, const int ordP,
+                                                      const double dt, const double mu, const double Pe,
                                                       void(  *f)(const Vector &, double, Vector &),
                                                       double(*g)(const Vector &, double ),
                                                       void(  *n)(const Vector &, double, Vector &),
+                                                      void(  *w)(const Vector &, double, Vector &),
 		                         							            void(  *u)(const Vector &, double, Vector &),
 		                         							            double(*p)(const Vector &, double ),
                                                       bool verbose ):
-	_comm(comm), _dt(dt), _mu(mu), _fFunc(f), _gFunc(g), _nFunc(n), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
+	_comm(comm), _dt(dt), _mu(mu), _Pe(Pe), _fFunc(f), _gFunc(g), _nFunc(n), _wFunc(w), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
   _MuAssembled(false), _FuAssembled(false), _MpAssembled(false), _ApAssembled(false), _WpAssembled(false), _BAssembled(false),
   _FFAssembled(false), _BBAssembled(false), _pSAssembled(false), _FFinvAssembled(false),
   _verbose(verbose){
@@ -613,8 +736,13 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
 
   if( ordP > 0 )
     _QhFEColl  = new H1_FECollection( ordP, _dim );
-  else
+  else{
     _QhFEColl  = new L2_FECollection(    0, _dim );
+    
+    if ( _myRank == 0 ){
+      std::cerr<<"WARNING: since you're using L2 pressure, you should definitely double-check the implementation of DG"<<std::endl;
+    }
+  }
 
 
   _VhFESpace = new FiniteElementSpace( _mesh, _VhFEColl, _dim );
@@ -652,7 +780,7 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
 
 
 // Assemble operator on main diagonal of space-time matrix for velocity block:
-//  Fu = M + mu*dt K
+//  Fu = M + mu*dt K + mu*Pe*dt*W
 void StokesSTOperatorAssembler::AssembleFuVarf( ){
   if( _FuAssembled ){
     return;
@@ -660,16 +788,29 @@ void StokesSTOperatorAssembler::AssembleFuVarf( ){
 
   _fuVarf =  new BilinearForm(_VhFESpace);
 
+
 #ifdef MULT_BY_DT
   ConstantCoefficient muDt( _mu*_dt );
   ConstantCoefficient one( 1.0 );
 	_fuVarf->AddDomainIntegrator(new VectorMassIntegrator( one ));
 	_fuVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( muDt ));
+  VectorFunctionCoefficient wFuncCoeff( _dim, _wFunc );
+  wFuncCoeff.SetTime( _dt*(_myRank+1) );
+  if ( _Pe != 0. ){
+    double muPeDt = _mu*_Pe*_dt;  
+    _fuVarf->AddDomainIntegrator(new VectorConvectionIntegrator( wFuncCoeff, muPeDt ));
+  }
 #else
   ConstantCoefficient mu( _mu );
   ConstantCoefficient dtinv( 1./_dt );
   _fuVarf->AddDomainIntegrator(new VectorMassIntegrator( dtinv ));
   _fuVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( mu ));
+  VectorFunctionCoefficient wFuncCoeff( _dim, _wFunc );
+  wFuncCoeff.SetTime( _dt*(_myRank+1) );
+  if ( _Pe != 0. ){
+    double muPe = _mu*_Pe;  
+    _fuVarf->AddDomainIntegrator(new VectorConvectionIntegrator( wFuncCoeff, muPe ));
+  }
 #endif
 
   _fuVarf->Assemble();
@@ -840,12 +981,30 @@ void StokesSTOperatorAssembler::AssembleAp( ){
   // Impose homogeneous dirichlet BC by simply removing corresponding equations
   aVarf->Assemble();
   aVarf->Finalize();
-  aVarf->FormSystemMatrix( _essQhTDOF, _Ap );
   
-  // _Ap = aVarf->SpMat();
+  aVarf->FormSystemMatrix( _essQhTDOF, _Ap );
   _Ap.SetGraphOwner(true);
   _Ap.SetDataOwner(true);
   aVarf->LoseMat();
+
+  // // TODO: FormSystemMatrix doesn't set diagonal to 1. Alternatively, one can do the following:
+  // _Ap = aVarf->SpMat();
+  // _Ap.SetGraphOwner(true);
+  // _Ap.SetDataOwner(true);
+  // aVarf->LoseMat();
+  // for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
+  //   _Ap.EliminateRowCol( _essQhTDOF.GetData()[i] );
+  // }
+
+  // // TODO: if the system is singular, one can stabilise it by fixing randomly to 0 the value of pressure somewhere
+  // if( _essQhTDOF.Size() == 0 ){
+  //   _Ap.EliminateRowCol( 0 );
+  // }
+
+
+
+
+
 
   if ( _verbose ){        
     std::cout<<"Rank "<<_myRank<<" - Pressure 'laplacian' Ap assembled"<<std::endl;
@@ -911,8 +1070,10 @@ void StokesSTOperatorAssembler::AssembleMp( ){
 
 
 // Assemble spatial part of pressure (convection) diffusion operator
+// According Elman/Silvester/Wathen:
 // - If convection is included, this should be assembled as if it had Robin BC: dp/dn + w*p = 0 (w is convective velocity)
 // - If convection is not included, this should be assembled as if it had Neumann BC: dp/dn = 0
+// However, it seems like it's best to just leave dirichlet BC in outflow, just like how Ap is assembled :/
 void StokesSTOperatorAssembler::AssembleWp( ){
 
   if( _WpAssembled ){
@@ -928,6 +1089,15 @@ void StokesSTOperatorAssembler::AssembleWp( ){
     wVarf->AddInteriorFaceIntegrator(new DGDiffusionIntegrator(mu, sigma, kappa));
     // wVarf->AddBdrFaceIntegrator(     new DGDiffusionIntegrator(one, sigma, kappa));  // to weakly impose Dirichlet BC - don't bother for now
   }
+
+  // include convection if necessary
+  VectorFunctionCoefficient wFuncCoeff( _dim, _wFunc );
+  wFuncCoeff.SetTime( _dt*(_myRank+1) );
+  if( _Pe!= 0. ){
+    // TODO: should I impose Robin, then? Like this I'm still applying Neumann
+    wVarf->AddDomainIntegrator(new ConvectionIntegrator( wFuncCoeff, _mu*_Pe ));
+  }
+
   wVarf->Assemble();
   wVarf->Finalize();
   
@@ -1268,14 +1438,16 @@ void StokesSTOperatorAssembler::AssemblePS(){
   _pSchur->SetAp( &_Ap );
   _pSchur->SetMp( &_Mp );
 
-  if( _essQhTDOF.Size() == 0 ){
-    _pSchur->SetWp( &_Wp, true );   // flag that Wp and Ap are the same if there are no outflow conditions
+  if( _essQhTDOF.Size() == 0 && _Pe == 0. ){
+    _pSchur->SetWp( &_Wp, true );   // flag that Wp and Ap are the same if there are no outflow conditions and no convective term
   }else{
-    if ( _myRank==0 ){
-      std::cout<<"Warning: spatial part of Fp and Ap flagged to be the same, even though there are outflow conditions! Change this!"<<std::endl;
+    _pSchur->SetWp( &_Wp, false );
+    if ( _myRank==0 && _Pe==0. ){
+      std::cout<<"Warning: spatial part of Fp and Ap flagged to be different, even though there is no convection."<<std::endl
+               <<"         This makes sense, since Elman/Silvester/Wathen mentions the BC of the two operators"<<std::endl
+               <<"         should be different if there is outflow. However, results seem much better if dir BC"<<std::endl
+               <<"         are implemented for both Fp and Ap (rather than having rob for Fp and dir for Ap)"<<std::endl;
     }
-    // _pSchur->SetWp( &_Wp, false ); // should be false in this case, as Ap should get dirichlet and Wp should get neumann at outflow
-    _pSchur->SetWp( &_Wp, true );
   }
 
 
@@ -1791,6 +1963,16 @@ void StokesSTOperatorAssembler::AssembleSystem( HypreParMatrix*& FFF,  HypreParM
       myfilename = "./results/out_final_M.dat";
       myfile.open( myfilename );
       _Mu.PrintMatlab(myfile);
+      myfile.close( );
+
+      myfilename = "./results/out_essV.dat";
+      myfile.open( myfilename );
+      _essVhTDOF.Print(myfile,1);
+      myfile.close( );
+
+      myfilename = "./results/out_essQ.dat";
+      myfile.open( myfilename );
+      _essQhTDOF.Print(myfile,1);
       myfile.close( );
 
       std::cout<<"U essential nodes: ";_essVhTDOF.Print(std::cout, _essVhTDOF.Size());

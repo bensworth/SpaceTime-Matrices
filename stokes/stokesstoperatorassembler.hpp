@@ -153,12 +153,14 @@ private:
 
 
 	// problem parameters
-	const double _dt; 	//time step (constant)
+	const double _dt; 	//time step (constant over time-steps for now)
 	const double _mu;		//viscosity
+  const double _Pe;		//Peclet number (useful only for Oseen)
   int _dim;						//domain dimension (R^d)
 	void(  *_fFunc)( const Vector &, double, Vector & );	// function returning forcing term for velocity (time-dep)
 	double(*_gFunc)( const Vector &, double )          ;  // function returning forcing term for pressure (time-dep)
 	void(  *_nFunc)( const Vector &, double, Vector & );  // function returning mu * du/dn (time-dep, used to implement BC)
+	void(  *_wFunc)( const Vector &, double, Vector & );  // function returning velocity field (valid only for Oseen)
 	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
 	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC, and compute error)
 
@@ -215,11 +217,13 @@ private:
 
 
 public:
-	StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string &meshName, const int refLvl,
-		                         const int ordU, const int ordP, const double dt, const double mu,
+	StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string &meshName,
+														 const int refLvl, const int ordU, const int ordP,
+		                         const double dt, const double mu, const double Pe,
 		                         void(  *f)(const Vector &, double, Vector &),
 		                         double(*g)(const Vector &, double ),
 		                         void(  *n)(const Vector &, double, Vector &),
+		                         void(  *w)(const Vector &, double, Vector &),
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
 		                         bool verbose );

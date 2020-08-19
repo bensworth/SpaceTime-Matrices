@@ -1,7 +1,7 @@
 //---------------------------------------------------------------------------
-// Implementation of time-dependent Stokes equation
-//  dt(u) -mu div(grad(u)) + grad(p) = f
-//                         -  div(u) = g
+// Implementation of time-dependent Oseen equation
+//  dt(u) -mu ∇•∇u + mu Pe w•∇u + ∇p  = f
+//                              - ∇•u = g
 // with space-time block preconditioning.
 // 
 // - Solver support from PETSc
@@ -20,11 +20,13 @@
 //
 //---------------------------------------------------------------------------
 #include "mfem.hpp"
+#include "petsc.h"
 #include "stokesstoperatorassembler.hpp"
 #include "blockUpperTriangularPreconditioner.hpp"
 #include <string>
 #include <fstream>
 #include <iostream>
+#include <experimental/filesystem>
 //---------------------------------------------------------------------------
 #ifndef MFEM_USE_PETSC
 #error This example requires that MFEM is built with MFEM_USE_PETSC=YES
@@ -34,6 +36,7 @@ using namespace std;
 using namespace mfem;
 //---------------------------------------------------------------------------
 // PB parameters pre-definition:
+void   wFun_zero(  const Vector & x, const double t, Vector & w );
 // - simple cooked-up pb with analytical solution
 void   uFun_ex_an( const Vector & x, const double t, Vector & u );
 double pFun_ex_an( const Vector & x, const double t             );
@@ -46,24 +49,35 @@ double pFun_ex_cavity( const Vector & x, const double t             );
 void   fFun_cavity(    const Vector & x, const double t, Vector & f );
 void   nFun_cavity(    const Vector & x, const double t, Vector & f );
 double gFun_cavity(    const Vector & x, const double t             );
+void   uFun_ex_cavityC(const Vector & x, const double t, Vector & u );  // constant-in-time counterpart
+double pFun_ex_cavityC(const Vector & x, const double t             );
+void   fFun_cavityC(   const Vector & x, const double t, Vector & f );
+void   nFun_cavityC(   const Vector & x, const double t, Vector & f );
+double gFun_cavityC(   const Vector & x, const double t             );
 // - poiseuille flow
 void   uFun_ex_poiseuille( const Vector & x, const double t, Vector & u );
 double pFun_ex_poiseuille( const Vector & x, const double t             );
 void   fFun_poiseuille(    const Vector & x, const double t, Vector & f );
 void   nFun_poiseuille(    const Vector & x, const double t, Vector & f );
 double gFun_poiseuille(    const Vector & x, const double t             );
-void   uFun_ex_poiseuilleC(const Vector & x, const double t, Vector & u );
+void   uFun_ex_poiseuilleC(const Vector & x, const double t, Vector & u );  // constant-in-time counterpart
 double pFun_ex_poiseuilleC(const Vector & x, const double t             );
 void   fFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
 void   nFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
 double gFun_poiseuilleC(   const Vector & x, const double t             );
-
 // - flow over step
 void   uFun_ex_step( const Vector & x, const double t, Vector & u );
 double pFun_ex_step( const Vector & x, const double t             );
 void   fFun_step(    const Vector & x, const double t, Vector & f );
 void   nFun_step(    const Vector & x, const double t, Vector & f );
 double gFun_step(    const Vector & x, const double t             );
+// - double-glazing problem
+void   uFun_ex_glazing( const Vector & x, const double t, Vector & u );
+double pFun_ex_glazing( const Vector & x, const double t             );
+void   fFun_glazing(    const Vector & x, const double t, Vector & f );
+void   nFun_glazing(    const Vector & x, const double t, Vector & f );
+void   wFun_glazing(    const Vector & x, const double t, Vector & f );
+double gFun_glazing(    const Vector & x, const double t             );
 //---------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
@@ -127,10 +141,12 @@ int main(int argc, char *argv[])
   // -initialise remaining parameters
   const double dt = Tend / numProcs;
   const double mu = 1.;                // CAREFUL NOT TO CHANGE THIS! Or if you do, re-define the normal derivative, too
+  double Pe = 0.;
 
   void(  *fFun)(   const Vector &, double, Vector& );
   double(*gFun)(   const Vector &, double );
   void(  *nFun)(   const Vector &, double, Vector& );
+  void(  *wFun)(   const Vector &, double, Vector& );
   void(  *uFun_ex)(const Vector &, double, Vector& );
   double(*pFun_ex)(const Vector &, double );
   std::string mesh_file;
@@ -142,6 +158,7 @@ int main(int argc, char *argv[])
       fFun    = &fFun_an;
       gFun    = &gFun_an;
       nFun    = &nFun_an;
+      wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_an;
       pFun_ex = &pFun_ex_an;
       break;
@@ -152,16 +169,18 @@ int main(int argc, char *argv[])
       fFun    = &fFun_cavity;
       gFun    = &gFun_cavity;
       nFun    = &nFun_cavity;
+      wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_cavity;
       pFun_ex = &pFun_ex_cavity;
       break;
     }
     case 2:{
-      mesh_file = "./meshes/tri-rectangle-poiseuille.mesh";
-      // mesh_file = "./meshes/tri-square-poiseuille.mesh";
+      // mesh_file = "./meshes/tri-rectangle-poiseuille.mesh";
+      mesh_file = "./meshes/tri-square-poiseuille.mesh";
       fFun    = &fFun_poiseuille;
       gFun    = &gFun_poiseuille;
       nFun    = &nFun_poiseuille;
+      wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_poiseuille;
       pFun_ex = &pFun_ex_poiseuille;
       // if ( myid==0 ){
@@ -174,9 +193,24 @@ int main(int argc, char *argv[])
       fFun    = &fFun_step;
       gFun    = &gFun_step;
       nFun    = &nFun_step;
+      wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_step;
       pFun_ex = &pFun_ex_step;
-      std::cerr<<"Flow over step still to implement."<<std::endl;
+      break;
+    }
+    case 4:{
+      mesh_file = "./meshes/tri-square-glazing.mesh";
+      fFun    = &fFun_glazing;
+      gFun    = &gFun_glazing;
+      nFun    = &nFun_glazing;
+      wFun    = &wFun_glazing;
+      uFun_ex = &uFun_ex_glazing;
+      pFun_ex = &pFun_ex_glazing;
+      Pe = 1;
+      if ( myid == 0 ){
+        std::cerr<<"Double-glazing flow still to implement."<<std::endl;
+        std::cerr<<"Remember to include some sort of stabilisation for high Peclet."<<std::endl;
+      }
       break;
     }
     default:
@@ -192,7 +226,7 @@ int main(int argc, char *argv[])
 
   // Assembles block matrices composing the system
   StokesSTOperatorAssembler *stokesAssembler = new StokesSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP,
-                                                                              dt, mu, fFun, gFun, nFun, uFun_ex, pFun_ex, verbose );
+                                                                              dt, mu, Pe, fFun, gFun, nFun, wFun, uFun_ex, pFun_ex, verbose );
 
   HypreParMatrix *FFF, *BBB, *BBt;
   Operator *FFi, *XXi;
@@ -284,6 +318,31 @@ int main(int argc, char *argv[])
   // solver->SetPrintLevel(1);
 
 
+  // Save residual evolution to file
+  // - create folder which will store all files with various convergence evolution 
+  string path = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                         + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType) + "_" + petscrc_file + "/";
+  if (!std::experimental::filesystem::exists( path )){
+    std::experimental::filesystem::create_directories( path );
+  }
+  string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
+  // - create viewer to instruct KSP object how to print residual evolution
+  PetscViewer    viewer;
+  PetscViewerAndFormat *vf;
+  PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
+  PetscViewerSetType( viewer, PETSCVIEWERASCII );
+  PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
+  PetscViewerFileSetName( viewer, filename.c_str() );
+  // - register it to the ksp object
+  KSP ksp = *solver;
+  PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
+  PetscViewerDestroy( &viewer );
+  KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault, vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
+
+
+
+
+
 
 
   // SOLVE SYSTEM -----------------------------------------------------------
@@ -352,10 +411,10 @@ int main(int argc, char *argv[])
     stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
 
     ofstream myfile;
-    string filename = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                           + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType)
-                           + "_" + petscrc_file + ".txt";
-    myfile.open( filename, std::ios::app );
+    string fname = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                        + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType)
+                        + "_" + petscrc_file + ".txt";
+    myfile.open( fname, std::ios::app );
     myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
            << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
            << solver->GetNumIterations() << std::endl;
@@ -592,6 +651,10 @@ double gFun(const Vector & x, const double t ){
 //***************************************************************************
 //TEST CASES OF SOME ACTUAL RELEVANCE
 //***************************************************************************
+void wFun_zero(const Vector & x, const double t, Vector & w){
+  w(0) = 0.;
+  w(1) = 0.;
+}
 
 
 // Simple example -----------------------------------------------------------
@@ -692,7 +755,7 @@ void uFun_ex_cavityC(const Vector & x, const double t, Vector & u){
   if( yy==1.0 ){
     u(0) = 8*xx*(1-xx)*(2.*xx*xx-2.*xx+1.);   // regularised (1-x^4 mapped from -1,1 to 0,1)
     // u(0) = 1.0;                      // leaky
-    // if( xx > 1.0 && xx < 1.0 )
+    // if( xx > 0. && xx < 1.0 )
     //   u(0) = 1.0;                    // watertight
   }
 }
@@ -838,6 +901,63 @@ double gFun_step(const Vector & x, const double t ){
 }
 
 
+
+
+
+
+// Double-glazing problem (speed ramping up)--------------------------------
+// Exact solution (velocity) - only for BC
+void uFun_ex_glazing(const Vector & x, const double t, Vector & u){
+  double xx(x(0));
+  double yy(x(1));
+  u(0) = 0.0;
+  u(1) = 0.0;
+
+  // just like cavity flow
+  if( yy==1.0 ){
+    u(0) = t * 8*xx*(1-xx)*(2.*xx*xx-2.*xx+1.);   // regularised (1-x^4 mapped from -1,1 to 0,1)
+    // u(0) = 1.0;                      // leaky
+    // if( xx > 0. && xx < 1.0 )
+    //   u(0) = 1.0;                    // watertight
+  }
+
+  // if( xx==1.0 ){
+  //   u(1) = -t * (1.-yy*yy*yy*yy);   // regularised
+  //   // u(1) = -t;                      // leaky
+  //   // if( yy > -1. && yy < 1.0 )
+  //   //   u(1) = -t;                    // watertight
+  // }
+}
+
+// Exact solution (pressure) - unused
+double pFun_ex_glazing(const Vector & x, const double t ){
+  return 0.0;
+}
+
+// Rhs (velocity) - no forcing
+void fFun_glazing(const Vector & x, const double t, Vector & f){
+  f(0) = 0.0;
+  f(1) = 0.0;
+}
+
+// Normal derivative of velocity * mu - unused
+void nFun_glazing(const Vector & x, const double t, Vector & n){
+  n(0) = 0.0;
+  n(1) = 0.0;
+}
+
+// velocity field
+void wFun_glazing(const Vector & x, const double t, Vector & w){
+  double xx(x(0));
+  double yy(x(1));
+  w(0) = - 10*t * 2.*(2*yy-1)*(4*xx*xx-4*xx+1); // (-t*2.*yy*(1-xx*xx) mapped from -1,1 to 0,1)
+  w(1) =   10*t * 2.*(2*xx-1)*(4*yy*yy-4*yy+1); // ( t*2.*xx*(1-yy*yy) mapped from -1,1 to 0,1)
+}
+
+// Rhs (pressure) - unused
+double gFun_glazing(const Vector & x, const double t ){
+  return 0.0;
+}
 
 
 
