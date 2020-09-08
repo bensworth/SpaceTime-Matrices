@@ -17,11 +17,10 @@
 # Solvers for Pressure Block preconditioner
 # - pressure 'laplacian'
 -PSolverLaplacian_ksp_type preonly
--PSolverLaplacian_pc_type ilu
+-PSolverLaplacian_pc_type lu
 # -- to make sure that zero pivot are excluded - but does not seem to work well
-#-PSolverLaplacian_pc_factor_shift_type NONZERO
-#-PSolverLaplacian_pc_factor_shift_amount 1e-10
-
+-PSolverLaplacian_pc_factor_shift_type NONZERO
+-PSolverLaplacian_pc_factor_shift_amount 1e-10
 # - pressure mass matrix
 -PSolverMass_ksp_type preonly
 -PSolverMass_pc_type lu

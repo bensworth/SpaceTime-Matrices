@@ -1,0 +1,4 @@
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 4.062199179244e-01 
+  1 KSP Residual norm 1.410462949957e-02 
+  2 KSP Residual norm 5.259205647876e-03 

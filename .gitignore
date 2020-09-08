@@ -19,6 +19,7 @@ driver
 /stokes/stokesp
 /stokes/simpletest.cpp
 /stokes/simpletest
+/hasegawa-mima/
 /stokes/ParaView/
 /ST_class/results/
 *._*

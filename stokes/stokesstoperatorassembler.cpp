@@ -1,5 +1,6 @@
 #include "stokesstoperatorassembler.hpp"
 #include "vectorconvectionintegrator.hpp"
+#include "pararealsolver.hpp"
 
 #include <mpi.h>
 #include <string>
@@ -52,8 +53,8 @@ using namespace mfem;
 
 StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
                                                 const SparseMatrix* Ap, const SparseMatrix* Mp, const SparseMatrix* Wp,
-                                                const Array<int>& essQhTDOF, bool verbose ):
-  _comm(comm), _dt(dt), _mu(mu), _WpEqualsAp(false), _Asolve(NULL), _Msolve(NULL), _essQhTDOF(essQhTDOF), _verbose(verbose){
+                                                const Array<int>& essQhTDOF, int verbose ):
+  _comm(comm), _dt(dt), _mu(mu), _Ap(NULL), _Mp(NULL), _WpEqualsAp(false), _Asolve(NULL), _Msolve(NULL), _essQhTDOF(essQhTDOF), _verbose(verbose){
 
   if( Ap != NULL ) SetAp(Ap);
   if( Mp != NULL ) SetMp(Ap);
@@ -71,6 +72,8 @@ StokesSTPreconditioner::StokesSTPreconditioner( const MPI_Comm& comm, double dt,
 
 
 StokesSTPreconditioner::~StokesSTPreconditioner(){
+  delete _Ap;
+  delete _Mp;
   delete _Asolve;
   delete _Msolve;
 }
@@ -79,6 +82,7 @@ StokesSTPreconditioner::~StokesSTPreconditioner(){
 
 // initialise info on pressure 'laplacian'
 void StokesSTPreconditioner::SetAp( const SparseMatrix* Ap ){
+  delete _Ap;
   _Ap = new PetscParMatrix( Ap );
 
 
@@ -87,12 +91,13 @@ void StokesSTPreconditioner::SetAp( const SparseMatrix* Ap ){
   if( _essQhTDOF.Size() == 0 ){
     if( _myRank == 0 ){
       // std::cout<<"Assuming that pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl;
-      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl
-               <<" make sure to flag that in the petsc options prescribing:"<<std::endl
-               <<" -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
-               <<" -for direct solver: ??? probably the best option is to just fix one unknown"<<std::endl;
-      // the manual recommends using these options for direct solvers, but it doesn't seem to work well...
-      // -PSolverLaplacian_pc_factor_shift_type NONZERO /and/ -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl;
+      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)."<<std::endl
+               <<"         Make sure to flag that in the petsc options prescribing:"<<std::endl
+               <<"         -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
+               <<"         -for direct solver: -PSolverLaplacian_pc_factor_shift_type NONZERO"<<std::endl
+               <<"                         and -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl
+               <<"                         (this will hopefully save us from 0 pivots in the singular mat)"<<std::endl;
+      // TODO: or maybe just fix one unknown?
     }
     // TODO: for some reason, the following causes memory leak
     // // extract the underlying petsc object
@@ -145,6 +150,7 @@ void StokesSTPreconditioner::SetApSolve(){
 
 // initialise info on pressure mass matrix
 void StokesSTPreconditioner::SetMp( const SparseMatrix* Mp ){
+  delete _Mp;
   _Mp = new PetscParMatrix( Mp );
 
   height = Mp->Height();
@@ -169,26 +175,25 @@ void StokesSTPreconditioner::SetMpSolve(){
 
   _Msolve = new PetscLinearSolver( *_Mp, "PSolverMass_" );
   
-  PetscErrorCode ierr;
-  PetscBool set;
-  char optName[PETSC_MAX_PATH_LEN];
+  // // TODO: delete this. Never use initial guess in preconditioners!
+  // PetscErrorCode ierr;
+  // PetscBool set;
+  // char optName[PETSC_MAX_PATH_LEN];
+
+  // _Msolve->iterative_mode = true;  // trigger iterative mode...
+  // ierr = PetscOptionsGetString( NULL ,"PSolverMass_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+  // if( !strcmp( optName, "preonly" ) ){
+  //   char optName1[PETSC_MAX_PATH_LEN];
+  //   ierr = PetscOptionsGetString( NULL ,"PSolverMass_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+  //   if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
+  //     _Msolve->iterative_mode = false;  // ...unless you're using ilu or lu
+  //   }
+  // }
 
 
-  // TODO: delete this. Never use initial guess in preconditioners!
-  _Msolve->iterative_mode = true;  // trigger iterative mode...
-  ierr = PetscOptionsGetString( NULL ,"PSolverMass_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-  if( !strcmp( optName, "preonly" ) ){
-    char optName1[PETSC_MAX_PATH_LEN];
-    ierr = PetscOptionsGetString( NULL ,"PSolverMass_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-    if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
-      _Msolve->iterative_mode = false;  // ...unless you're using ilu or lu
-    }
-  }
-
-
-  if ( _verbose && _Msolve->iterative_mode && _myRank==0 ){
-    std::cout<<"Selected iterative solver for pressure mass matrix"<<std::endl;
-  }
+  // if ( _verbose && _Msolve->iterative_mode && _myRank==0 ){
+  //   std::cout<<"Selected iterative solver for pressure mass matrix"<<std::endl;
+  // }
 
 }
 
@@ -351,8 +356,8 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 //  where Fu = Mu/dt + mu Au is the spatial operator for the velocity
 
 SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, const SparseMatrix* M,
-                                  const Array<int>& essVhTDOF, bool verbose ):
-  _comm(comm), _Fsolve(NULL), _essVhTDOF(essVhTDOF), _X(NULL), _Y(NULL), _verbose(verbose), _nCalls(0){
+                                  const Array<int>& essVhTDOF, bool timeDep, int verbose ):
+  _comm(comm), _timeDep(timeDep), _Fsolve(NULL), _essVhTDOF(essVhTDOF), _X(NULL), _Y(NULL), _verbose(verbose){
 
   if( F != NULL ) SetF(F);
   if( M != NULL ) SetM(M);
@@ -369,6 +374,7 @@ SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, c
 
 SpaceTimeSolver::~SpaceTimeSolver(){
   delete _Fsolve;
+  delete _F;
   delete _X;
   delete _Y;
 }
@@ -398,24 +404,26 @@ void SpaceTimeSolver::SetM( const SparseMatrix* M ){
 void SpaceTimeSolver::SetFSolve(){
   delete _Fsolve;
 
-  _Fsolve = new PetscLinearSolver( *_F, "VSolver_" );
-  PetscBool set;
-  PetscErrorCode ierr;
-  char optName[PETSC_MAX_PATH_LEN];
+  if ( _timeDep || _myRank == 0 ){
+    _Fsolve = new PetscLinearSolver( *_F, "VSolver_" );
 
-  _Fsolve->iterative_mode = true;  // trigger iterative mode...
-  ierr = PetscOptionsGetString( NULL ,"VSolver_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-  if( !strcmp( optName, "preonly" ) ){
-    char optName1[PETSC_MAX_PATH_LEN];
-    ierr = PetscOptionsGetString( NULL ,"VSolver_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-    if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
-      _Fsolve->iterative_mode = false;  // ...unless you're using ilu or lu
-    }
+    // PetscBool set;
+    // PetscErrorCode ierr;
+    // char optName[PETSC_MAX_PATH_LEN];
+    // _Fsolve->iterative_mode = true;  // trigger iterative mode...
+    // ierr = PetscOptionsGetString( NULL ,"VSolver_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+    // if( !strcmp( optName, "preonly" ) ){
+    //   char optName1[PETSC_MAX_PATH_LEN];
+    //   ierr = PetscOptionsGetString( NULL ,"VSolver_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+    //   if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
+    //     _Fsolve->iterative_mode = false;  // ...unless you're using ilu or lu
+    //   }
+    // }
   }
-
-  if ( _verbose && _myRank==0 && _Fsolve->iterative_mode ){
-    std::cout<<"Selected iterative solver for velocity time-stepping"<<std::endl;
-  }
+  
+  // if ( _verbose && _myRank==0 && _Fsolve->iterative_mode ){
+  //   std::cout<<"Selected iterative solver for velocity time-stepping"<<std::endl;
+  // }
 
 }
 
@@ -426,7 +434,9 @@ void SpaceTimeSolver::SetFSolve(){
 // Define multiplication by preconditioner (that is, time-stepping on the
 //  velocity space-time block)- the most relevant function here
 void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
-  MFEM_ASSERT( _Fsolve != NULL, "Solver for velocity spatial operator not initialised" );
+  if ( _timeDep || _myRank == 0 ){
+    MFEM_ASSERT( _Fsolve != NULL, "Solver for velocity spatial operator not initialised" );
+  }
   MFEM_ASSERT( _M      != NULL, "Velocity mass matrix not initialised" );
   MFEM_ASSERT(x.Size() == Width(), "invalid x.Size() = " << x.Size()
               << ", expected size = " << Width());
@@ -455,8 +465,8 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
 
 
   if ( _verbose ){
-    std::cout<<"Inside V-block, rank "<<_myRank<<", rhs for u: "; y.Print(std::cout, y.Size());
-    std::cout<<"Inside V-block, rank "<<_myRank<<", IG  for u: "; x.Print(std::cout, x.Size());
+    std::cout<<"Inside V-block, rank "<<_myRank<<", rhs for u: "; x.Print(std::cout, x.Size());
+    std::cout<<"Inside V-block, rank "<<_myRank<<", IG  for u: "; y.Print(std::cout, y.Size());
 
     std::ofstream myfile;
     std::string myfilename = std::string("./results/rhsu.dat");
@@ -470,53 +480,142 @@ void SpaceTimeSolver::Mult( const Vector &x, Vector &y ) const{
     myfile.close( );
   }
 
-
-  // these will contain rhs for each time-step
-  Vector b( spaceDofs );
-  b = 0.;
-
-
-
-  // Main "time-stepping" routine
   
-  // - receive solution from previous processor (unless initial time-step)
-  if ( _myRank > 0 ){
-    MPI_Recv( b.GetData(), spaceDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
-  }
+  // If the spatial operator is time-dependent, then each processor will have to solve for its own time-step
+  if ( _timeDep ){
 
-  // - define rhs for this step (including contribution from sol at previous time-step
-  for ( int i = 0; i < spaceDofs; ++i ){
-    b.GetData()[i] += _X->GetData()[i];
-  }
-
-  // - solve for current time-step
-  //  --if an iterative solver is set, _Y acts as an initial guess
-  _Fsolve->Mult( b, *_Y );
+    // these will contain rhs for each time-step
+    Vector b( spaceDofs );
+    b = 0.;
 
 
 
-  if (_verbose ){
-    if ( _myRank==0 ){
-      std::cout<<"Solved for time-step: ";
+    // Main "time-stepping" routine
+    
+    // - receive solution from previous processor (unless initial time-step)
+    if ( _myRank > 0 ){
+      MPI_Recv( b.GetData(), spaceDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
     }
-    if ( _myRank<_numProcs-1){
-      std::cout<<_myRank<<", ";
+
+    // - define rhs for this step (including contribution from sol at previous time-step
+    for ( int i = 0; i < spaceDofs; ++i ){
+      b.GetData()[i] += _X->GetData()[i];
+    }
+
+    // - solve for current time-step
+    //  --if an iterative solver is set, _Y acts as an initial guess
+    _Fsolve->Mult( b, *_Y );
+
+
+
+    if (_verbose ){
+      if ( _myRank==0 ){
+        std::cout<<"Solved for time-step: ";
+      }
+      if ( _myRank<_numProcs-1){
+        std::cout<<_myRank<<", ";
+      }else{
+        std::cout<<_myRank<<std::endl;
+      }
+    }
+
+    // - send solution to following processor (unless last time-step)
+    if ( _myRank < _numProcs-1 ){
+      // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+      _M->Mult( *_Y, b );
+      // - M is stored with negative sign for velocity, so flip it
+      b.Neg();
+      // NB: _M should be defined so that essential BC are not dirtied! So the next command is useless
+      // b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
+
+      MPI_Send( b.GetData(), spaceDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
+    }
+
+
+
+
+  // If the spatial operator is constant, however, we can have rank 0 take care of all the solutions
+  }else{
+    // - broadcast IG and rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
+    Vector *glbRhs = _X->GlobalVector();
+    Vector *glbIG  = _Y->GlobalVector();
+
+  
+    // Master performs time-stepping and sends solution to other processors
+    if ( _myRank == 0 ){
+
+      // - this will contain rhs for each time-step
+      Vector b( spaceDofs );
+      b = 0.;
+
+
+      // Main time-stepping routine
+      for ( int t = 0; t < _numProcs; ++t ){
+
+        // - define rhs for this step (including contribution from sol at previous time-step - see below)
+        for ( int i = 0; i < spaceDofs; ++i ){
+          b.GetData()[i] += glbRhs->GetData()[ i + spaceDofs * t ];
+        }
+
+        // - initialise local vector containing solution at single time-step
+        Vector lclSol( spaceDofs );
+        for ( int i = 0; i < spaceDofs; ++i ){
+          lclSol.GetData()[i] = glbIG->GetData()[spaceDofs*t + i];
+        }
+
+        _Fsolve->Mult( b, lclSol );
+
+        //  TODO: Maybe set to 0 the velocity solution on the dirichlet nodes?
+        // lclSol.SetSubVector( _essVhTDOF, 0 );
+
+
+        if (_verbose ){
+          if ( t==0 ){
+            std::cout<<"Rank "<<_myRank<<" solved for time-step ";
+          }
+          if ( t<_numProcs-1){
+            std::cout<<t<<", ";
+          }else{
+            std::cout<<t<<std::endl;
+          }
+
+        }
+
+        // - send local solution to corresponding processor
+        if( t==0 ){
+          // that is, myself if first time step
+          for ( int j = 0; j < spaceDofs; ++j ){
+            _Y->GetData()[j] = lclSol.GetData()[j];
+          }
+        }else{
+          // or the right slave it if solution is later in time
+          MPI_Send( lclSol.GetData(), spaceDofs, MPI_DOUBLE, t, t, _comm );   // TODO: non-blocking + wait before solve?
+        }
+
+
+        // - include solution as rhs for next time-step
+        if( t < _numProcs-1 ){
+          _M->Mult( lclSol, b );
+          b.Neg();    //M has negative sign for velocity, so flip it
+          // NB: _M should be defined so that essential BC are not dirtied! So the next command is useless
+          // b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
+        }
+
+      }
+
     }else{
-      std::cout<<_myRank<<std::endl;
+      // Slaves receive data
+      MPI_Recv( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, _myRank, _comm, MPI_STATUS_IGNORE );
     }
+
+    // cleanup
+    delete glbIG;
+    delete glbRhs;
+
   }
 
-  // - send solution to following processor (unless last time-step)
-  if ( _myRank < _numProcs-1 ){
-    // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
-    _M->Mult( *_Y, b );
-    // - M is stored with negative sign for velocity, so flip it
-    b.Neg();
-    // NB: _M should be defined so that essential BC are not dirtied! So the next command is useless
-    // b.SetSubVector( _essVhTDOF, 0.0 );  // kill every contribution to the dirichlet-part of the solution
-
-    MPI_Send( b.GetData(), spaceDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
-  }
+  // Make sure we're all done
+  MPI_Barrier( _comm );
 
 
   if ( _verbose ){
@@ -713,7 +812,7 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
                                                       void(  *w)(const Vector &, double, Vector &),
 		                         							            void(  *u)(const Vector &, double, Vector &),
 		                         							            double(*p)(const Vector &, double ),
-                                                      bool verbose ):
+                                                      int verbose ):
 	_comm(comm), _dt(dt), _mu(mu), _Pe(Pe), _fFunc(f), _gFunc(g), _nFunc(n), _wFunc(w), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
   _MuAssembled(false), _FuAssembled(false), _MpAssembled(false), _ApAssembled(false), _WpAssembled(false), _BAssembled(false),
   _FFAssembled(false), _BBAssembled(false), _pSAssembled(false), _FFinvAssembled(false),
@@ -1438,15 +1537,17 @@ void StokesSTOperatorAssembler::AssemblePS(){
   _pSchur->SetAp( &_Ap );
   _pSchur->SetMp( &_Mp );
 
-  if( _essQhTDOF.Size() == 0 && _Pe == 0. ){
-    _pSchur->SetWp( &_Wp, true );   // flag that Wp and Ap are the same if there are no outflow conditions and no convective term
+  if( _Pe != 0. ){
+    _pSchur->SetWp( &_Wp, false );    // if there is convection, then clearly Wp differs from Ap (must include pressure convection)
+  }else if( _essQhTDOF.Size() == 0 ){ // otherwise, if there is no outflow
+    _pSchur->SetWp( &_Wp, true );    
   }else{
-    _pSchur->SetWp( &_Wp, false );
-    if ( _myRank==0 && _Pe==0. ){
-      std::cout<<"Warning: spatial part of Fp and Ap flagged to be different, even though there is no convection."<<std::endl
-               <<"         This makes sense, since Elman/Silvester/Wathen mentions the BC of the two operators"<<std::endl
-               <<"         should be different if there is outflow. However, results seem much better if dir BC"<<std::endl
-               <<"         are implemented for both Fp and Ap (rather than having rob for Fp and dir for Ap)"<<std::endl;
+    // _pSchur->SetWp( &_Wp, false );
+    _pSchur->SetWp( &_Wp, true );     // should be false, according to E/S/W!
+    if( _myRank == 0 ){
+      std::cout<<"Warning: spatial part of Fp and Ap flagged to be the same, even though there is outflow."<<std::endl
+               <<"         This goes against what Elman/Silvester/Wathen says (BC for Fp should be Robin"<<std::endl
+               <<"         BC for Ap should be neumann/dirichlet on out). However, results seem much better."<<std::endl;
     }
   }
 
@@ -1478,20 +1579,28 @@ void StokesSTOperatorAssembler::AssembleFFinv( const int spaceTimeSolverType = 0
   switch (spaceTimeSolverType){
     // Use sequential time-stepping to solve for velocity space-time block
     case 0:{
-      AssembleFuVarf();
-      AssembleMuVarf();
-
-      SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essVhTDOF, _verbose );
+      if(!( _MuAssembled && _FuAssembled )){
+        std::cerr<<"ERROR: AssembleFFinv: need to assemble mass matrix and spatial operator for velocity first!"<<std::endl;
+        return;
+      }
+      //                                             flag as time-dependent only if Pe is non-zero
+      SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essVhTDOF, _Pe!=0., _verbose );
 
       temp->SetF( &_Fu );
       temp->SetM( &_Mu );
       _FFinv = temp;
 
+      _FFinvAssembled = true;
+      
       break;
     }
 
     // Use BoomerAMG with AIR set-up
     case 1:{
+      if(! _FFAssembled ){
+        std::cerr<<"ERROR: AssembleFFinv: need to assemble velocity space-time matrix first!"<<std::endl;
+        return;
+      }
 
       // Initialise MFEM wrapper for BoomerAMG solver
       AssembleFF();
@@ -1505,29 +1614,67 @@ void StokesSTOperatorAssembler::AssembleFFinv( const int spaceTimeSolverType = 0
 
       _FFinv = temp;
   
+      _FFinvAssembled = true;
+
       break;
     }
     // Use GMRES with BoomerAMG precon
     case 2:{
 
-      // Initialise MFEM wrapper for BoomerAMG solver
-      AssembleFF();
-      HypreBoomerAMG *temp = new HypreBoomerAMG( *_FFF );
+      // TODO!!!
+      
+      // // Initialise MFEM wrapper for BoomerAMG solver
+      // AssembleFF();
+      // HypreBoomerAMG *temp = new HypreBoomerAMG( *_FFF );
 
-      // Cast as HYPRE_Solver to get the underlying hypre object
-      HYPRE_Solver FFinv( *temp );
+      // // Cast as HYPRE_Solver to get the underlying hypre object
+      // HYPRE_Solver FFinv( *temp );
 
-      // Set it up
-      SetUpBoomerAMG( FFinv );
+      // // Set it up
+      // SetUpBoomerAMG( FFinv );
 
-      _FFinv = temp;
+      // _FFinv = temp;
 
-      std::cerr<<"Space-time solver type "<<spaceTimeSolverType<<" not yet implemented."<<std::endl;
+      // _FFinvAssembled = true;
+      if ( _myRank == 0 ){
+        std::cerr<<"Space-time solver type "<<spaceTimeSolverType<<" not yet implemented."<<std::endl;
+      }
 
       break;
     }
-    default:
-      std::cerr<<"Space-time solver type "<<spaceTimeSolverType<<" not recognised."<<std::endl;
+
+    // Use Parareal with coarse/fine solver of different accuracies
+    case 3:{
+
+      const int maxIt = 2;
+
+      if( _numProcs <= maxIt ){
+        if( _myRank == 0 ){
+          std::cerr<<"ERROR: AssembleFFinv: Trying to set solver as "<<maxIt<<" iterations of Parareal, but the fine discretisation only has "<<_numProcs<<" nodes. "
+                   <<"This is equivalent to time-stepping, so I'm picking that as a solver instead."<<std::endl;
+        }
+        
+        AssembleFFinv( 0 );
+        return;
+      }
+
+
+      PararealSolver *temp  = new PararealSolver( _comm, NULL, NULL, NULL, maxIt, _verbose );
+
+      temp->SetF( &_Fu );
+      temp->SetC( &_Fu ); // same operator is used for both! it's the solver that changes, eventually...
+      temp->SetM( &_Mu );
+      _FFinv = temp;
+
+      _FFinvAssembled = true;
+      
+      break;
+    }
+    default:{
+      if ( _myRank == 0 ){
+        std::cerr<<"Space-time solver type "<<spaceTimeSolverType<<" not recognised."<<std::endl;
+      }
+    }
   }
 
   if(_verbose ){
@@ -1815,20 +1962,23 @@ void StokesSTOperatorAssembler::AssembleSystem( HypreParMatrix*& FFF,  HypreParM
   Array<int> empty;
 
 
-  if ( _verbose && _myRank == 0 ){
-    std::ofstream myfile;
-    std::string myfilename = "./results/out_original_B.dat";
-    myfile.open( myfilename );
-    (_bVarf->SpMat()).PrintMatlab(myfile);
-    myfile.close( );  
-    myfilename = "./results/out_original_F.dat";
-    myfile.open( myfilename );
-    (_fuVarf->SpMat()).PrintMatlab(myfile);
-    myfile.close( );  
-    myfilename = "./results/out_original_M.dat";
-    myfile.open( myfilename );
-    (_muVarf->SpMat()).PrintMatlab(myfile);
-    myfile.close( );  
+  if ( _verbose ){
+    if ( _myRank == 0 ){
+      std::ofstream myfile;
+      std::string myfilename = "./results/out_original_B.dat";
+      myfile.open( myfilename );
+      (_bVarf->SpMat()).PrintMatlab(myfile);
+      myfile.close( );  
+      myfilename = "./results/out_original_F.dat";
+      myfile.open( myfilename );
+      (_fuVarf->SpMat()).PrintMatlab(myfile);
+      myfile.close( );  
+      myfilename = "./results/out_original_M.dat";
+      myfile.open( myfilename );
+      (_muVarf->SpMat()).PrintMatlab(myfile);
+      myfile.close( );  
+    }
+    MPI_Barrier(_comm);
   }
 
 
@@ -2141,7 +2291,7 @@ void StokesSTOperatorAssembler::AssembleOperator( HypreParMatrix*& FFF, HyprePar
 
 
 // Assemble preconditioner
-//   P^-1 = [ FF^-1  0     ]
+//   P^-1 = [ FF^-1  ///// ]
 //          [ 0      XX^-1 ],
 // where FF contains space-time matrix for velocity,
 void StokesSTOperatorAssembler::AssemblePreconditioner( Operator*& FFi, Operator*& XXi, const int spaceTimeSolverType=0 ){
@@ -2239,6 +2389,9 @@ void StokesSTOperatorAssembler::ExactSolution( HypreParVector*& u, HypreParVecto
   u = new HypreParVector( _comm, (uFun.Size())*_numProcs, uFun.StealData(), rowStartsV.GetData() );
   p = new HypreParVector( _comm, (pFun.Size())*_numProcs, pFun.StealData(), rowStartsQ.GetData() );
 
+  u->SetOwnership( 1 );
+  p->SetOwnership( 1 );
+
 }
 
 
@@ -2279,7 +2432,8 @@ void StokesSTOperatorAssembler::ComputeL2Error( const HypreParVector& uh, const 
 
 
 
-void StokesSTOperatorAssembler::SaveExactSolution(){
+void StokesSTOperatorAssembler::SaveExactSolution( const std::string& path="ParaView",
+                                                   const std::string& filename="STstokes_Ex" ){
   if( _myRank == 0 ){
 
     // handy functions which will contain solution at single time-steps
@@ -2287,8 +2441,8 @@ void StokesSTOperatorAssembler::SaveExactSolution(){
     GridFunction *pFun = new GridFunction( _QhFESpace );
 
     // set up paraview data file
-    ParaViewDataCollection paraviewDC( "STstokesEx", _mesh );
-    paraviewDC.SetPrefixPath("ParaView");
+    ParaViewDataCollection paraviewDC( filename, _mesh );
+    paraviewDC.SetPrefixPath(path);
     paraviewDC.SetLevelsOfDetail( 2 );
     paraviewDC.SetDataFormat(VTKFormat::BINARY);
     paraviewDC.SetHighOrderOutput(true);
@@ -2319,7 +2473,8 @@ void StokesSTOperatorAssembler::SaveExactSolution(){
 }
 
 
-void StokesSTOperatorAssembler::SaveSolution( const HypreParVector& uh, const HypreParVector& ph ){
+void StokesSTOperatorAssembler::SaveSolution( const HypreParVector& uh, const HypreParVector& ph,
+                                              const std::string& path="ParaView", const std::string& filename="STstokes" ){
   
   // gather parallel vector
   Vector *uGlb = uh.GlobalVector();
@@ -2333,8 +2488,8 @@ void StokesSTOperatorAssembler::SaveSolution( const HypreParVector& uh, const Hy
     GridFunction *pFun = new GridFunction( _QhFESpace );
 
     // set up paraview data file
-    ParaViewDataCollection paraviewDC( "STstokes", _mesh );
-    paraviewDC.SetPrefixPath("ParaView");
+    ParaViewDataCollection paraviewDC( filename, _mesh );
+    paraviewDC.SetPrefixPath(path);
     paraviewDC.SetLevelsOfDetail( 2 );
     paraviewDC.SetDataFormat(VTKFormat::BINARY);
     paraviewDC.SetHighOrderOutput(true);
@@ -2449,6 +2604,11 @@ StokesSTOperatorAssembler::~StokesSTOperatorAssembler(){
   delete _pSchur;
   delete _FFinv;
   delete _FFF;
+  if( _FFAssembled )
+    HYPRE_IJMatrixDestroy( _FF );
+  if( _BBAssembled )
+    HYPRE_IJMatrixDestroy( _BB );
+
   delete _fuVarf;
   delete _muVarf;
   delete _bVarf;

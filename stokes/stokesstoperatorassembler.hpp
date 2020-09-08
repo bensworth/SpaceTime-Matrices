@@ -19,6 +19,8 @@ private:
 	const MPI_Comm _comm;
 	int _numProcs;
 	int _myRank;
+
+	const bool _timeDep;		// flag identifying whether the spatial operator depends on time or not
   
   // relevant operators
   const PetscParMatrix *_F;
@@ -33,15 +35,15 @@ private:
   mutable HypreParVector* _X;
   mutable HypreParVector* _Y;
 
-	const bool _verbose;
+	const int _verbose;
 
-	mutable int _nCalls;			// count number of calls to solver - shouldn't be used
+	// mutable int _nCalls;			// count number of calls to solver - shouldn't be used
 
 
 public:
 
 	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
-		               const Array<int>& essVhTDOF=Array<int>(), bool verbose=false);
+		               const Array<int>& essVhTDOF=Array<int>(), bool timeDependent = true, int verbose=0);
 
   void Mult( const Vector& x, Vector& y ) const;
 
@@ -94,7 +96,7 @@ private:
   // dofs for pressure (useful not to dirty dirichlet BC in the solution procedure) - TODO: check this
 	const Array<int> _essQhTDOF;
 
-	const bool _verbose;
+	const int _verbose;
 
 
 public:
@@ -102,7 +104,7 @@ public:
 	StokesSTPreconditioner( const MPI_Comm& comm, double dt, double mu,
 		                      const SparseMatrix* Ap = NULL, const SparseMatrix* Mp = NULL, const SparseMatrix* Wp = NULL,
 		                      const Array<int>& essQhTDOF = Array<int>(),
-		                      bool verbose = false );
+		                      int verbose = 0 );
 	~StokesSTPreconditioner();
 
 
@@ -212,7 +214,7 @@ private:
   // BlockOperator _STstokesPrec;      // space-time block preconditioner
 
 
-	const bool _verbose;
+	const int _verbose;
 
 
 
@@ -226,7 +228,7 @@ public:
 		                         void(  *w)(const Vector &, double, Vector &),
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
-		                         bool verbose );
+		                         int verbose );
 	~StokesSTOperatorAssembler();
 
 
@@ -249,8 +251,8 @@ public:
 
 	void GetMeshSize( double& h_min, double& h_max, double& k_min, double& k_max ) const;
 	void ComputeL2Error( const HypreParVector& uh, const HypreParVector& ph );
-	void SaveSolution(   const HypreParVector& uh, const HypreParVector& ph );
-	void SaveExactSolution( );
+	void SaveSolution(   const HypreParVector& uh, const HypreParVector& ph, const std::string& path, const std::string& filename );
+	void SaveExactSolution( const std::string& path, const std::string& filename );
 	void PrintMatrices( const std::string& filename ) const;
 
 private:

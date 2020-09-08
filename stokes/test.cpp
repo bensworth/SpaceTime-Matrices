@@ -99,7 +99,9 @@ int main(int argc, char *argv[])
   int precType = 1;
   int STSolveType = 0;
   int pbType = 1;   
+  string pbName = "";
   int outSol = 0;
+  double Pe = 0.;
 
   // -parse parameters
   OptionsParser args(argc, argv);
@@ -112,7 +114,9 @@ int main(int argc, char *argv[])
   args.AddOption(&Tend, "-T", "--Tend",
                 "Final time.");
   args.AddOption(&pbType, "-Pb", "--problem",
-                "Problem: 0-driven cavity flow.");
+                "Problem: 0-analytical test, 1-driven cavity flow, 2-poiseuille, 3-flow over step, 4-double-glazing.");
+  args.AddOption(&Pe, "-Pe", "--peclet",
+                "Peclet number (only valid for Pb 4-double glazing)");
   args.AddOption(&precType, "-P", "--preconditioner",
                 "Type of preconditioner: 0-block diagonal, 1-block triangular.");
   args.AddOption(&STSolveType, "-ST", "--spacetimesolve",
@@ -132,16 +136,10 @@ int main(int argc, char *argv[])
     MPI_Finalize();
     return 1;
   }
-  if(myid == 0){
-    args.PrintOptions(cout);
-    std::cout<<"   --np "<<numProcs<<std::endl;
-    std::cout<<"   --dt "<<Tend/numProcs<<std::endl;
-  }
 
   // -initialise remaining parameters
   const double dt = Tend / numProcs;
   const double mu = 1.;                // CAREFUL NOT TO CHANGE THIS! Or if you do, re-define the normal derivative, too
-  double Pe = 0.;
 
   void(  *fFun)(   const Vector &, double, Vector& );
   double(*gFun)(   const Vector &, double );
@@ -161,6 +159,7 @@ int main(int argc, char *argv[])
       wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_an;
       pFun_ex = &pFun_ex_an;
+      pbName = "Analytic";
       break;
     }
     // driven cavity flow
@@ -172,6 +171,7 @@ int main(int argc, char *argv[])
       wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_cavity;
       pFun_ex = &pFun_ex_cavity;
+      pbName = "Cavity";
       break;
     }
     case 2:{
@@ -183,6 +183,7 @@ int main(int argc, char *argv[])
       wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_poiseuille;
       pFun_ex = &pFun_ex_poiseuille;
+      pbName = "Poiseuille";
       // if ( myid==0 ){
       //   std::cerr<<"Remember to change mesh back to tri-rectangle-poiseuille, and poiseuille func to the non-C version."<<std::endl;
       // }
@@ -196,6 +197,7 @@ int main(int argc, char *argv[])
       wFun    = &wFun_zero;
       uFun_ex = &uFun_ex_step;
       pFun_ex = &pFun_ex_step;
+      pbName = "Step";
       break;
     }
     case 4:{
@@ -206,7 +208,13 @@ int main(int argc, char *argv[])
       wFun    = &wFun_glazing;
       uFun_ex = &uFun_ex_glazing;
       pFun_ex = &pFun_ex_glazing;
-      Pe = 1;
+      pbName = "Glazing";
+      if (Pe <= 0.){
+        Pe = 1.0;
+        if ( myid == 0 ){
+          std::cerr<<"Double-glazing selected but Pe=0? Changed to Pe=1."<<std::endl;
+        }
+      }
       if ( myid == 0 ){
         std::cerr<<"Double-glazing flow still to implement."<<std::endl;
         std::cerr<<"Remember to include some sort of stabilisation for high Peclet."<<std::endl;
@@ -216,6 +224,13 @@ int main(int argc, char *argv[])
     default:
       std::cerr<<"Problem type "<<pbType<<" not recognised."<<std::endl;
   }
+
+  if(myid == 0){
+    args.PrintOptions(cout);
+    std::cout<<"   --np "<<numProcs<<std::endl;
+    std::cout<<"   --dt "<<Tend/numProcs<<std::endl;
+  }
+
 
   // - initialise petsc
   MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
@@ -321,7 +336,12 @@ int main(int argc, char *argv[])
   // Save residual evolution to file
   // - create folder which will store all files with various convergence evolution 
   string path = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                         + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType) + "_" + petscrc_file + "/";
+                         + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+  if(Pe > 0.){
+    path += "_Pe" + to_string(Pe);
+  }
+  path += string("_") + petscrc_file + "/";
+
   if (!std::experimental::filesystem::exists( path )){
     std::experimental::filesystem::create_directories( path );
   }
@@ -412,8 +432,11 @@ int main(int argc, char *argv[])
 
     ofstream myfile;
     string fname = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                        + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType)
-                        + "_" + petscrc_file + ".txt";
+                        + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+    if(Pe > 0.){
+      fname += "_Pe" + to_string(Pe);
+    }
+    fname += string("_") + petscrc_file + ".txt";
     myfile.open( fname, std::ios::app );
     myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
            << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
@@ -432,8 +455,10 @@ int main(int argc, char *argv[])
   HypreParVector ph( MPI_COMM_WORLD, numProcs*(BBB->NumRows()), sol.GetBlock(1).GetData(), colsP ); 
 
   if( outSol==1 ){
-    stokesAssembler->SaveSolution( uh, ph );
-    stokesAssembler->SaveExactSolution( );
+    string outFilePath = "ParaView";
+    string outFileName = "STstokes_" + pbName;
+    stokesAssembler->SaveSolution( uh, ph, outFilePath, outFileName );
+    stokesAssembler->SaveExactSolution(    outFilePath, outFileName+"_Ex" );
   }
   
 

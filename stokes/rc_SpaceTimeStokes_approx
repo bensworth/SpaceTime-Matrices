@@ -1,5 +1,6 @@
 # Config for outer solver (for global space-time matrix)
 -solver_ksp_type gmres
+#- to actually monitor the *real* residual (requires one extra application of the precon)
 #-solver_ksp_monitor_true_residual
 -solver_ksp_monitor_short
 -solver_ksp_rtol   1e-10
@@ -25,10 +26,10 @@
 # Solvers for Pressure Block preconditioner
 # - pressure 'laplacian'
 -PSolverLaplacian_ksp_type preonly
-#-PSolverLaplacian_ksp_rtol   0.0
-#-PSolverLaplacian_ksp_atol   0.0
-#-PSolverLaplacian_ksp_max_it 5
--PSolverLaplacian_pc_type ilu
+-PSolverLaplacian_pc_type lu
+# -- to make sure that zero pivot are excluded
+#-PSolverLaplacian_pc_factor_shift_type NONZERO
+#-PSolverLaplacian_pc_factor_shift_amount 1e-10
 # - pressure mass matrix
 -PSolverMass_ksp_type chebyshev
 # - -for linear triangles

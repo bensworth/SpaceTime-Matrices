@@ -1,5 +1,6 @@
 # Config for outer solver (for global space-time matrix)
 -solver_ksp_type gmres
+#- to actually monitor the *real* residual (requires one extra application of the precon)
 #-solver_ksp_monitor_true_residual
 -solver_ksp_monitor_short
 -solver_ksp_rtol   1e-10
@@ -21,12 +22,12 @@
 -VSolver_pc_hypre_boomeramg_max_levels 8
 -VSolver_pc_hypre_boomeramg_cycle_type W
 
-
 # Solvers for Pressure Block preconditioner
 # - pressure 'laplacian'
 # for some reason the manual states to use richardson as ksp rather than preonly if only boomeramg must be used
 -PSolverLaplacian_ksp_type richardson
--PSolverLaplacian_ksp_constant_null_space FALSE
+# -- to make sure non-trivial kernel is taken care of
+#-PSolverLaplacian_ksp_constant_null_space TRUE
 -PSolverLaplacian_ksp_rtol   0.0
 -PSolverLaplacian_ksp_atol   0.0
 -PSolverLaplacian_ksp_max_it 15
