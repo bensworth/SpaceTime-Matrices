@@ -3,8 +3,6 @@
 %  printouts of residual output after each GMRES iteration
 
 close all
-clear all
-clc
 
 % since this is a remote location, update list of matlab known files
 rehash path
@@ -12,10 +10,10 @@ rehash path
 
 % Problem parameters
 prec    = 1;	% preconditioner used (0: diag, 1:triangular)
-STsolve = 0;  % whether the space-time velocity block is solved via time-stepping (0) or with AMG (1)
+STsolve = 2;  % solver for space-time velocity block: time-stepping 0, AMG 1, GMRES+AMG 2, parareal 3
 PBtype  = 2;  % type of problem (1:cavity, 2:poiseuille, 3:step, 4:glazing)
 Pe      = 1;  % peclet numer (only used if PBtype==4)
-opts    = 'rc_SpaceTimeStokes_approx2';  % list of petsc options used
+opts    = '_temp';  % list of petsc options used: direct: '', iterative: '_approx2'
 
 peString = '';
 if ( PBtype == 4 && Pe >= 0 )
@@ -26,8 +24,12 @@ tol = 1e-6;	% required tolerance to decide whether convergence was reached or no
 
 path = ['./convergence_results_Prec', num2str(prec),  ...
 	      '_STsolve', num2str(STsolve), '_oU2_oP1_Pb',...
-        num2str(PBtype),peString,'_',opts];
+        num2str(PBtype),peString,'_rc_SpaceTimeStokes', opts];
+if ( PBtype == 4 || PBtype == 1 )
+	path = [path, '_SingAp'];
+end
 
+			
 if( ~exist(path,'dir') )
 	disp('No results for specified experiment were found');
 else

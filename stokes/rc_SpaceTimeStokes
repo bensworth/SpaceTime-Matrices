@@ -9,6 +9,7 @@
 -solver_ksp_gmres_restart 100	
 -solver_ksp_pc_side RIGHT
 -solver_ksp_initial_guess_nonzero TRUE
+-solver_ksp_gmres_modifiedgramschmidt
 
 # Solver for Velocity Block preconditioner
 -VSolver_ksp_type 	preonly

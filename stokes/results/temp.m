@@ -1,11 +1,17 @@
-filename = 'original_Fu.dat';
-Fu   = spconvert(load(filename));
-filename = 'dirichlet_Fu.dat';
-Fud  = spconvert(load(filename));
-
-filename = 'original_B.dat';
+filename = 'out_original_F6.dat';
+F6   = spconvert(load(filename));
+filename = 'out_original_F0.dat';
+F0   = spconvert(load(filename));
+filename = 'out_original_M.dat';
+Mu  = spconvert(load(filename));
+filename = 'out_original_B.dat';
 B   = spconvert(load(filename));
-filename = 'dirichlet_B.dat';
+
+filename = 'out_final_F.dat';
+Fud  = spconvert(load(filename));
+filename = 'out_final_M.dat';
+Mud = spconvert(load(filename));
+filename = 'out_final_B.dat';
 Bd  = spconvert(load(filename));
 
 filename = 'original_f.dat';

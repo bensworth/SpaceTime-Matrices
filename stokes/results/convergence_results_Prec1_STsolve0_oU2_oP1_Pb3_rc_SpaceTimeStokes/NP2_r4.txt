@@ -3,26 +3,26 @@
   1 KSP Residual norm 3.506877245011e-02 
   2 KSP Residual norm 1.848931657396e-02 
   3 KSP Residual norm 1.065722799391e-02 
-  4 KSP Residual norm 4.033095451555e-03 
+  4 KSP Residual norm 4.033095451554e-03 
   5 KSP Residual norm 1.318894803263e-03 
-  6 KSP Residual norm 4.945100225737e-04 
-  7 KSP Residual norm 2.630007465045e-04 
-  8 KSP Residual norm 1.318475780090e-04 
-  9 KSP Residual norm 6.163649666513e-05 
- 10 KSP Residual norm 2.936611810697e-05 
- 11 KSP Residual norm 1.816629969402e-05 
- 12 KSP Residual norm 1.086448650017e-05 
- 13 KSP Residual norm 9.105338058272e-06 
- 14 KSP Residual norm 5.797824000859e-06 
- 15 KSP Residual norm 2.976733731943e-06 
- 16 KSP Residual norm 1.437450197891e-06 
- 17 KSP Residual norm 6.430975763929e-07 
- 18 KSP Residual norm 2.676480707127e-07 
- 19 KSP Residual norm 1.256335928801e-07 
- 20 KSP Residual norm 6.764061353453e-08 
- 21 KSP Residual norm 3.142285127969e-08 
- 22 KSP Residual norm 1.049967620309e-08 
- 23 KSP Residual norm 4.195720595692e-09 
- 24 KSP Residual norm 1.850469961880e-09 
- 25 KSP Residual norm 1.001312387936e-09 
- 26 KSP Residual norm 4.238748622286e-10 
+  6 KSP Residual norm 4.945100225708e-04 
+  7 KSP Residual norm 2.630007465141e-04 
+  8 KSP Residual norm 1.318475780221e-04 
+  9 KSP Residual norm 6.163649642276e-05 
+ 10 KSP Residual norm 2.936611858887e-05 
+ 11 KSP Residual norm 1.816629743323e-05 
+ 12 KSP Residual norm 1.086435903708e-05 
+ 13 KSP Residual norm 9.105178177615e-06 
+ 14 KSP Residual norm 5.797819253559e-06 
+ 15 KSP Residual norm 2.976733637662e-06 
+ 16 KSP Residual norm 1.437450238998e-06 
+ 17 KSP Residual norm 6.430975739962e-07 
+ 18 KSP Residual norm 2.676480752853e-07 
+ 19 KSP Residual norm 1.256335926559e-07 
+ 20 KSP Residual norm 6.764061298472e-08 
+ 21 KSP Residual norm 3.142285128996e-08 
+ 22 KSP Residual norm 1.049967612277e-08 
+ 23 KSP Residual norm 4.195720454270e-09 
+ 24 KSP Residual norm 1.850470717425e-09 
+ 25 KSP Residual norm 1.001314195960e-09 
+ 26 KSP Residual norm 4.238362997481e-10 

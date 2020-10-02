@@ -5,14 +5,26 @@
 // with space-time block preconditioning.
 // 
 // - Solver support from PETSc
-// - For information on the block preconditioner, see the book:
+//    Some PETSc solvers are used within this program: the tags to use to
+//    prescribe the corresponding PETSc options at runtime are, resp.:
+//    - solver_  : outer solver (usually GMRES or FGMRES)
+//    - Vsolver_ : solver for velocity spatial operator, used when
+//                 time-stepping is prescribed (usually LU/AMG)
+//    - VCoarseSolver_ : coarse solver for velocity spatial operator, used
+//                       when Parareal is prescribed (usually a simpler AMG)
+//    - PSolverLaplacian_ : solver for pressure 'laplacian' (usually LU/AMG)
+//                          Careful to signal non-trivial kernel if needed!
+//    - PSolverMass_ : solver for pressure mass matrix (usually LU, or
+//                     chebyshev iterations)
+//  
+// - For information on the components of the block preconditioner, see:
 //    H. Elman, D. Silvester, and A. Wathen. Finite elements and fast
 //    iterative solvers: with applications in incompressible fluid dynamics.
 //
 // Author: Federico Danieli, Numerical Analysis Group
 // University of Oxford, Dept. of Mathematics
 // email address: federico.danieli@maths.ox.ac.uk  
-// April 2020; Last revision: Aug-2020
+// April 2020; Last revision: Oct-2020
 //
 // Acknowledgement to: S. Rhebergen (University of Waterloo)
 // Code based on MFEM's example ex5p.cpp.
@@ -65,6 +77,11 @@ double pFun_ex_poiseuilleC(const Vector & x, const double t             );
 void   fFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
 void   nFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
 double gFun_poiseuilleC(   const Vector & x, const double t             );
+void   uFun_ex_poiseuilleM(const Vector & x, const double t, Vector & u );  // mirrored wrt y axis counterpart
+double pFun_ex_poiseuilleM(const Vector & x, const double t             );  //  this is just for debugging: errors seemed to accumulate
+void   fFun_poiseuilleM(   const Vector & x, const double t, Vector & f );  //  at inflow corners, so I'm checking if it's an implementation
+void   nFun_poiseuilleM(   const Vector & x, const double t, Vector & f );  //  issue, or if it's just the way it is - seem like implementation is ok
+double gFun_poiseuilleM(   const Vector & x, const double t             );
 // - flow over step
 void   uFun_ex_step( const Vector & x, const double t, Vector & u );
 double pFun_ex_step( const Vector & x, const double t             );
@@ -79,9 +96,21 @@ void   nFun_glazing(    const Vector & x, const double t, Vector & f );
 void   wFun_glazing(    const Vector & x, const double t, Vector & f );
 double gFun_glazing(    const Vector & x, const double t             );
 //---------------------------------------------------------------------------
+// Handy function for monitoring quantities of interest - predefinition
+struct UPErrorMonitorCtx{// Context of function to monitor actual error
+  int lenghtU;
+  int lenghtP;
+  StokesSTOperatorAssembler* STassembler;
+  MPI_Comm comm;
+  PetscViewerAndFormat *vf;
+  std::string path;
+};
+
+PetscErrorCode UPErrorMonitorDestroy( void ** mctx );
+PetscErrorCode UPErrorMonitor( KSP ksp, PetscInt n, PetscReal rnorm, void *mctx );
+//---------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
-  StopWatch chrono;
 
   // for now, assume no spatial parallelisation: each processor handles a time-step
   int numProcs, myid;
@@ -100,33 +129,33 @@ int main(int argc, char *argv[])
   int STSolveType = 0;
   int pbType = 1;   
   string pbName = "";
-  int outSol = 0;
+  int output = 2;
   double Pe = 0.;
 
   // -parse parameters
   OptionsParser args(argc, argv);
   args.AddOption(&ordU, "-oU", "--orderU",
-                "Finite element order (polynomial degree) for velocity field.");
+                "Finite element order (polynomial degree) for velocity field (default: 2)");
   args.AddOption(&ordP, "-oP", "--orderP",
-                "Finite element order (polynomial degree) for pressure field.");
+                "Finite element order (polynomial degree) for pressure field (default: 1)");
   args.AddOption(&ref_levels, "-r", "--rlevel",
-                "Refinement level.");
+                "Refinement level (default: 4)");
   args.AddOption(&Tend, "-T", "--Tend",
-                "Final time.");
+                "Final time (default: 1.0)");
   args.AddOption(&pbType, "-Pb", "--problem",
-                "Problem: 0-analytical test, 1-driven cavity flow, 2-poiseuille, 3-flow over step, 4-double-glazing.");
+                "Problem: 0-analytical test, 1-driven cavity flow (default), 2-poiseuille, 3-flow over step, 4-double-glazing.");
   args.AddOption(&Pe, "-Pe", "--peclet",
-                "Peclet number (only valid for Pb 4-double glazing)");
+                "Peclet number (only valid for Pb 4-double glazing) (default: 1.0)");
   args.AddOption(&precType, "-P", "--preconditioner",
-                "Type of preconditioner: 0-block diagonal, 1-block triangular.");
+                "Type of preconditioner: 0-block diagonal, 1-block triangular (default)");
   args.AddOption(&STSolveType, "-ST", "--spacetimesolve",
-                "Type of solver for velocity space-time matrix: 0-time stepping, 1-boomerAMG (AIR).");
+                "Type of solver for velocity space-time matrix: 0-time stepping (default), 1-boomerAMG (AIR), 2-GMRES+boomerAMG (AIR), 3-Parareal");
   args.AddOption(&petscrc_file, "-petscopts", "--petscopts",
                 "PetscOptions file to use.");
   args.AddOption(&verbose, "-V", "--verbose",
-                "Control how much info to print.");
-  args.AddOption(&outSol, "-out", "--outputsol",
-                "Choose to print paraview-friendly file with exact (if available) and recovered solution: 0-no, 1-yes.");
+                "Control how much info to print to terminal.");
+  args.AddOption(&output, "-out", "--outputsol",
+                "Choose how much info to store on disk. 0-nothing, 1+#it to convergence, 2+residual evolution (default), 3+paraview plot of exact (if available) and approximate solution");
   args.Parse();
   if(!args.Good()){
     if(myid == 0)
@@ -160,6 +189,7 @@ int main(int argc, char *argv[])
       uFun_ex = &uFun_ex_an;
       pFun_ex = &pFun_ex_an;
       pbName = "Analytic";
+      Pe = 0.0;
       break;
     }
     // driven cavity flow
@@ -172,6 +202,7 @@ int main(int argc, char *argv[])
       uFun_ex = &uFun_ex_cavity;
       pFun_ex = &pFun_ex_cavity;
       pbName = "Cavity";
+      Pe = 0.0;
       break;
     }
     case 2:{
@@ -184,9 +215,7 @@ int main(int argc, char *argv[])
       uFun_ex = &uFun_ex_poiseuille;
       pFun_ex = &pFun_ex_poiseuille;
       pbName = "Poiseuille";
-      // if ( myid==0 ){
-      //   std::cerr<<"Remember to change mesh back to tri-rectangle-poiseuille, and poiseuille func to the non-C version."<<std::endl;
-      // }
+      Pe = 0.0;
       break;
     }
     case 3:{
@@ -198,6 +227,7 @@ int main(int argc, char *argv[])
       uFun_ex = &uFun_ex_step;
       pFun_ex = &pFun_ex_step;
       pbName = "Step";
+      Pe = 0.0;
       break;
     }
     case 4:{
@@ -212,17 +242,31 @@ int main(int argc, char *argv[])
       if (Pe <= 0.){
         Pe = 1.0;
         if ( myid == 0 ){
-          std::cerr<<"Double-glazing selected but Pe=0? Changed to Pe=1."<<std::endl;
+          std::cerr<<"Warning: Double-glazing selected but Pe=0? Changed to Pe=1"<<std::endl;
         }
       }
       if ( myid == 0 ){
-        std::cerr<<"Double-glazing flow still to implement."<<std::endl;
-        std::cerr<<"Remember to include some sort of stabilisation for high Peclet."<<std::endl;
+        std::cerr<<"Warning: Double-glazing flow only works if w*n = 0 on bdr for now."<<std::endl
+                 <<"         Also, some sort of stabilisation must be included for high Peclet."<<std::endl;
       }
       break;
     }
+    case 20:{
+      // mesh_file = "./meshes/tri-rectangle-poiseuille.mesh";
+      mesh_file = "./meshes/tri-square-poiseuille-mirror.mesh";
+      fFun    = &fFun_poiseuilleM;
+      gFun    = &gFun_poiseuilleM;
+      nFun    = &nFun_poiseuilleM;
+      wFun    = &wFun_zero;
+      uFun_ex = &uFun_ex_poiseuilleM;
+      pFun_ex = &pFun_ex_poiseuilleM;
+      pbName = "PoiseuilleM";
+      Pe = 0.0;
+      break;
+    }
+
     default:
-      std::cerr<<"Problem type "<<pbType<<" not recognised."<<std::endl;
+      std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
   }
 
   if(myid == 0){
@@ -246,22 +290,17 @@ int main(int argc, char *argv[])
   HypreParMatrix *FFF, *BBB, *BBt;
   Operator *FFi, *XXi;
   HypreParVector  *frhs, *grhs, *uEx, *pEx, *U0, *P0;
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Assembling system and rhs *********************************\n";
+  }
   stokesAssembler->AssembleSystem( FFF, BBB, frhs, grhs, U0, P0 );
-
-
-
-
-  stokesAssembler->AssemblePreconditioner( FFi, XXi, STSolveType );
-  // stokesAssembler->AssembleRhs( frhs, grhs );
   BBt = BBB->Transpose( );
-
 
   Array<int> offsets(3);
   offsets[0] = 0;
   offsets[1] = FFF->NumRows();
   offsets[2] = BBB->NumRows();
   offsets.PartialSum();
-
 
   BlockVector sol(offsets), rhs(offsets);
   rhs.GetBlock(0) = *frhs;
@@ -275,9 +314,18 @@ int main(int argc, char *argv[])
   stokesOp->SetBlock(1, 0, BBB);
 
 
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Assembling operators for preconditioner *******************\n";
+  }
+  stokesAssembler->AssemblePreconditioner( FFi, XXi, STSolveType );
+
+
   stokesAssembler->ExactSolution( uEx, pEx );
 
 
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Set-up solver *********************************************\n";
+  }
 
   // Define solver
   PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
@@ -317,7 +365,9 @@ int main(int argc, char *argv[])
       break;
     }
     default:{
-      std::cerr<<"Option for preconditioner "<<precType<<" not recognised"<<std::endl;
+      if ( myid == 0 ){
+        std::cerr<<"ERROR: Option for preconditioner "<<precType<<" not recognised"<<std::endl;
+      }
       break;
     }
   }
@@ -328,95 +378,65 @@ int main(int argc, char *argv[])
 
 
   solver->SetOperator(*stokesOp);
-  // solver->SetAbsTol(1e-10);
-  // solver->SetMaxIter( FFF->GetGlobalNumRows() + BBB->GetGlobalNumRows() );
-  // solver->SetPrintLevel(1);
 
 
   // Save residual evolution to file
-  // - create folder which will store all files with various convergence evolution 
-  string path = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                         + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
-  if(Pe > 0.){
-    path += "_Pe" + to_string(Pe);
+  if ( output>1 ){
+    // - create folder which will store all files with various convergence evolution 
+    string path = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                           + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+    if(pbType == 4 ){
+      path += "_Pe" + to_string(Pe);
+    }
+    path += string("_") + petscrc_file + "/";
+
+    if (!std::experimental::filesystem::exists( path )){
+      std::experimental::filesystem::create_directories( path );
+    }
+    string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
+    // - create viewer to instruct KSP object how to print residual evolution to file
+    PetscViewer    viewer;
+    PetscViewerAndFormat *vf;
+    PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
+    PetscViewerSetType( viewer, PETSCVIEWERASCII );
+    PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
+    PetscViewerFileSetName( viewer, filename.c_str() );
+    // - register it to the ksp object
+    KSP ksp = *solver;
+    PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
+    PetscViewerDestroy( &viewer );
+    // - create a more complex context if fancier options must be printed (error wrt analytical solution)
+    // UPErrorMonitorCtx mctx;
+    // mctx.lenghtU = offsets[1];
+    // mctx.lenghtP = offsets[2] - offsets[1];
+    // mctx.STassembler = stokesAssembler;
+    // mctx.comm = MPI_COMM_WORLD;
+    // mctx.vf   = vf;
+    // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
+    // UPErrorMonitorCtx* mctxptr = &mctx;
+    // if( pbType == 2 || pbType == 20 ){
+    //   if ( myid == 0 ){
+    //     std::cout<<"Warning: we're printing the error wrt the analytical solution at each iteration."<<std::endl
+    //              <<"         This is bound to slow down GMRES *a lot*, so leave this code only for testing purposes!"<<std::endl;
+    //   }
+    //   KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPErrorMonitor, mctxptr, NULL );
+    // }else
+    KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
   }
-  path += string("_") + petscrc_file + "/";
-
-  if (!std::experimental::filesystem::exists( path )){
-    std::experimental::filesystem::create_directories( path );
-  }
-  string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
-  // - create viewer to instruct KSP object how to print residual evolution
-  PetscViewer    viewer;
-  PetscViewerAndFormat *vf;
-  PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
-  PetscViewerSetType( viewer, PETSCVIEWERASCII );
-  PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
-  PetscViewerFileSetName( viewer, filename.c_str() );
-  // - register it to the ksp object
-  KSP ksp = *solver;
-  PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
-  PetscViewerDestroy( &viewer );
-  KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault, vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
-
-
-
 
 
 
 
   // SOLVE SYSTEM -----------------------------------------------------------
-  // Vector *glb = U0->GlobalVector();
-  // if ( myid == 0 ){        
-  //   std::cout<<"Initial guess on u:"<<std::endl;
-  //   for ( int i = 0; i < glb->Size(); ++i ){
-  //     std::cout<<glb->GetData()[i]<<" ";
-  //   }
-  //   std::cout<<std::endl;
-  // }
-  // delete glb;
-  // glb = P0->GlobalVector();
-  // if ( myid == 0 ){        
-  //   std::cout<<"Initial guess on p:"<<std::endl;
-  //   for ( int i = 0; i < glb->Size(); ++i ){
-  //     std::cout<<glb->GetData()[i]<<" ";
-  //   }
-  //   std::cout<<std::endl;
-  // }
-  // delete glb;
-  // glb = frhs->GlobalVector();
-  // if ( myid == 0 ){        
-  //   std::cout<<"Global RHS for u:"<<std::endl;
-  //   for ( int i = 0; i < glb->Size(); ++i ){
-  //     std::cout<<glb->GetData()[i]<<" ";
-  //   }
-  //   std::cout<<std::endl;
-  // }
-  // delete glb;
-  // glb = grhs->GlobalVector();
-  // if ( myid == 0 ){        
-  //   std::cout<<"Global RHS for p:"<<std::endl;
-  //   for ( int i = 0; i < glb->Size(); ++i ){
-  //     std::cout<<glb->GetData()[i]<<" ";
-  //   }
-  //   std::cout<<std::endl;
-  // }
-  // delete glb;
-  // MPI_Barrier(MPI_COMM_WORLD);
-
-  // std::string myfilename = std::string("./results/IGu.dat");
-  // U0->Print( myfilename.c_str() );
-  // myfilename = std::string("./results/RHSu.dat");
-  // frhs->Print( myfilename.c_str() );
-  // myfilename = std::string("./results/IGp.dat");
-  // P0->Print( myfilename.c_str() );
-  // myfilename = std::string("./results/RHSp.dat");
-  // grhs->Print( myfilename.c_str() );
-  
-
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "SOLVE! ****************************************************\n";
+  }
   solver->Mult(rhs, sol);
 
 
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Post-processing *******************************************\n";
+  }
 
   // OUTPUT -----------------------------------------------------------------
   if (myid == 0){
@@ -427,34 +447,36 @@ int main(int argc, char *argv[])
     }
     std::cout << " iterations. Residual norm is " << solver->GetFinalNorm() << ".\n";
   
-    double hmin, hmax, kmin, kmax;
-    stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
+    if( output>0 ){
+      double hmin, hmax, kmin, kmax;
+      stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
 
-    ofstream myfile;
-    string fname = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                        + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
-    if(Pe > 0.){
-      fname += "_Pe" + to_string(Pe);
+      ofstream myfile;
+      string fname = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                          + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+      if( pbType == 4 ){
+        fname += "_Pe" + to_string(Pe);
+      }
+      fname += string("_") + petscrc_file + ".txt";
+      myfile.open( fname, std::ios::app );
+      myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
+             << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
+             << solver->GetNumIterations() << std::endl;
+      myfile.close();
     }
-    fname += string("_") + petscrc_file + ".txt";
-    myfile.open( fname, std::ios::app );
-    myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
-           << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
-           << solver->GetNumIterations() << std::endl;
-    myfile.close();
-
   }
 
 
 
 
-  int colsV[2] = { myid*(FFF->NumRows()), (myid+1)*(FFF->NumRows()) };
-  int colsP[2] = { myid*(BBB->NumRows()), (myid+1)*(BBB->NumRows()) };
 
-  HypreParVector uh( MPI_COMM_WORLD, numProcs*(FFF->NumRows()), sol.GetBlock(0).GetData(), colsV ); 
-  HypreParVector ph( MPI_COMM_WORLD, numProcs*(BBB->NumRows()), sol.GetBlock(1).GetData(), colsP ); 
+  if( output>2 ){
+    int colsV[2] = { myid*(FFF->NumRows()), (myid+1)*(FFF->NumRows()) };
+    int colsP[2] = { myid*(BBB->NumRows()), (myid+1)*(BBB->NumRows()) };
 
-  if( outSol==1 ){
+    HypreParVector uh( MPI_COMM_WORLD, numProcs*(FFF->NumRows()), sol.GetBlock(0).GetData(), colsV ); 
+    HypreParVector ph( MPI_COMM_WORLD, numProcs*(BBB->NumRows()), sol.GetBlock(1).GetData(), colsP ); 
+
     string outFilePath = "ParaView";
     string outFileName = "STstokes_" + pbName;
     stokesAssembler->SaveSolution( uh, ph, outFilePath, outFileName );
@@ -462,6 +484,9 @@ int main(int argc, char *argv[])
   }
   
 
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Clean-up **************************************************\n";
+  }
 
 
   delete FFF;
@@ -482,10 +507,96 @@ int main(int argc, char *argv[])
    
 
   MFEMFinalizePetsc();
+  // HYPRE_Finalize();  //?
   MPI_Finalize();
 
   return 0;
 }
+
+
+
+
+// Function to destroy context of function to monitor actual error
+PetscErrorCode UPErrorMonitorDestroy( void ** mctx ){
+  PetscErrorCode ierr;
+  
+  UPErrorMonitorCtx *ctx = (UPErrorMonitorCtx*)mctx;
+  
+  ierr = PetscViewerAndFormatDestroy( &(ctx->vf)); CHKERRQ(ierr);
+  delete ctx;
+
+  return 0;
+}
+
+// Function to monitor actual error
+PetscErrorCode UPErrorMonitor( KSP ksp, PetscInt n, PetscReal rnorm, void *mctx ){
+  UPErrorMonitorCtx *ctx = (UPErrorMonitorCtx*)mctx;
+  Vec x;
+  double errU, errP, glbErrU, glbErrP;
+  PetscInt lclSize;
+
+  // recover current solution
+  KSPBuildSolution( ksp, NULL, &x );
+  VecGetLocalSize( x, &lclSize );
+
+  if( lclSize != (ctx->lenghtU + ctx->lenghtP) ){
+    std::cerr<<"ERROR! ErrorMonitor: Something went very wrong"<<std::endl
+             <<"       seems like the solution is stored in a weird way in the PETSC solver,"<<std::endl
+             <<"       and sizes mismatch: "<< lclSize << "=/="<<ctx->lenghtU<<"+"<<ctx->lenghtP<<std::endl;
+  }
+  
+  // get local raw pointer
+  double* vals;
+  VecGetArray( x, &vals );
+
+  // store in MFEM-friendly variables
+  Vector uh( vals,                ctx->lenghtU );  // hopefully that's the way it's stored in x, with u and p contiguos
+  Vector ph( vals + ctx->lenghtU, ctx->lenghtP );
+  
+
+  // compute error per each time step
+  ctx->STassembler->ComputeL2Error( uh, ph, errU, errP );
+
+  // compute Linf norm in time or errors
+  MPI_Reduce( &errU, &glbErrU, 1, MPI_DOUBLE, MPI_MAX, 0, ctx->comm );
+  MPI_Reduce( &errP, &glbErrP, 1, MPI_DOUBLE, MPI_MAX, 0, ctx->comm );
+  
+  // print
+  PetscViewer viewer =  ctx->vf->viewer;
+  PetscViewerPushFormat( viewer, ctx->vf->format);
+  // PetscViewerASCIIAddTab( viewer,((PetscObject)ksp)->tablevel );
+  if (n == 0 ) {// && ((PetscObject)ksp)->prefix) {
+    // PetscViewerASCIIPrintf(viewer,"  Residual norms for %s solve.\n",((PetscObject)ksp)->prefix);
+    PetscViewerASCIIPrintf(viewer,"  Residual norms for outer solver.\n");
+  }
+  PetscViewerASCIIPrintf(viewer,"%3D KSP Residual norm_erru_errp %14.12e\t%14.12e\t%14.12e \n",n,(double)rnorm,(double)errU,(double)errP);
+  // PetscViewerASCIISubtractTab(viewer,((PetscObject)ksp)->tablevel);
+  PetscViewerPopFormat(viewer);
+
+  // if( n%10 == 0 ){
+  //   int myid;
+  //   MPI_Comm_rank(ctx->comm, &myid);
+
+  //   if ( myid == 0 ){
+  //     std::cout<<"Saving plot of error in Paraview-friendly format"<<std::endl;
+  //   }
+  //   ctx->STassembler->SaveError( uh, ph, ctx->path + "it" + to_string(n) + "/", "error");
+  // }
+
+  // clean-up
+  // vector x should *not* be destroyed by user)
+  // delete vals;
+
+  return 0;
+    
+}
+
+
+
+
+
+
+
 
 
 
@@ -680,6 +791,9 @@ void wFun_zero(const Vector & x, const double t, Vector & w){
   w(0) = 0.;
   w(1) = 0.;
 }
+double wnFun_zero(const Vector & x, const double t ){
+  return 0.;
+}
 
 
 // Simple example -----------------------------------------------------------
@@ -823,7 +937,7 @@ void uFun_ex_poiseuille(const Vector & x, const double t, Vector & u){
 // Exact solution (pressure)
 double pFun_ex_poiseuille(const Vector & x, const double t ){
   double xx(x(0));
-  return -8.*t*(xx-8.);   // pressure is zero at outflow (xx=8)
+  return -8.*t*(xx-8.);   // pressure is zero at outflow (xx=8)- this way we can use the same function for both the long [0,8]x[0,1] and short [7,8]x[0,1] domains
 }
 
 // Rhs (velocity) - counterbalance dt term
@@ -882,6 +996,37 @@ double gFun_poiseuilleC(const Vector & x, const double t ){
 
 
 
+// Poiseuille flow (opposite velocity flow) ---------------------------------
+// Exact solution (velocity)
+void uFun_ex_poiseuilleM(const Vector & x, const double t, Vector & u){
+  double yy(x(1));
+  u(0) = - t * 4.*yy*(1.-yy);
+  u(1) = 0.0;
+}
+
+// Exact solution (pressure)
+double pFun_ex_poiseuilleM(const Vector & x, const double t ){
+  double xx(x(0));
+  return 8.*t*(xx-7.);   // pressure is zero at outflow (xx=7)
+}
+
+// Rhs (velocity) - counterbalance dt term
+void fFun_poiseuilleM(const Vector & x, const double t, Vector & f){
+  double yy(x(1));
+  f(0) = - 4.*yy*(1.-yy);
+  f(1) = 0.0;
+}
+
+// Normal derivative of velocity * mu - used only at outflow
+void nFun_poiseuilleM(const Vector & x, const double t, Vector & n){
+  n(0) = 0.0;
+  n(1) = 0.0;
+}
+
+// Rhs (pressure) - unused
+double gFun_poiseuilleM(const Vector & x, const double t ){
+  return 0.0;
+}
 
 
 
@@ -975,8 +1120,8 @@ void nFun_glazing(const Vector & x, const double t, Vector & n){
 void wFun_glazing(const Vector & x, const double t, Vector & w){
   double xx(x(0));
   double yy(x(1));
-  w(0) = - 10*t * 2.*(2*yy-1)*(4*xx*xx-4*xx+1); // (-t*2.*yy*(1-xx*xx) mapped from -1,1 to 0,1)
-  w(1) =   10*t * 2.*(2*xx-1)*(4*yy*yy-4*yy+1); // ( t*2.*xx*(1-yy*yy) mapped from -1,1 to 0,1)
+  w(0) = - t * 2.*(2*yy-1)*(4*xx*xx-4*xx+1); // (-t*2.*yy*(1-xx*xx) mapped from -1,1 to 0,1)
+  w(1) =   t * 2.*(2*xx-1)*(4*yy*yy-4*yy+1); // ( t*2.*xx*(1-yy*yy) mapped from -1,1 to 0,1)
 }
 
 // Rhs (pressure) - unused

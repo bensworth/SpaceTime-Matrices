@@ -9,6 +9,7 @@
 -solver_ksp_gmres_restart 100	
 -solver_ksp_pc_side RIGHT
 -solver_ksp_initial_guess_nonzero TRUE
+-solver_ksp_gmres_modifiedgramschmidt
 
 # Solver for Velocity Block preconditioner
 -VSolver_ksp_type 	richardson
@@ -32,8 +33,6 @@
 -VCoarseSolver_pc_hypre_boomeramg_max_iter 1
 -VCoarseSolver_pc_hypre_boomeramg_max_levels 2
 -VCoarseSolver_pc_hypre_boomeramg_cycle_type V
-
-
 
 
 # Solvers for Pressure Block preconditioner

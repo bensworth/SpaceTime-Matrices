@@ -11,60 +11,60 @@ using namespace mfem;
 
 
 
+// // Now defined in its own file
+// // "Inverse" of space-time matrix
+// class SpaceTimeSolver: public Solver{
 
-// "Inverse" of space-time matrix
-class SpaceTimeSolver: public Solver{
+// private:
+// 	const MPI_Comm _comm;
+// 	int _numProcs;
+// 	int _myRank;
 
-private:
-	const MPI_Comm _comm;
-	int _numProcs;
-	int _myRank;
-
-	const bool _timeDep;		// flag identifying whether the spatial operator depends on time or not
+// 	const bool _timeDep;		// flag identifying whether the spatial operator depends on time or not
   
-  // relevant operators
-  const PetscParMatrix *_F;
-  const SparseMatrix   *_M;
+//   // relevant operators
+//   const PetscParMatrix *_F;
+//   const SparseMatrix   *_M;
 
-	// solvers for relevant operator (with corresponding preconditioner, if iterative)
-  PetscLinearSolver *_Fsolve;
+// 	// solvers for relevant operator (with corresponding preconditioner, if iterative)
+//   PetscLinearSolver *_Fsolve;
 
-  // dofs for velocity (useful not to dirty dirichlet BC in the solution procedure)
- 	const Array<int> _essVhTDOF;
+//   // dofs for velocity (useful not to dirty dirichlet BC in the solution procedure)
+//  	const Array<int> _essVhTDOF;
 
-  mutable HypreParVector* _X;
-  mutable HypreParVector* _Y;
+//   mutable HypreParVector* _X;
+//   mutable HypreParVector* _Y;
 
-	const int _verbose;
+// 	const int _verbose;
 
-	// mutable int _nCalls;			// count number of calls to solver - shouldn't be used
-
-
-public:
-
-	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
-		               const Array<int>& essVhTDOF=Array<int>(), bool timeDependent = true, int verbose=0);
-
-  void Mult( const Vector& x, Vector& y ) const;
-
-  void SetF( const SparseMatrix* F );
-  void SetM( const SparseMatrix* M );
-
-	~SpaceTimeSolver();
-
-// to ensure implementation of Solver interface
-  inline void SetOperator(const Operator &op){
-  	std::cerr<<"SpaceTimeSolver::SetOperator( op ): You shouldn't invoke this function"<<std::endl;
-  };
+// 	// mutable int _nCalls;			// count number of calls to solver - shouldn't be used
 
 
-private:
-	void SetFSolve();
+// public:
+
+// 	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
+// 		               const Array<int>& essVhTDOF=Array<int>(), bool timeDependent = true, int verbose=0);
+
+//   void Mult( const Vector& x, Vector& y ) const;
+
+//   void SetF( const SparseMatrix* F );
+//   void SetM( const SparseMatrix* M );
+
+// 	~SpaceTimeSolver();
+
+// // to ensure implementation of Solver interface
+//   inline void SetOperator(const Operator &op){
+//   	std::cerr<<"SpaceTimeSolver::SetOperator( op ): You shouldn't invoke this function"<<std::endl;
+//   };
+
+
+// private:
+// 	void SetFSolve();
 
    
 
 
-}; //SpaceTimeSolver
+// }; //SpaceTimeSolver
 
 
 
@@ -198,11 +198,12 @@ private:
   bool _BAssembled;
 
   // - space-time blocks
-  HYPRE_IJMatrix _FF;								// Space-time velocity block
-  HypreParMatrix *_FFF;							// Space-time velocity block
-  HYPRE_IJMatrix _BB;								// space-time -div block
-  StokesSTPreconditioner *_pSchur;  // Approximation to space-time pressure Schur complement
-  Solver                  *_FFinv;  // Space-time velocity block solver
+  HYPRE_IJMatrix _FF;								   // Space-time velocity block
+  HypreParMatrix *_FFF;							   // Space-time velocity block
+  HYPRE_IJMatrix _BB;								   // space-time -div block
+  StokesSTPreconditioner *_pSchur;     // Approximation to space-time pressure Schur complement
+  Solver                 *_FFinv;      // Space-time velocity block solver
+  Solver                 *_FFinvPrec;  //  - with its preconditioner, in case
   bool _FFAssembled;
   bool _BBAssembled;
 	bool _pSAssembled;
@@ -250,9 +251,12 @@ public:
 	void TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol );
 
 	void GetMeshSize( double& h_min, double& h_max, double& k_min, double& k_max ) const;
-	void ComputeL2Error( const HypreParVector& uh, const HypreParVector& ph );
+	void ComputeL2Error( const Vector& uh, const Vector& ph, double& err_u, double& err_p );
+	// void ComputeVQError( const Vector& uh, const Vector& ph, double& err_u, double& err_p );
 	void SaveSolution(   const HypreParVector& uh, const HypreParVector& ph, const std::string& path, const std::string& filename );
+	void SaveSolution(   const Vector& uh, const Vector& ph, const std::string& path, const std::string& filename );
 	void SaveExactSolution( const std::string& path, const std::string& filename );
+	void SaveError(      const Vector& uh, const Vector& ph, const std::string& path, const std::string& filename );
 	void PrintMatrices( const std::string& filename ) const;
 
 private:
@@ -271,7 +275,7 @@ private:
 	void AssembleFFinv( const int spaceTimeSolverType );
 
 
-	void SetUpBoomerAMG( HYPRE_Solver& FFinv );
+	void SetUpBoomerAMG( HYPRE_Solver& FFinv, const int maxiter=15 );
 
 	void TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol );
 

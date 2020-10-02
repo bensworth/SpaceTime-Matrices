@@ -12,22 +12,26 @@ rehash path
 
 % Problem parameters
 prec    = 1;	% preconditioner used (0: diag, 1:triangular)
-STsolve = 3;  % whether the space-time velocity block is solved via time-stepping (0) or with AMG (1)
-PBtype  = 4;  % type of problem (1:cavity, 2:poiseuille, 3:step, 4:glazing)
-Pe      = 1;  % peclet numer (only used if PBtype==4)
-opts    = 'rc_SpaceTimeStokes_approx2';  % list of petsc options used
+STsolve = 0;  % solver for space-time velocity block: time-stepping 0, AMG 1, GMRES+AMG 2, parareal 3
+PBtype  = 3;  % type of problem (1:cavity, 2:poiseuille, 3:step, 4:glazing)
+Pe      = 10;  % peclet numer (only used if PBtype==4)
+opts    = '_approx2';  % list of petsc options used: direct: '', iterative: '_approx2'
 
 peString = '';
 if ( PBtype == 4 && Pe >= 0 )
 	peString = strcat('_Pe',num2str(Pe,'%10.6f'));
 end
  
-tol = 1e-6;	% required tolerance to decide whether convergence was reached or not
+tol = 1e-10;	% required tolerance to decide whether convergence was reached or not
 
 path = ['./convergence_results_Prec', num2str(prec),  ...
 	      '_STsolve', num2str(STsolve), '_oU2_oP1_Pb',...
-        num2str(PBtype),peString,'_',opts];
+        num2str(PBtype),peString,'_rc_SpaceTimeStokes', opts];
+if ( PBtype == 4 || PBtype == 1 )
+	path = [path, '_SingAp'];
+end
 
+			
 if( ~exist(path,'dir') )
 	disp('No results for specified experiment were found');
 else
