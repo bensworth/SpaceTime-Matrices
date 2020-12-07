@@ -143,7 +143,7 @@ int main(int argc, char *argv[])
   args.AddOption(&Tend, "-T", "--Tend",
                 "Final time (default: 1.0)");
   args.AddOption(&pbType, "-Pb", "--problem",
-                "Problem: 0-analytical test, 1-driven cavity flow (default), 2-poiseuille, 3-flow over step, 4-double-glazing.");
+                "Problem: 0-analytical test, 1-driven cavity flow (default), 2-poiseuille, 3-flow over step, 4-double-glazing, 5-NS driven cavity flow.");
   args.AddOption(&Pe, "-Pe", "--peclet",
                 "Peclet number (only valid for Pb 4-double glazing) (default: 1.0)");
   args.AddOption(&precType, "-P", "--preconditioner",
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
 
   // -initialise remaining parameters
   const double dt = Tend / numProcs;
-  const double mu = 1.;                // CAREFUL NOT TO CHANGE THIS! Or if you do, re-define the normal derivative, too
+  const double mu = 1.;                // CAREFUL NOT TO CHANGE THIS! Or if you do, re-define the normal derivative, too.
 
   void(  *fFun)(   const Vector &, double, Vector& );
   double(*gFun)(   const Vector &, double );
@@ -249,6 +249,24 @@ int main(int argc, char *argv[])
         std::cerr<<"Warning: Double-glazing flow only works if w*n = 0 on bdr for now."<<std::endl
                  <<"         Also, some sort of stabilisation must be included for high Peclet."<<std::endl;
       }
+      break;
+    }
+    // driven cavity flow - Navier Stokes
+    case 5:{
+      mesh_file = "./meshes/tri-square-cavity.mesh";
+      fFun    = &fFun_cavity;
+      gFun    = &gFun_cavity;
+      nFun    = &nFun_cavity;
+      wFun    = &wFun_zero;
+      uFun_ex = &uFun_ex_cavity;
+      pFun_ex = &pFun_ex_cavity;
+      pbName = "CavityNS";
+      // ugly hack: the convection term is multiplied by mu*Pe. For NS, this should be 1, regardless, so I'm tweaking Pe here.
+      Pe = 1.0/mu;
+      if ( myid == 0 ){
+        std::cerr<<"Warning: Picard iteration for Navier Stokes not (yet) implemented. Abort."<<std::endl;
+      }
+      return 1;
       break;
     }
     case 20:{
@@ -338,6 +356,24 @@ int main(int argc, char *argv[])
 
   // std::string filename = "operator";
   // stokesAssembler->PrintMatrices(filename);
+
+  // - Flag that most extreme eigs of precon system must be computed, if only one processor is given
+  if ( myid==0 && numProcs == 1 ){
+
+    // store also the actual matrices, if you want to compute the eigs externally
+    if( verbose > 3 ){
+      string path = string("./results/Operators/Pb")  + to_string(pbType) + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                         + "_oU"   + to_string(ordU)   + "_oP"             + to_string(ordP)  + "/";
+      if (!std::experimental::filesystem::exists( path )){
+        std::experimental::filesystem::create_directories( path );
+      }
+      path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
+      stokesAssembler->PrintMatrices(path);
+    }
+
+    KSP ksp = *solver;
+    KSPSetComputeEigenvalues( ksp, PETSC_TRUE );
+  }
 
 
 
@@ -431,14 +467,80 @@ int main(int argc, char *argv[])
   if( myid == 0 && verbose > 0 ){
     std::cout << "SOLVE! ****************************************************\n";
   }
+
+  // - Main solve routine
   solver->Mult(rhs, sol);
 
+  // - Eventually compute eigs
+  if ( myid==0 && numProcs == 1 ){
 
+    KSP ksp = *solver;
+    PetscInt Neigs = 100;
+    double *realPart = new double(Neigs);
+    double *imagPart = new double(Neigs);
+// #ifdef USE_SLEPC
+//     EPS eps;
+//     EPSType type; 
+//     PetscInt Nconveigs;
+//     PetscErrorCode ierr;
+//     Vec dummyr,dummyi;
+
+//     ierr = MatCreateVecs( (KSP)(*solver), NULL, &dummyr );CHKERRQ(ierr);
+//     ierr = MatCreateVecs( (KSP)(*solver), NULL, &dummyi );CHKERRQ(ierr);
+    
+//     ierr = EPSCreate( PETSC_COMM_WORLD, &eps );CHKERRQ(ierr);
+//     ierr = EPSSetOperators( eps, (KSP)(*solver), NULL );CHKERRQ(ierr);
+
+//     if( pbType == 4 ){
+//       ierr = EPSSetProblemType( eps, EPS_NHEP );CHKERRQ(ierr); // matrix is non-symmetric
+//     }else{
+//       ierr = EPSSetProblemType( eps, EPS_HEP );CHKERRQ(ierr);  // matrix is symmetric
+//     }
+//     ierr = EPSSolve( eps );CHKERRQ(ierr);
+//     ierr = EPSGetConverged( eps, &Nconveigs );CHKERRQ(ierr);
+
+//     Neigs = min(Neigs,Nconveigs);
+
+//     for ( int i = 0; i < floor(Neigs/2); ++i ){
+//       ierr = EPSGetEigenpair( eps,             i, &(realPart[i]),                &(imagPart[i]),                dummyr, dummyi );CHKERRQ(ierr); //largest half
+//       ierr = EPSGetEigenpair( eps, Nconveigs-1-i, &(realPart[floor(Neigs/2)+i]), &(imagPart[floor(Neigs/2)+i]), dummyr, dummyi );CHKERRQ(ierr); //smallest half
+//     }
+    
+//     ierr = EPSDestroy(&eps);CHKERRQ(ierr);
+//     ierr = VecDestroy(&dummyr);CHKERRQ(ierr);
+//     ierr = VecDestroy(&dummyi);CHKERRQ(ierr);
+// #else
+
+    KSPComputeEigenvalues( ksp, Neigs, realPart, imagPart, &Neigs );
+
+    // and store them
+    ofstream myfile;
+    string fname = string("./results/Operators/eigs_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
+                        + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                        + "_oU"   + to_string(ordU)     + "_oP"      + to_string(ordP)       + "_Pb" + to_string(pbType);
+    if( pbType == 4 ){
+      fname += "_Pe" + to_string(Pe);
+    }
+    fname += string("_") + petscrc_file + ".txt";
+    myfile.open( fname );
+    for ( int i = 0; i < Neigs; ++i ){
+      myfile << realPart[i] << ",\t" << imagPart[i] << std::endl;
+    }
+    myfile.close();
+
+    delete realPart;
+    delete imagPart;
+
+  }
+
+
+
+
+  // OUTPUT -----------------------------------------------------------------
   if( myid == 0 && verbose > 0 ){
     std::cout << "Post-processing *******************************************\n";
   }
 
-  // OUTPUT -----------------------------------------------------------------
   if (myid == 0){
     if (solver->GetConverged()){
       std::cout << "Solver converged in "         << solver->GetNumIterations();

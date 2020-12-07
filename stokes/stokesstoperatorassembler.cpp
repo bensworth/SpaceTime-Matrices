@@ -296,7 +296,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   // Send this partial result to the following processor  
   MPI_Request reqSend, reqRecv;
 
-  if( _myRank < _numProcs ){
+  if( _myRank < _numProcs && _numProcs>1 ){
     MPI_Isend( invAxMine.GetData(), lclSize, MPI_DOUBLE, _myRank+1, _myRank,   _comm, &reqSend );
   }
   if( _myRank > 0 ){
@@ -987,7 +987,7 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
 		                         							            void(  *u)(const Vector &, double, Vector &),
 		                         							            double(*p)(const Vector &, double ),
                                                       int verbose ):
-	_comm(comm), _dt(dt), _mu(mu), _Pe(Pe), _fFunc(f), _gFunc(g), _nFunc(n), _wFunc(w), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
+	_comm(comm), _dt(dt), _mu(mu), _Pe(Pe), _fFunc(f), _gFunc(g), _nFunc(n), _wFunc(w), _wFuncCoeff(), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
   _MuAssembled(false), _FuAssembled(false), _MpAssembled(false), _ApAssembled(false), _WpAssembled(false), _BAssembled(false),
   _FFinvPrec(NULL), _FFAssembled(false), _BBAssembled(false), _pSAssembled(false), _FFinvAssembled(false),
   _verbose(verbose){
@@ -1051,6 +1051,81 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
 
 
 
+StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName,
+                                                      const int refLvl, const int ordU, const int ordP,
+                                                      const double dt, const double mu, const double Pe,
+                                                      void(  *f)(const Vector &, double, Vector &),
+                                                      double(*g)(const Vector &, double ),
+                                                      void(  *n)(const Vector &, double, Vector &),
+                                                      const Vector &w,
+                                                      void(  *u)(const Vector &, double, Vector &),
+                                                      double(*p)(const Vector &, double ),
+                                                      int verbose ):
+  _comm(comm), _dt(dt), _mu(mu), _Pe(Pe), _fFunc(f), _gFunc(g), _nFunc(n), _wFunc(NULL), _wFuncCoeff(w), _uFunc(u), _pFunc(p), _ordU(ordU), _ordP(ordP),
+  _MuAssembled(false), _FuAssembled(false), _MpAssembled(false), _ApAssembled(false), _WpAssembled(false), _BAssembled(false),
+  _FFinvPrec(NULL), _FFAssembled(false), _BBAssembled(false), _pSAssembled(false), _FFinvAssembled(false),
+  _verbose(verbose){
+
+  MPI_Comm_size( comm, &_numProcs );
+  MPI_Comm_rank( comm, &_myRank );
+
+  // For each processor:
+  //- generate mesh
+  _mesh = new Mesh( meshName.c_str(), 1, 1 );
+  
+  for (int i = 0; i < refLvl; i++)
+    _mesh->UniformRefinement();
+
+  _dim = _mesh->Dimension();
+
+  // - initialise FE info
+  _VhFEColl  = new H1_FECollection( ordU, _dim );  
+
+  if( ordP > 0 )
+    _QhFEColl  = new H1_FECollection( ordP, _dim );
+  else{
+    _QhFEColl  = new L2_FECollection(    0, _dim );
+    
+    if ( _myRank == 0 ){
+      std::cerr<<"WARNING: since you're using L2 pressure, you should definitely double-check the implementation of DG"<<std::endl;
+    }
+  }
+
+
+  _VhFESpace = new FiniteElementSpace( _mesh, _VhFEColl, _dim );
+  _QhFESpace = new FiniteElementSpace( _mesh, _QhFEColl );
+
+  if ( _mesh->bdr_attributes.Size() > 0 ) {
+    Array<int> essBdrV( _mesh->bdr_attributes.Max() ), essBdrQ( _mesh->bdr_attributes.Max() );
+    essBdrV = 0; essBdrQ = 0;
+    for ( int i = 0; i < _mesh->bdr_attributes.Max(); ++i ){
+      if( _mesh->bdr_attributes[i] == 1 )
+        essBdrV[i] = 1;
+      if( _mesh->bdr_attributes[i] == 2 )
+        essBdrQ[i] = 1;
+    }
+
+    _VhFESpace->GetEssentialTrueDofs( essBdrV, _essVhTDOF );
+    _QhFESpace->GetEssentialTrueDofs( essBdrQ, _essQhTDOF );
+  }
+
+
+  if (_myRank == 0 ){
+    std::cout << "***********************************************************\n";
+    std::cout << "dim(Vh) = " << _VhFESpace->GetTrueVSize() << "\n";
+    std::cout << "dim(Qh) = " << _QhFESpace->GetTrueVSize() << "\n";
+    std::cout << "***********************************************************\n";
+  }
+
+}
+
+
+
+
+
+
+
+
 
 // Assemble operator on main diagonal of space-time matrix for velocity block:
 //  Fu = M + mu*dt K + mu*Pe*dt*W
@@ -1067,29 +1142,40 @@ void StokesSTOperatorAssembler::AssembleFuVarf( ){
   ConstantCoefficient one( 1.0 );
 	_fuVarf->AddDomainIntegrator(new VectorMassIntegrator( one ));
 	_fuVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( muDt ));
-  VectorFunctionCoefficient wFuncCoeff( _dim, _wFunc );
-  wFuncCoeff.SetTime( _dt*(_myRank+1) );
-  if ( _Pe != 0. ){
-    double muPeDt = _mu*_Pe*_dt;  
-    _fuVarf->AddDomainIntegrator(new VectorConvectionIntegrator( wFuncCoeff, muPeDt ));
-  }
 #else
   ConstantCoefficient mu( _mu );
   ConstantCoefficient dtinv( 1./_dt );
   _fuVarf->AddDomainIntegrator(new VectorMassIntegrator( dtinv ));
   _fuVarf->AddDomainIntegrator(new VectorDiffusionIntegrator( mu ));
-  VectorFunctionCoefficient wFuncCoeff( _dim, _wFunc );
-  wFuncCoeff.SetTime( _dt*(_myRank+1) );
-  if ( _Pe != 0. ){
-    double muPe = _mu*_Pe;  
-    _fuVarf->AddDomainIntegrator(new VectorConvectionIntegrator( wFuncCoeff, muPe ));
-  }
 #endif
+
+
+  // add convection integrator if necessary
+  VectorCoefficient* wCoeff = NULL;   // need to define them here otherwise they go out of scope for VectorConvectionIntegrator
+  GridFunction wGridFun( _VhFESpace );
+  wGridFun = _wFuncCoeff;
+
+  if ( _Pe != 0. ){
+    if ( _wFunc == NULL ){
+      wCoeff = new VectorGridFunctionCoefficient( &wGridFun );
+    }else{
+      wCoeff = new VectorFunctionCoefficient( _dim, _wFunc );
+      wCoeff->SetTime( _dt*(_myRank+1) );
+    }
+#ifdef MULT_BY_DT
+    double muPeDt = _mu*_Pe*_dt;  
+    _fuVarf->AddDomainIntegrator(new VectorConvectionIntegrator( *wCoeff, muPeDt ));
+#else
+    double muPe = _mu*_Pe;  
+    _fuVarf->AddDomainIntegrator(new VectorConvectionIntegrator( *wCoeff, muPe ));
+#endif
+  }
+
 
   _fuVarf->Assemble();
   _fuVarf->Finalize();
   
-
+  delete wCoeff;
 
   // _fuVarf->FormSystemMatrix( _essVhTDOF, _Fu );
 
@@ -1327,7 +1413,7 @@ void StokesSTOperatorAssembler::AssembleMp( ){
 
 // Assemble spatial part of pressure (convection) diffusion operator
 // According Elman/Silvester/Wathen:
-// - If convection is included, this should be assembled as if it had Robin BC: dp/dn + w*p = 0 (w is convective velocity)
+// - If convection is included, this should be assembled as if it had Robin BC: dp/dn + (w*n)*p = 0 (w is convective velocity)
 // - If convection is not included, this should be assembled as if it had Neumann BC: dp/dn = 0
 // However, it seems like it's best to just leave dirichlet BC in outflow, just like how Ap is assembled :/
 // NB: This bit of code is hence intended to be used *only* for the double-glazing problem, where the velocity
@@ -1342,7 +1428,7 @@ void StokesSTOperatorAssembler::AssembleWp( ){
     std::cout<<"Warning: the assembly of the spatial part of the PCD considers only Neumann BC on pressure."<<std::endl
              <<"         For this to make sense, you need to make sure that the test problem we're trying"  <<std::endl
              <<"         to solve has Dirichlet BC on velocity everywhere, and that the prescribed"         <<std::endl
-             <<"         advection field is zero at the boundary (if solving Oseen)."<<std::endl;
+             <<"         advection field is tangential to the boundary (w*n=0) if solving Oseen."<<std::endl;
   }
 
 
@@ -1357,11 +1443,18 @@ void StokesSTOperatorAssembler::AssembleWp( ){
   }
 
   // include convection if necessary
-  VectorFunctionCoefficient wFuncCoeff( _dim, _wFunc );
-  wFuncCoeff.SetTime( _dt*(_myRank+1) );
+  VectorCoefficient* wCoeff = NULL;   // need to define them here otherwise they go out of scope for ConvectionIntegrator
+  GridFunction wGridFun( _VhFESpace );
+  wGridFun = _wFuncCoeff;
   if( _Pe!= 0. ){
+    if ( _wFunc == NULL ){
+      wCoeff = new VectorGridFunctionCoefficient( &wGridFun );
+    }else{
+      wCoeff = new VectorFunctionCoefficient( _dim, _wFunc );
+      wCoeff->SetTime( _dt*(_myRank+1) );
+    }
     // TODO: should I impose Robin, then? Like this I'm still applying Neumann
-    wVarf->AddDomainIntegrator(new ConvectionIntegrator( wFuncCoeff, _mu*_Pe ));
+    wVarf->AddDomainIntegrator(new ConvectionIntegrator( *wCoeff, _mu*_Pe ));  // if used for NS, make sure both _mu*_Pe=1.0!!
 
     // // This includes Robin -> can't be bothered to implement it / test it: just pick a w: w*n = 0 on the bdr in your tests
     // if( _ordP == 0 ){
@@ -1370,13 +1463,12 @@ void StokesSTOperatorAssembler::AssembleWp( ){
     //   double kappa =  1.0;
     //   wVarf->AddBdrFaceIntegrator(new DGDiffusionIntegrator(mu, sigma, kappa));
     //   // Augment the n.Grad(u) term with a*u on the Robin portion of boundary
-    //   wVarf->AddBdrFaceIntegrator(new BoundaryMassIntegrator(wFuncCoeff, _mu*_Pe));
+    //   wVarf->AddBdrFaceIntegrator(new BoundaryMassIntegrator(wFuncCoeff, _mu*_Pe));  //this won't work: I need to compute w*n!
     // }else{
-    //   wVarf->AddBoundaryIntegrator(new MassIntegrator(wFuncCoeff, _mu*_Pe) );
+    //   wVarf->AddBoundaryIntegrator(new MassIntegrator(wCoeff, _mu*_Pe) );
     // }
-
   }
-
+  
   wVarf->Assemble();
   wVarf->Finalize();
   
@@ -1387,6 +1479,7 @@ void StokesSTOperatorAssembler::AssembleWp( ){
   wVarf->LoseMat();
 
   delete wVarf;
+  delete wCoeff;
 
   _WpAssembled = true;
 
@@ -1409,6 +1502,74 @@ void StokesSTOperatorAssembler::AssembleWp( ){
 }
 
 
+
+
+
+
+
+// void StokesSTOperatorAssembler::UpdateWp( const VectorFunctionCoefficient& wFuncCoeff ){
+
+//   if( _Pe == 0. ){
+//     return;
+//   }
+
+
+//   BilinearForm *wVarf( new BilinearForm(_QhFESpace) );
+//   ConstantCoefficient mu( _mu );
+//   wVarf->AddDomainIntegrator(new DiffusionIntegrator( mu ));
+//   if ( _ordP == 0 ){  // DG
+//     double sigma = -1.0;
+//     double kappa =  1.0;
+//     wVarf->AddInteriorFaceIntegrator(new DGDiffusionIntegrator(mu, sigma, kappa));
+//     // wVarf->AddBdrFaceIntegrator(     new DGDiffusionIntegrator(one, sigma, kappa));  // to weakly impose Dirichlet BC - don't bother for now
+//   }
+
+//   // include convection if necessary
+//   // TODO: should I impose Robin, then? Like this I'm still applying Neumann
+//   wVarf->AddDomainIntegrator(new ConvectionIntegrator( wFuncCoeff, _mu*_Pe ));
+
+//   // // This includes Robin -> can't be bothered to implement it / test it: just pick a w: w*n = 0 on the bdr in your tests
+//   // if( _ordP == 0 ){
+//   //   // Counteract the n.Grad(u) term on the Dirichlet portion of the boundary
+//   //   double sigma = -1.0;
+//   //   double kappa =  1.0;
+//   //   wVarf->AddBdrFaceIntegrator(new DGDiffusionIntegrator(mu, sigma, kappa));
+//   //   // Augment the n.Grad(u) term with a*u on the Robin portion of boundary
+//   //   wVarf->AddBdrFaceIntegrator(new BoundaryMassIntegrator(wFuncCoeff, _mu*_Pe));
+//   // }else{
+//   //   wVarf->AddBoundaryIntegrator(new MassIntegrator(wFuncCoeff, _mu*_Pe) );
+//   // }
+
+//   wVarf->Assemble();
+//   wVarf->Finalize();
+  
+//   _Wp.Clear();
+//   _Wp = wVarf->SpMat();
+//   _Wp.SetGraphOwner(true);
+//   _Wp.SetDataOwner(true);
+//   wVarf->LoseMat();
+
+//   delete wVarf;
+
+//   _WpAssembled = true;
+
+
+//   if ( _verbose>50 && _myRank == 0 ){
+//     std::ofstream myfile;
+//     std::string myfilename = "./results/out_final_Wp.dat";
+//     myfile.open( myfilename );
+//     _Wp.PrintMatlab(myfile);
+//     myfile.close( );
+//   }
+
+//   if( _verbose>5 ){
+//     if ( _myRank==0 ){
+//       std::cout<<"Spatial part of PCD operator Wp assembled\n";
+//     }
+//     MPI_Barrier(_comm);
+//   }  
+
+// }
 
 
 
@@ -2217,7 +2378,23 @@ void StokesSTOperatorAssembler::AssembleSystem( HypreParMatrix*& FFF,  HypreParM
 
   // ASSEMBLE LOCAL LINEAR SYSTEMS (PARTICULARLY, CONSTRAINED MATRICES) -----
   // - Assemble _Fu (and modify rhs to take dirichlet on u into account)
-  _fuVarf->FormLinearSystem(           _essVhTDOF,        uBC, *fform, _Fu, empty2, fRhsLoc );
+  // _fuVarf->FormLinearSystem(           _essVhTDOF,        uBC, *fform, _Fu, empty2, fRhsLoc );   % this causes err for Pe>=10, so instead do as below
+  _Fu = _fuVarf->SpMat();
+  // _Fu.SetGraphOwner(true);
+  // _Fu.SetDataOwner(true);
+  // _fuVarf->LoseMat();
+  // delete _fuVarf;
+  fRhsLoc = *fform;
+  mfem::Array<int> cols(_Fu.Height());
+  cols = 0;
+  for (int i = 0; i < _essVhTDOF.Size(); ++i){
+    cols[_essVhTDOF[i]] = 1;
+  }
+  _Fu.EliminateCols( cols, &uBC, &fRhsLoc );
+  for (int i = 0; i < _essVhTDOF.Size(); ++i){
+    _Fu.EliminateRow( _essVhTDOF[i], mfem::Matrix::DIAG_ONE );
+    fRhsLoc(_essVhTDOF[i]) = uBC(_essVhTDOF[i]);
+  }
   // - Assemble _B (and modify rhs to take dirichlet on u into account)
   _bVarf->FormRectangularLinearSystem( _essVhTDOF, empty, uBC, *gform, _B,  empty2, gRhsLoc );  // iguloc should still be initialised to uBC
   // - Assemble _Mu (and modify rhs to take dirichlet on u into account)

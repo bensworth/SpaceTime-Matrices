@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
   wFuncCoeff.SetTime( dt*7 );						// only this instant gives issues
   double PeDt = Pe*dt;  
   wVarf->AddDomainIntegrator(new ConvectionIntegrator( wFuncCoeff, PeDt ));
-  wVarf->Assemble();
+  wVarf->Assemble(0); //this still triggers error
   wVarf->Finalize();
 
   // Print full matrix
@@ -67,9 +67,23 @@ int main(int argc, char *argv[])
   dummyBC = 0.;
 
   SparseMatrix W;
+
+  W = wVarf->SpMat();
   Vector dummy1(wVarf->NumRows()), dummy2(wVarf->NumRows()), dummy3(wVarf->NumRows());
   dummy1 =0.; dummy2 =0.; dummy3 =0.;
-  wVarf->FormLinearSystem( essVhTDOF, dummyBC, dummy1, W, dummy2, dummy3 );
+
+  mfem::Array<int> cols(wVarf->Height());
+  cols = 0;
+  for (int i = 0; i < essVhTDOF.Size(); ++i){
+    cols[essVhTDOF[i]] = 1;
+  }
+  W.EliminateCols(cols, &dummyBC, &dummy1);
+  for (int i = 0; i < essVhTDOF.Size(); ++i){
+    W.EliminateRow(essVhTDOF[i], mfem::Matrix::DIAG_ONE);
+    // rhs(essVhTDOF[i]) = boundary_values(essVhTDOF[i]);
+  }
+
+  // wVarf->FormLinearSystem( essVhTDOF, dummyBC, dummy1, W, dummy2, dummy3 );
 
 
   delete wVarf;

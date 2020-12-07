@@ -163,6 +163,7 @@ private:
 	double(*_gFunc)( const Vector &, double )          ;  // function returning forcing term for pressure (time-dep)
 	void(  *_nFunc)( const Vector &, double, Vector & );  // function returning mu * du/dn (time-dep, used to implement BC)
 	void(  *_wFunc)( const Vector &, double, Vector & );  // function returning velocity field (valid only for Oseen)
+	const Vector _wFuncCoeff;                             // coefficients of velocity field (valid only for Navier Stokes)
 	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
 	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC, and compute error)
 
@@ -230,6 +231,17 @@ public:
 		                         void(  *u)(const Vector &, double, Vector &),
 		                         double(*p)(const Vector &, double ),
 		                         int verbose );
+	// constructor for NS (w passed as vector)
+	StokesSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName,
+                             const int refLvl, const int ordU, const int ordP,
+                             const double dt, const double mu, const double Pe,
+                             void(  *f)(const Vector &, double, Vector &),
+                             double(*g)(const Vector &, double ),
+                             void(  *n)(const Vector &, double, Vector &),
+                             const Vector &w,
+                             void(  *u)(const Vector &, double, Vector &),
+                             double(*p)(const Vector &, double ),
+                             int verbose );
 	~StokesSTOperatorAssembler();
 
 
