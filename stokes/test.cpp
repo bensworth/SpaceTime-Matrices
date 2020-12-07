@@ -132,12 +132,19 @@ int main(int argc, char *argv[])
   int output = 2;
   double Pe = 0.;
 
+  // - stop criteria for Picard iterations (only used in NS)
+  double picardTol = 1e-7;
+  double picardErr = 0.0;
+  int maxPicardIt  = 1;
+  int picardIt     = 0;
+
+
   // -parse parameters
   OptionsParser args(argc, argv);
   args.AddOption(&ordU, "-oU", "--orderU",
                 "Finite element order (polynomial degree) for velocity field (default: 2)");
   args.AddOption(&ordP, "-oP", "--orderP",
-                "Finite element order (polynomial degree) for pressure field (default: 1)");
+                "Finite element order (polynomial degree) for pressure field (default: 1 - support for DG (-oP 0) is faulty)");
   args.AddOption(&ref_levels, "-r", "--rlevel",
                 "Refinement level (default: 4)");
   args.AddOption(&Tend, "-T", "--Tend",
@@ -261,12 +268,13 @@ int main(int argc, char *argv[])
       uFun_ex = &uFun_ex_cavity;
       pFun_ex = &pFun_ex_cavity;
       pbName = "CavityNS";
-      // ugly hack: the convection term is multiplied by mu*Pe. For NS, this should be 1, regardless, so I'm tweaking Pe here.
+      // ugly hack: the convection term is multiplied by mu*Pe. For NS, this should be 1 regardless, so I'm tweaking Pe here.
       Pe = 1.0/mu;
-      if ( myid == 0 ){
-        std::cerr<<"Warning: Picard iteration for Navier Stokes not (yet) implemented. Abort."<<std::endl;
-      }
-      return 1;
+      maxPicardIt = 100;
+      // if ( myid == 0 ){
+      //   std::cerr<<"Warning: Picard iteration for Navier Stokes not (yet) implemented. Abort."<<std::endl;
+      // }
+      // return 1;
       break;
     }
     case 20:{
@@ -298,315 +306,385 @@ int main(int argc, char *argv[])
   MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
 
 
-
-  // ASSEMBLE OPERATORS -----------------------------------------------------
-
-  // Assembles block matrices composing the system
-  StokesSTOperatorAssembler *stokesAssembler = new StokesSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP,
-                                                                              dt, mu, Pe, fFun, gFun, nFun, wFun, uFun_ex, pFun_ex, verbose );
-
-  HypreParMatrix *FFF, *BBB, *BBt;
-  Operator *FFi, *XXi;
-  HypreParVector  *frhs, *grhs, *uEx, *pEx, *U0, *P0;
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Assembling system and rhs *********************************\n";
-  }
-  stokesAssembler->AssembleSystem( FFF, BBB, frhs, grhs, U0, P0 );
-  BBt = BBB->Transpose( );
-
+  BlockVector solPrev;
   Array<int> offsets(3);
-  offsets[0] = 0;
-  offsets[1] = FFF->NumRows();
-  offsets[2] = BBB->NumRows();
-  offsets.PartialSum();
-
-  BlockVector sol(offsets), rhs(offsets);
-  rhs.GetBlock(0) = *frhs;
-  rhs.GetBlock(1) = *grhs;
-  sol.GetBlock(0) = *U0;
-  sol.GetBlock(1) = *P0;
-
-  BlockOperator *stokesOp = new BlockOperator( offsets );
-  stokesOp->SetBlock(0, 0, FFF);
-  stokesOp->SetBlock(0, 1, BBt);
-  stokesOp->SetBlock(1, 0, BBB);
 
 
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Assembling operators for preconditioner *******************\n";
-  }
-  stokesAssembler->AssemblePreconditioner( FFi, XXi, STSolveType );
+  // This "do-while" loop is only triggered when solving NS - Picard iterations
+  do{  
+
+    // ASSEMBLE OPERATORS -----------------------------------------------------
+
+    // Assembles block matrices composing the system
+    StokesSTOperatorAssembler *stokesAssembler;
+    // - if not inside a Picard iteration, or if a the first Picard, use 0 as an initial guess for the advection field (w(x,t)=u(x,t)=0)
+    if ( pbType != 5 || picardIt == 0 ){
+      stokesAssembler = new StokesSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP,
+                                                       dt, mu, Pe, fFun, gFun, nFun, wFun, uFun_ex, pFun_ex, verbose );
+    }else{
+      // - if inside a Picard iteration, assemble it using the previously recovered solution as advection field
+      stokesAssembler = new StokesSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP,
+                                                       dt, mu, Pe, fFun, gFun, nFun, solPrev.GetBlock(0), uFun_ex, pFun_ex, verbose );
+    }
+
+    HypreParMatrix *FFF, *BBB, *BBt;
+    Operator *FFi, *XXi;
+    HypreParVector  *frhs, *grhs, *uEx, *pEx, *U0, *P0;
+    if( myid == 0 && verbose > 0 ){
+      std::cout << "Assembling system and rhs *********************************\n";
+    }
+    stokesAssembler->AssembleSystem( FFF, BBB, frhs, grhs, U0, P0 );
+    BBt = BBB->Transpose( );
+
+    offsets[0] = 0;
+    offsets[1] = FFF->NumRows();
+    offsets[2] = BBB->NumRows();
+    offsets.PartialSum();
+
+    BlockVector sol(offsets), rhs(offsets);
+    rhs.GetBlock(0) = *frhs;
+    rhs.GetBlock(1) = *grhs;
+
+    // - if not inside a Picard, or if at its very first iteration, initialise solution to the IG given by stokes assembler
+    if ( pbType != 5 || picardIt == 0 ){
+      solPrev.Update( offsets );
+      solPrev.GetBlock(0) = *U0;
+      solPrev.GetBlock(1) = *P0;
+    }
+    // - otherwise, just take solution at previous iteration
+    // -- this is actually quite dangerous: U0 and P0 were storing also the modifications due to the BC,
+    //     and now I'm discarding them: the hope is that the solution at each iteration satisfies them *exactly* anyway
+    sol = solPrev;
+
+    BlockOperator *stokesOp = new BlockOperator( offsets );
+    stokesOp->SetBlock(0, 0, FFF);
+    stokesOp->SetBlock(0, 1, BBt);
+    stokesOp->SetBlock(1, 0, BBB);
 
 
-  stokesAssembler->ExactSolution( uEx, pEx );
+    if( myid == 0 && verbose > 0 ){
+      std::cout << "Assembling operators for preconditioner *******************\n";
+    }
+    stokesAssembler->AssemblePreconditioner( FFi, XXi, STSolveType );
 
 
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Set-up solver *********************************************\n";
-  }
+    stokesAssembler->ExactSolution( uEx, pEx );
 
-  // Define solver
-  PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
-  // TODO: iterative mode triggers use of initial guess: check if it is indeed iterative
-  bool isIterative = true;
-  solver->iterative_mode = isIterative;
 
-  // Define preconditioner
-  Solver *stokesPr;
+    if( myid == 0 && verbose > 0 ){
+      std::cout << "Set-up solver *********************************************\n";
+    }
 
-  // std::string filename = "operator";
-  // stokesAssembler->PrintMatrices(filename);
+    // Define solver
+    PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
+    // TODO: iterative mode triggers use of initial guess: check if it is indeed iterative
+    bool isIterative = true;
+    solver->iterative_mode = isIterative;
 
-  // - Flag that most extreme eigs of precon system must be computed, if only one processor is given
-  if ( myid==0 && numProcs == 1 ){
+    // Define preconditioner
+    Solver *stokesPr;
 
-    // store also the actual matrices, if you want to compute the eigs externally
-    if( verbose > 3 ){
-      string path = string("./results/Operators/Pb")  + to_string(pbType) + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                         + "_oU"   + to_string(ordU)   + "_oP"             + to_string(ordP)  + "/";
+    // std::string filename = "operator";
+    // stokesAssembler->PrintMatrices(filename);
+
+    // - Flag that most extreme eigs of precon system must be computed, if only one processor is given
+    if ( myid==0 && numProcs == 1 ){
+
+      // store also the actual matrices, if you want to compute the eigs externally
+      if( verbose > 3 ){
+        string path = string("./results/Operators/Pb")  + to_string(pbType) + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                           + "_oU"   + to_string(ordU)   + "_oP"             + to_string(ordP)  + "/";
+        if (!std::experimental::filesystem::exists( path )){
+          std::experimental::filesystem::create_directories( path );
+        }
+        path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
+        stokesAssembler->PrintMatrices(path);
+      }
+
+      KSP ksp = *solver;
+      KSPSetComputeEigenvalues( ksp, PETSC_TRUE );
+    }
+
+
+
+    switch(precType){
+      case 0:{
+        BlockDiagonalPreconditioner *temp = new BlockDiagonalPreconditioner(offsets);
+        temp->iterative_mode = false;
+        temp->SetDiagonalBlock( 0, FFi );
+        temp->SetDiagonalBlock( 1, XXi );
+        stokesPr = temp;
+        break;
+      }
+      case 1:{
+        // BlockLowerTriangularPreconditioner *temp = new BlockLowerTriangularPreconditioner(offsets);
+        // temp->iterative_mode = false;
+        // temp->SetDiagonalBlock( 0, FFi );
+        // temp->SetDiagonalBlock( 1, XXi );
+        // temp->SetBlock( 1, 0, BBB );
+        BlockUpperTriangularPreconditioner *temp = new BlockUpperTriangularPreconditioner(offsets);
+        temp->iterative_mode = false;
+        temp->SetDiagonalBlock( 0, FFi );
+        temp->SetDiagonalBlock( 1, XXi );
+        temp->SetBlock( 0, 1, BBt );
+        stokesPr = temp;
+        break;
+      }
+      default:{
+        if ( myid == 0 ){
+          std::cerr<<"ERROR: Option for preconditioner "<<precType<<" not recognised"<<std::endl;
+        }
+        break;
+      }
+    }
+
+
+    solver->SetPreconditioner(*stokesPr);
+
+
+
+    solver->SetOperator(*stokesOp);
+
+
+    // Save residual evolution to file
+    if ( output>1 ){
+      // - create folder which will store all files with various convergence evolution 
+      string path = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                             + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+      if(pbType == 4 ){
+        path += "_Pe" + to_string(Pe);
+      }
+      path += string("_") + petscrc_file + "/";
+
       if (!std::experimental::filesystem::exists( path )){
         std::experimental::filesystem::create_directories( path );
       }
-      path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
-      stokesAssembler->PrintMatrices(path);
+      string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
+      // - create viewer to instruct KSP object how to print residual evolution to file
+      PetscViewer    viewer;
+      PetscViewerAndFormat *vf;
+      PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
+      PetscViewerSetType( viewer, PETSCVIEWERASCII );
+      PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
+      PetscViewerFileSetName( viewer, filename.c_str() );
+      // - register it to the ksp object
+      KSP ksp = *solver;
+      PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
+      PetscViewerDestroy( &viewer );
+      // - create a more complex context if fancier options must be printed (error wrt analytical solution)
+      // UPErrorMonitorCtx mctx;
+      // mctx.lenghtU = offsets[1];
+      // mctx.lenghtP = offsets[2] - offsets[1];
+      // mctx.STassembler = stokesAssembler;
+      // mctx.comm = MPI_COMM_WORLD;
+      // mctx.vf   = vf;
+      // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
+      // UPErrorMonitorCtx* mctxptr = &mctx;
+      // if( pbType == 2 || pbType == 20 ){
+      //   if ( myid == 0 ){
+      //     std::cout<<"Warning: we're printing the error wrt the analytical solution at each iteration."<<std::endl
+      //              <<"         This is bound to slow down GMRES *a lot*, so leave this code only for testing purposes!"<<std::endl;
+      //   }
+      //   KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPErrorMonitor, mctxptr, NULL );
+      // }else
+      KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
     }
 
-    KSP ksp = *solver;
-    KSPSetComputeEigenvalues( ksp, PETSC_TRUE );
-  }
 
 
 
-  switch(precType){
-    case 0:{
-      BlockDiagonalPreconditioner *temp = new BlockDiagonalPreconditioner(offsets);
-      temp->iterative_mode = false;
-      temp->SetDiagonalBlock( 0, FFi );
-      temp->SetDiagonalBlock( 1, XXi );
-      stokesPr = temp;
-      break;
+    // SOLVE SYSTEM -----------------------------------------------------------
+    if( myid == 0 && verbose > 0 ){
+      std::cout << "SOLVE! ****************************************************\n";
     }
-    case 1:{
-      // BlockLowerTriangularPreconditioner *temp = new BlockLowerTriangularPreconditioner(offsets);
-      // temp->iterative_mode = false;
-      // temp->SetDiagonalBlock( 0, FFi );
-      // temp->SetDiagonalBlock( 1, XXi );
-      // temp->SetBlock( 1, 0, BBB );
-      BlockUpperTriangularPreconditioner *temp = new BlockUpperTriangularPreconditioner(offsets);
-      temp->iterative_mode = false;
-      temp->SetDiagonalBlock( 0, FFi );
-      temp->SetDiagonalBlock( 1, XXi );
-      temp->SetBlock( 0, 1, BBt );
-      stokesPr = temp;
-      break;
-    }
-    default:{
-      if ( myid == 0 ){
-        std::cerr<<"ERROR: Option for preconditioner "<<precType<<" not recognised"<<std::endl;
-      }
-      break;
-    }
-  }
 
+    // - Main solve routine
+    solver->Mult(rhs, sol);
 
-  solver->SetPreconditioner(*stokesPr);
+    // - Eventually compute eigs
+    if ( myid==0 && numProcs == 1 ){
 
+      KSP ksp = *solver;
+      PetscInt Neigs = 100;
+      double *realPart = new double(Neigs);
+      double *imagPart = new double(Neigs);
+  // #ifdef USE_SLEPC
+  //     EPS eps;
+  //     EPSType type; 
+  //     PetscInt Nconveigs;
+  //     PetscErrorCode ierr;
+  //     Vec dummyr,dummyi;
 
+  //     ierr = MatCreateVecs( (KSP)(*solver), NULL, &dummyr );CHKERRQ(ierr);
+  //     ierr = MatCreateVecs( (KSP)(*solver), NULL, &dummyi );CHKERRQ(ierr);
+      
+  //     ierr = EPSCreate( PETSC_COMM_WORLD, &eps );CHKERRQ(ierr);
+  //     ierr = EPSSetOperators( eps, (KSP)(*solver), NULL );CHKERRQ(ierr);
 
-  solver->SetOperator(*stokesOp);
+  //     if( pbType == 4 ){
+  //       ierr = EPSSetProblemType( eps, EPS_NHEP );CHKERRQ(ierr); // matrix is non-symmetric
+  //     }else{
+  //       ierr = EPSSetProblemType( eps, EPS_HEP );CHKERRQ(ierr);  // matrix is symmetric
+  //     }
+  //     ierr = EPSSolve( eps );CHKERRQ(ierr);
+  //     ierr = EPSGetConverged( eps, &Nconveigs );CHKERRQ(ierr);
 
+  //     Neigs = min(Neigs,Nconveigs);
 
-  // Save residual evolution to file
-  if ( output>1 ){
-    // - create folder which will store all files with various convergence evolution 
-    string path = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                           + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
-    if(pbType == 4 ){
-      path += "_Pe" + to_string(Pe);
-    }
-    path += string("_") + petscrc_file + "/";
+  //     for ( int i = 0; i < floor(Neigs/2); ++i ){
+  //       ierr = EPSGetEigenpair( eps,             i, &(realPart[i]),                &(imagPart[i]),                dummyr, dummyi );CHKERRQ(ierr); //largest half
+  //       ierr = EPSGetEigenpair( eps, Nconveigs-1-i, &(realPart[floor(Neigs/2)+i]), &(imagPart[floor(Neigs/2)+i]), dummyr, dummyi );CHKERRQ(ierr); //smallest half
+  //     }
+      
+  //     ierr = EPSDestroy(&eps);CHKERRQ(ierr);
+  //     ierr = VecDestroy(&dummyr);CHKERRQ(ierr);
+  //     ierr = VecDestroy(&dummyi);CHKERRQ(ierr);
+  // #else
 
-    if (!std::experimental::filesystem::exists( path )){
-      std::experimental::filesystem::create_directories( path );
-    }
-    string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
-    // - create viewer to instruct KSP object how to print residual evolution to file
-    PetscViewer    viewer;
-    PetscViewerAndFormat *vf;
-    PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
-    PetscViewerSetType( viewer, PETSCVIEWERASCII );
-    PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
-    PetscViewerFileSetName( viewer, filename.c_str() );
-    // - register it to the ksp object
-    KSP ksp = *solver;
-    PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
-    PetscViewerDestroy( &viewer );
-    // - create a more complex context if fancier options must be printed (error wrt analytical solution)
-    // UPErrorMonitorCtx mctx;
-    // mctx.lenghtU = offsets[1];
-    // mctx.lenghtP = offsets[2] - offsets[1];
-    // mctx.STassembler = stokesAssembler;
-    // mctx.comm = MPI_COMM_WORLD;
-    // mctx.vf   = vf;
-    // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
-    // UPErrorMonitorCtx* mctxptr = &mctx;
-    // if( pbType == 2 || pbType == 20 ){
-    //   if ( myid == 0 ){
-    //     std::cout<<"Warning: we're printing the error wrt the analytical solution at each iteration."<<std::endl
-    //              <<"         This is bound to slow down GMRES *a lot*, so leave this code only for testing purposes!"<<std::endl;
-    //   }
-    //   KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPErrorMonitor, mctxptr, NULL );
-    // }else
-    KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
-  }
+      KSPComputeEigenvalues( ksp, Neigs, realPart, imagPart, &Neigs );
 
-
-
-
-  // SOLVE SYSTEM -----------------------------------------------------------
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "SOLVE! ****************************************************\n";
-  }
-
-  // - Main solve routine
-  solver->Mult(rhs, sol);
-
-  // - Eventually compute eigs
-  if ( myid==0 && numProcs == 1 ){
-
-    KSP ksp = *solver;
-    PetscInt Neigs = 100;
-    double *realPart = new double(Neigs);
-    double *imagPart = new double(Neigs);
-// #ifdef USE_SLEPC
-//     EPS eps;
-//     EPSType type; 
-//     PetscInt Nconveigs;
-//     PetscErrorCode ierr;
-//     Vec dummyr,dummyi;
-
-//     ierr = MatCreateVecs( (KSP)(*solver), NULL, &dummyr );CHKERRQ(ierr);
-//     ierr = MatCreateVecs( (KSP)(*solver), NULL, &dummyi );CHKERRQ(ierr);
-    
-//     ierr = EPSCreate( PETSC_COMM_WORLD, &eps );CHKERRQ(ierr);
-//     ierr = EPSSetOperators( eps, (KSP)(*solver), NULL );CHKERRQ(ierr);
-
-//     if( pbType == 4 ){
-//       ierr = EPSSetProblemType( eps, EPS_NHEP );CHKERRQ(ierr); // matrix is non-symmetric
-//     }else{
-//       ierr = EPSSetProblemType( eps, EPS_HEP );CHKERRQ(ierr);  // matrix is symmetric
-//     }
-//     ierr = EPSSolve( eps );CHKERRQ(ierr);
-//     ierr = EPSGetConverged( eps, &Nconveigs );CHKERRQ(ierr);
-
-//     Neigs = min(Neigs,Nconveigs);
-
-//     for ( int i = 0; i < floor(Neigs/2); ++i ){
-//       ierr = EPSGetEigenpair( eps,             i, &(realPart[i]),                &(imagPart[i]),                dummyr, dummyi );CHKERRQ(ierr); //largest half
-//       ierr = EPSGetEigenpair( eps, Nconveigs-1-i, &(realPart[floor(Neigs/2)+i]), &(imagPart[floor(Neigs/2)+i]), dummyr, dummyi );CHKERRQ(ierr); //smallest half
-//     }
-    
-//     ierr = EPSDestroy(&eps);CHKERRQ(ierr);
-//     ierr = VecDestroy(&dummyr);CHKERRQ(ierr);
-//     ierr = VecDestroy(&dummyi);CHKERRQ(ierr);
-// #else
-
-    KSPComputeEigenvalues( ksp, Neigs, realPart, imagPart, &Neigs );
-
-    // and store them
-    ofstream myfile;
-    string fname = string("./results/Operators/eigs_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
-                        + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                        + "_oU"   + to_string(ordU)     + "_oP"      + to_string(ordP)       + "_Pb" + to_string(pbType);
-    if( pbType == 4 ){
-      fname += "_Pe" + to_string(Pe);
-    }
-    fname += string("_") + petscrc_file + ".txt";
-    myfile.open( fname );
-    for ( int i = 0; i < Neigs; ++i ){
-      myfile << realPart[i] << ",\t" << imagPart[i] << std::endl;
-    }
-    myfile.close();
-
-    delete realPart;
-    delete imagPart;
-
-  }
-
-
-
-
-  // OUTPUT -----------------------------------------------------------------
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Post-processing *******************************************\n";
-  }
-
-  if (myid == 0){
-    if (solver->GetConverged()){
-      std::cout << "Solver converged in "         << solver->GetNumIterations();
-    }else{
-      std::cout << "Solver did not converge in "  << solver->GetNumIterations();
-    }
-    std::cout << " iterations. Residual norm is " << solver->GetFinalNorm() << ".\n";
-  
-    if( output>0 ){
-      double hmin, hmax, kmin, kmax;
-      stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
-
+      // and store them
       ofstream myfile;
-      string fname = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                          + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+      string fname = string("./results/Operators/eigs_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
+                          + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                          + "_oU"   + to_string(ordU)     + "_oP"      + to_string(ordP)       + "_Pb" + to_string(pbType);
       if( pbType == 4 ){
         fname += "_Pe" + to_string(Pe);
       }
       fname += string("_") + petscrc_file + ".txt";
-      myfile.open( fname, std::ios::app );
-      myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
-             << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
-             << solver->GetNumIterations() << std::endl;
+      myfile.open( fname );
+      for ( int i = 0; i < Neigs; ++i ){
+        myfile << realPart[i] << ",\t" << imagPart[i] << std::endl;
+      }
       myfile.close();
+
+      delete realPart;
+      delete imagPart;
+
     }
-  }
+
+
+
+
+    // OUTPUT -----------------------------------------------------------------
+    if( myid == 0 && verbose > 0 ){
+      std::cout << "Post-processing *******************************************\n";
+    }
+
+    if (myid == 0){
+      if (solver->GetConverged()){
+        std::cout << "Solver converged in "           << solver->GetNumIterations();
+      }else{
+        std::cout << "Solver *DID NOT* converge in "  << solver->GetNumIterations();
+      }
+      std::cout << " iterations. Residual norm is "   << solver->GetFinalNorm() << ".\n";
+    
+      if( output>0 ){
+        double hmin, hmax, kmin, kmax;
+        stokesAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
+
+        ofstream myfile;
+        string fname = string("./results/convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                            + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
+        if( pbType == 4 ){
+          fname += "_Pe" + to_string(Pe);
+        }
+        fname += string("_") + petscrc_file + ".txt";
+        myfile.open( fname, std::ios::app );
+        myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
+               << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
+               << solver->GetNumIterations() << std::endl;
+        myfile.close();
+      }
+    }
 
 
 
 
 
-  if( output>2 ){
-    int colsV[2] = { myid*(FFF->NumRows()), (myid+1)*(FFF->NumRows()) };
-    int colsP[2] = { myid*(BBB->NumRows()), (myid+1)*(BBB->NumRows()) };
+    if( output>2 ){
+      int colsV[2] = { myid*(FFF->NumRows()), (myid+1)*(FFF->NumRows()) };
+      int colsP[2] = { myid*(BBB->NumRows()), (myid+1)*(BBB->NumRows()) };
 
-    HypreParVector uh( MPI_COMM_WORLD, numProcs*(FFF->NumRows()), sol.GetBlock(0).GetData(), colsV ); 
-    HypreParVector ph( MPI_COMM_WORLD, numProcs*(BBB->NumRows()), sol.GetBlock(1).GetData(), colsP ); 
+      HypreParVector uh( MPI_COMM_WORLD, numProcs*(FFF->NumRows()), sol.GetBlock(0).GetData(), colsV ); 
+      HypreParVector ph( MPI_COMM_WORLD, numProcs*(BBB->NumRows()), sol.GetBlock(1).GetData(), colsP ); 
 
-    string outFilePath = "ParaView";
-    string outFileName = "STstokes_" + pbName;
-    stokesAssembler->SaveSolution( uh, ph, outFilePath, outFileName );
-    stokesAssembler->SaveExactSolution(    outFilePath, outFileName+"_Ex" );
-  }
+      string outFilePath = "ParaView";
+      string outFileName = "STstokes_" + pbName;
+      if (picardIt == 0){
+        stokesAssembler->SaveExactSolution(    outFilePath, outFileName+"_Ex" );
+      }
+
+      if ( pbType == 5 ){
+        outFileName += "_it" + to_string(picardIt);
+      }
+      stokesAssembler->SaveSolution( uh, ph, outFilePath, outFileName );
+    }
+    
+
+    if( myid == 0 && verbose > 0 ){
+      std::cout << "Clean-up **************************************************\n";
+    }
+
+
+
+    if ( pbType == 5 ){
+      double tempErr = 0.0;
+      for ( int i = 0; i < solPrev.BlockSize(0); ++i ){
+        double lclErr = solPrev.GetBlock(0)(i) - sol.GetBlock(0)(i);
+        tempErr += lclErr*lclErr;
+        solPrev.GetBlock(0)(i) = sol.GetBlock(0)(i);
+      }
+      for ( int i = 0; i < solPrev.BlockSize(1); ++i ){
+        double lclErr = solPrev.GetBlock(1)(i) - sol.GetBlock(1)(i);
+        tempErr += lclErr*lclErr;
+        solPrev.GetBlock(1)(i) = sol.GetBlock(1)(i);
+      }
+      MPI_Allreduce( &tempErr, &picardErr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
+
+      picardErr = sqrt(picardErr);
+
+    
+      if ( myid == 0 ){
+        std::cout << "***********************************************************\n";
+        std::cout<<"Picard iteration "<<picardIt<<", Residual norm is "<<picardErr<<std::endl;
+        std::cout << "***********************************************************\n";
+      }
+    }
+
+    picardIt++;
+
+
+    delete FFF;
+    delete BBB;
+    delete BBt;
+    delete frhs;
+    delete grhs;
+    delete U0;
+    delete P0;
+    delete uEx;
+    delete pEx;
+
+    delete solver;
+    delete stokesOp;
+    delete stokesPr;
+    delete stokesAssembler;
+
+
+  }while( picardIt<maxPicardIt && picardErr>picardTol );
   
-
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Clean-up **************************************************\n";
+  // Print info for non-linear solve if solving NS
+  if ( myid == 0 && pbType == 5 ){
+    if( picardErr < picardTol ){
+      std::cout << "Picard outer solver converged in "          << picardIt-1;
+    }else{
+      std::cout << "Picard outer solver *DID NOT* converge in " << maxPicardIt;
+    }
+    std::cout << " iterations. Residual norm is " << picardErr  << ".\n";
   }
 
 
-  delete FFF;
-  delete BBB;
-  delete BBt;
-  delete frhs;
-  delete grhs;
-  delete U0;
-  delete P0;
-  delete uEx;
-  delete pEx;
 
-  delete solver;
-  delete stokesOp;
-  delete stokesPr;
-  delete stokesAssembler;
-
-   
 
   MFEMFinalizePetsc();
   // HYPRE_Finalize();  //?
@@ -614,6 +692,9 @@ int main(int argc, char *argv[])
 
   return 0;
 }
+
+
+
 
 
 

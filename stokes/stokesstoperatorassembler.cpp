@@ -22,6 +22,10 @@ using namespace mfem;
 //
 //##############################################################################
 
+// - For information on the components of the block preconditioner, see E/S/W:
+//    H. Elman, D. Silvester, and A. Wathen. Finite elements and fast
+//    iterative solvers: with applications in incompressible fluid dynamics.
+
 
 //******************************************************************************
 // Pressure block
@@ -51,7 +55,17 @@ using namespace mfem;
 //          ⌊                                                        \\ ⌋
 //  which boils down to two parallel solves and a matrix multiplication
 //
-// {NB: As a side note
+// {NB: 
+// If Ap is assembled with Dirichlet BC in outflow (as we do) and Fp is
+//  assembled the same way as Ap (as we do, since it seems to give better
+//  results-even though this goes against the advice in E/S/W), we need extra
+//  care to apply the BC to the space-time matrix FFp, too. It's easy for the
+//  main diagonal: if Mp and Ap are assembled with Dirichlet, then it's taken
+//  care of automatically; but for the subdiagonal, we need to kill the
+//  contribution from the Dirichlet nodes (much like we do in the assembly of
+//  FFu).}
+//
+// {NB2: 
 // The formulation above starts from the assumption that the PCD and the
 //  gradient operator commute. In Elman/Silvester/Wathen, instead, they
 //  propose a derivation where the *divergence* operator is considered.
@@ -253,16 +267,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
 
   // Have each processor solve for the "laplacian"
-  // // - kill every contribution on outflow boundary
-  // invAxMine.SetSubVector( _essQhTDOF, 0.0 );  // before, to improve initial guess
-  // lclx.SetSubVector(      _essQhTDOF, 0.0 );  // to the rhs, to make sure it won't affect solution (not even afterwards)
-  // // TODO: if the system is singular, set the first unknown to zero to stabilise it
-  // //       NB: this must match the definition of Ap!!
-  // if( _essQhTDOF.Size() == 0 ){
-  //   lclx.GetData()[0] = 0.;
-  // }
   _Asolve->Mult( lclx, invAxMine );
-  // invAxMine.SetSubVector( _essQhTDOF, 0.0 );  // and even afterwards, to really make sure it's 0
 
   if (_verbose>50 ){
     std::cout<<"Rank "<<_myRank<<" inverted pressure stiffness matrix\n";
@@ -305,11 +310,7 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
 
 
   // Have each processor solve for the mass matrix
-  // // - again, kill every contribution on outflow boundary
-  // lcly.SetSubVector( _essQhTDOF, 0.0 );
-  // lclx.SetSubVector( _essQhTDOF, 0.0 );
   _Msolve->Mult( lclx, lcly );
-  // lcly.SetSubVector( _essQhTDOF, 0.0 );
 
   if (_verbose>50 ){
     std::cout<<"Rank "<<_myRank<<" inverted pressure mass matrix\n";
@@ -327,6 +328,10 @@ void StokesSTPreconditioner::Mult( const Vector &x, Vector &y ) const{
   lcly += invAxMine;
   if( _myRank > 0 ){
     MPI_Wait( &reqRecv, MPI_STATUS_IGNORE );
+
+    // - kill contributions from Dirichlet BC
+    invAxPrev.SetSubVector( _essQhTDOF, 0.0 );
+    
     lcly -= invAxPrev;
   }
 
@@ -1109,14 +1114,6 @@ StokesSTOperatorAssembler::StokesSTOperatorAssembler( const MPI_Comm& comm, cons
     _QhFESpace->GetEssentialTrueDofs( essBdrQ, _essQhTDOF );
   }
 
-
-  if (_myRank == 0 ){
-    std::cout << "***********************************************************\n";
-    std::cout << "dim(Vh) = " << _VhFESpace->GetTrueVSize() << "\n";
-    std::cout << "dim(Qh) = " << _QhFESpace->GetTrueVSize() << "\n";
-    std::cout << "***********************************************************\n";
-  }
-
 }
 
 
@@ -1382,9 +1379,11 @@ void StokesSTOperatorAssembler::AssembleMp( ){
   mVarf->Assemble();
   mVarf->Finalize();
 
+  // - impose dirichlet BC on outflow
+  mVarf->FormSystemMatrix( _essQhTDOF, _Mp );
+  // _Mp = mVarf->SpMat();
 
   // - once the matrix is generated, we can get rid of the operator
-  _Mp = mVarf->SpMat();
   _Mp.SetGraphOwner(true);
   _Mp.SetDataOwner(true);
   mVarf->LoseMat();
@@ -1425,10 +1424,13 @@ void StokesSTOperatorAssembler::AssembleWp( ){
   }
 
   if ( _myRank == 0 ){
-    std::cout<<"Warning: the assembly of the spatial part of the PCD considers only Neumann BC on pressure."<<std::endl
-             <<"         For this to make sense, you need to make sure that the test problem we're trying"  <<std::endl
-             <<"         to solve has Dirichlet BC on velocity everywhere, and that the prescribed"         <<std::endl
-             <<"         advection field is tangential to the boundary (w*n=0) if solving Oseen."<<std::endl;
+    std::cout<<"Warning: The assembly of the spatial part of the PCD considers only Neumann BC on pressure."<<std::endl
+             <<"          This conflicts with the definition of the other pressure operators (which include"<<std::endl
+             <<"          Dirichlet BC on outflow). For this to make sense, make sure that either:"         <<std::endl
+             <<"          - Spatial part of Fp and Ap are forcibly imposed equal (which bypasses this func)"<<std::endl
+             <<"          - There is no outflow (in which case they would have Neumann everywhere anyway)"  <<std::endl
+             <<"         Moreover, if solving Oseen, we further need to impose that the prescribed"         <<std::endl
+             <<"          advection field is tangential to the boundary (w*n=0)."                           <<std::endl;
   }
 
 
