@@ -9,10 +9,16 @@ rehash path
 
 % Problem parameters
 prec    = 1;	% preconditioner used (0: diag, 1:triangular)
-STsolve = 2;  % solver for space-time velocity block: time-stepping 0, AMG 1, GMRES+AMG 2, parareal 3
-PBtype  = 4;  % type of problem (1:cavity, 2:poiseuille, 3:step, 4:glazing)
+STsolve = 0;  % solver for space-time velocity block: time-stepping 0, AMG 1, GMRES+AMG 2, parareal 3
+PBtype  = 1;  % type of problem (1:cavity, 2:poiseuille, 3:step, 4:glazing)
 Pe      = 10;  % peclet numer (only used if PBtype==4)
-opts    = '_FGMRES_approx2';  % list of petsc options used: direct: '', iterative: '_approx2'
+opts    = '';  % list of petsc options used: direct: '', iterative: '_approx2'
+% Plot parameters
+pow2s = 1:7;  % time refinement (max range is 1:7)
+rs    = 2:8;   % space refinement (max range is 2:8)
+% output
+out = zeros(40,length(pow2s)*length(rs) + 1);
+out(:,1) = (1:size(out,1))';
 
 peString = '';
 if ( PBtype == 4 && Pe >= 0 )
@@ -33,9 +39,9 @@ figure
 if( ~exist(path,'dir') )
 	disp('No results for specified experiment were found');
 else
-	
-	for pow2 = 1:7
-		for r = 2:8
+    
+	for pow2 = pow2s  % time refinement (1:7)
+		for r  = rs   % space refinement (2:8)
 			np = 2^pow2;
 			
 			filename = [path,'/NP',num2str(np),'_r',num2str(r),'.txt'];
@@ -69,13 +75,21 @@ else
 % 					semilogy( it, errP, colors{pow2} );
 					hold on
 					
+          out(1:length(res),length(pow2s)*(r-2)+pow2 + 1) = res;
+
 				catch
 					disp(strcat('Something went wrong with file NP', int2str(np), '_r', int2str(r)));
 				end
 			end	
 		end
-	end
+  end
 	hold off
 	legend({'r2','r3','r4','r5','r6','r7','r8'})
+  
+  filename = strcat(path,'_summary.dat');
+  format = [ repmat(' %20.18f', [1,size(out,2)] ), '\n' ];
+  fileID = fopen(filename,'w');
+  fprintf(fileID,format,out');
+  fclose(fileID);
 end
 

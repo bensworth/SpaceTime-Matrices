@@ -1,18 +1,20 @@
 function lambda = computeEigs()
-Pb = 1;
+Pb = 2;
 Prec = 1;
 STsolve = 0;
 oU = 2;
 oP = 1;
 
-r  = 6;
+r  = 7;
 mu = 1;
 
-% precOp = @(x) B*Finv\B'*( 1/dt*Ainv\x + mu*Minv\x );
+% B*Finv\B'*( 1/dt*Ainv\x + mu*Minv\x );
+% B*Finv\B'*(      Ainv\x + dt*mu*Minv\x ); % if matrices are assembled scaled by dt
 function y = precOp(x, Minv, Ainv, B, dt, Finv)
   y1 = Minv\x;
   y2 = Ainv\x;
   y3 = B'*(y2/dt + mu*y1);
+%   y3 = B'*(y2 + dt*mu*y1);
   y = Finv\y3;
   y = B*y;
 end
@@ -26,7 +28,7 @@ for i = -3:0
                '/dt',num2str(dt,'%8.6f'),'_r',int2str(r),'_');
 
   filename = strcat(path, 'B.dat');
-  B  = spconvert(load(filename));
+  B  = spconvert(load(filename)) / dt;    % B is assembled as if multiplied by dt, so rescale it
   filename = strcat(path, 'Ap.dat');
   Ap = spconvert(load(filename));
   filename = strcat(path, 'Mp.dat');
@@ -60,7 +62,10 @@ for i = -3:0
   
 end
 
-out = [lambda{1},lambda{2},lambda{3},lambda{4}];
+out = [real(lambda{1}),imag(lambda{1}),...
+       real(lambda{2}),imag(lambda{2}),...
+       real(lambda{3}),imag(lambda{3}),...
+       real(lambda{4}),imag(lambda{4})];
 
 filename = strcat('Pb',int2str(Pb),'_Prec',int2str(Prec),...
                   '_STsolve',int2str(STsolve),...

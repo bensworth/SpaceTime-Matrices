@@ -259,8 +259,8 @@ public:
 
 	void ExactSolution( HypreParVector*& u, HypreParVector*& p );
 
-	void TimeStepVelocity( const HypreParVector& rhs, HypreParVector*& sol );
-	void TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol );
+	// void TimeStepVelocity( const HypreParVector& rhs, HypreParVector*& sol );
+	// void TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol );
 
 	void GetMeshSize( double& h_min, double& h_max, double& k_min, double& k_max ) const;
 	void ComputeL2Error( const Vector& uh, const Vector& ph, double& err_u, double& err_p );
@@ -270,6 +270,8 @@ public:
 	void SaveExactSolution( const std::string& path, const std::string& filename );
 	void SaveError(      const Vector& uh, const Vector& ph, const std::string& path, const std::string& filename );
 	void PrintMatrices( const std::string& filename ) const;
+	void TimeStep(      const BlockVector& rhs, BlockVector& sol, const std::string &fname1, const std::string &path2, int refLvl );
+	void TimeStep(      const BlockVector& rhs, BlockVector& sol, const std::string &fname1, const std::string &path2, int refLvl, int pbType );
 
 private:
 	// assemble blocks for single time-step 
@@ -289,8 +291,8 @@ private:
 
 	void SetUpBoomerAMG( HYPRE_Solver& FFinv, const int maxiter=15 );
 
-	void TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol );
-
+	// void TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol );
+	
 
 
 

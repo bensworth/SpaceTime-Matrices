@@ -1,5 +1,6 @@
 #include "stokesstoperatorassembler.hpp"
 #include "vectorconvectionintegrator.hpp"
+#include "blockUpperTriangularPreconditioner.hpp"
 #include "spacetimesolver.hpp"
 #include "pararealsolver.hpp"
 
@@ -10,6 +11,7 @@
 #include "HYPRE.h"
 #include "petsc.h"
 #include "mfem.hpp"
+#include <experimental/filesystem>
 
 using namespace mfem;
 
@@ -116,28 +118,28 @@ void StokesSTPreconditioner::SetAp( const SparseMatrix* Ap ){
 
   // Flag non-trivial null space (constant funcs) if there are no essnodes
   // - NB: this option can be passed at runtime with -ksp_constant_null_space TRUE
-  if( _essQhTDOF.Size() == 0 ){
-    if( _myRank == 0 ){
-      // std::cout<<"Assuming that pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl;
-      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)."<<std::endl
-               <<"         Make sure to flag that in the petsc options prescribing:"<<std::endl
-               <<"         -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
-               <<"         -for direct solver: -PSolverLaplacian_pc_factor_shift_type NONZERO"<<std::endl
-               <<"                         and -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl
-               <<"                         (this will hopefully save us from 0 pivots in the singular mat)"<<std::endl;
-      // TODO: or maybe just fix one unknown?
-    }
-    // TODO: for some reason, the following causes memory leak
-    // // extract the underlying petsc object
-    // PetscErrorCode ierr;
-    // Mat petscA = Mat( *_Ap );
-    // // initialise null space
-    // MatNullSpace nsp = NULL;
-    // MatNullSpaceCreate( PETSC_COMM_SELF, PETSC_TRUE, 0, NULL, &nsp); CHKERRV(ierr);
-    // // // attach null space to matrix
-    // MatSetNullSpace( petscA, nsp ); CHKERRV(ierr);
-    // MatNullSpaceDestroy( &nsp ); CHKERRV(ierr);      // hopefully all info is stored
-  }
+  // if( _essQhTDOF.Size() == 0 ){
+  //   if( _myRank == 0 ){
+  //     // std::cout<<"Assuming that pressure 'laplacian' has non-trivial kernel (constant functions)"<<std::endl;
+  //     std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)."<<std::endl
+  //              <<"         Make sure to flag that in the petsc options prescribing:"<<std::endl
+  //              <<"         -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
+  //              <<"         -for direct solver: -PSolverLaplacian_pc_factor_shift_type NONZERO"<<std::endl
+  //              <<"                         and -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl
+  //              <<"                         (this will hopefully save us from 0 pivots in the singular mat)"<<std::endl;
+  //     // TODO: or maybe just fix one unknown?
+  //   }
+  //   // TODO: for some reason, the following causes memory leak
+  //   // // extract the underlying petsc object
+  //   // PetscErrorCode ierr;
+  //   // Mat petscA = Mat( *_Ap );
+  //   // // initialise null space
+  //   // MatNullSpace nsp = NULL;
+  //   // MatNullSpaceCreate( PETSC_COMM_SELF, PETSC_TRUE, 0, NULL, &nsp); CHKERRV(ierr);
+  //   // // // attach null space to matrix
+  //   // MatSetNullSpace( petscA, nsp ); CHKERRV(ierr);
+  //   // MatNullSpaceDestroy( &nsp ); CHKERRV(ierr);      // hopefully all info is stored
+  // }
 
   height = Ap->Height();
   width  = Ap->Width();
@@ -1343,6 +1345,18 @@ void StokesSTOperatorAssembler::AssembleAp( ){
 
   _ApAssembled = true;
 
+  if( _essQhTDOF.Size() == 0 ){
+    if( _myRank == 0 ){
+      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)."<<std::endl
+               <<"         Make sure to flag that in the petsc options prescribing:"<<std::endl
+               <<"         -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
+               <<"         -for direct solver: -PSolverLaplacian_pc_factor_shift_type NONZERO"<<std::endl
+               <<"                         and -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl
+               <<"                         (this will hopefully save us from 0 pivots in the singular mat)"<<std::endl;
+    }
+  }
+
+
 
   if ( _verbose>50 && _myRank == 0 ){
     std::ofstream myfile;
@@ -1430,7 +1444,7 @@ void StokesSTOperatorAssembler::AssembleWp( ){
              <<"          - Spatial part of Fp and Ap are forcibly imposed equal (which bypasses this func)"<<std::endl
              <<"          - There is no outflow (in which case they would have Neumann everywhere anyway)"  <<std::endl
              <<"         Moreover, if solving Oseen, we further need to impose that the prescribed"         <<std::endl
-             <<"          advection field is tangential to the boundary (w*n=0)."                           <<std::endl;
+             <<"          advection field is tangential to the boundary (enclosed flow, w*n=0)."            <<std::endl;
   }
 
 
@@ -1580,117 +1594,425 @@ void StokesSTOperatorAssembler::AssembleWp( ){
 
 
 
-// <<  Deprecated >>>
-// Solve Space-time system for velocity via SEQUENTIAL time-stepping
-void StokesSTOperatorAssembler::TimeStepVelocity( const HypreParVector& rhs, HypreParVector*& sol ){
 
-  AssembleFuVarf();
-  AssembleMuVarf();
+// Actual Time-stepper
+void StokesSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
+                                          const std::string &fname1, const std::string &path2, int refLvl ){
 
-  TimeStep( _Fu, _Mu, rhs, sol );
-}
+  // Define operator
+  Array<int> offsets(3);
+  offsets[0] = 0;
+  offsets[1] = _Fu.NumRows();
+  offsets[2] =  _B.NumRows();
+  offsets.PartialSum();
+  PetscParMatrix myB( &_B );
+
+  BlockOperator stokesOp( offsets );
+  stokesOp.SetBlock(0, 0, &_Fu );
+  stokesOp.SetBlock(0, 1, myB.Transpose() );
+  stokesOp.SetBlock(1, 0, &_B  );
 
 
-
-// <<  Deprecated >>>
-// Solve Space-time system for pressure via SEQUENTIAL time-stepping
-void StokesSTOperatorAssembler::TimeStepPressure( const HypreParVector& rhs, HypreParVector*& sol ){
-
+  // Define preconditioner
+  // - inverse of pressure Schur complement (bottom-right block in precon) - reuse code from ST case, but with single processor
+  StokesSTPreconditioner myPSchur( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essQhTDOF, _verbose );
   AssembleAp();
   AssembleMp();
-
-  SparseMatrix Fp = _Ap;
-
-#ifdef MULT_BY_DT
-  Fp *= _mu * _dt;
-  Fp.Add( 1.0, _Mp );     // TODO: check that Mp falls into the sparsity pattern of A
-  SparseMatrix Mp = _Mp;
-  Mp *= -1.0;
-#else
-  Fp *= _mu;
-  Fp.Add( 1./_dt, _Mp );     // TODO: check that Mp falls into the sparsity pattern of A
-  SparseMatrix Mp = _Mp;
-  Mp *= -1./_dt;
-#endif
-
-  TimeStep( Fp, Mp, rhs, sol );
-}
-
-
-
-
-// <<  Deprecated >>>
-// Actual Time-stepper. Reuses code for both pressure and velocity solve
-void StokesSTOperatorAssembler::TimeStep( const SparseMatrix &F, const SparseMatrix &M, const HypreParVector& rhs, HypreParVector*& sol ){
-
-  const int spaceDofs = rhs.Size();
-
-  // Broadcast rhs to each proc (overkill, as only proc 0 will play with it, but whatever)
-  const Vector *glbRhs = rhs.GlobalVector();
-
-  // Initialise local vector containing solution at single time-step
-  Vector lclSol( spaceDofs );
-
-
-  // Mster performs time-stepping and sends solution to other processors
-  if ( _myRank == 0 ){
-
-    // These will contain rhs and sol for each time-step
-    Vector b( spaceDofs ), x( spaceDofs );
-    for ( int i = 0; i < spaceDofs; ++i ){
-      b.GetData()[i] = 0.0;
-      x.GetData()[i] = 0.0;   // shouldn't be necessary, but vargrind complains if data is not set S_S
-    }
-
-    // Initialise solver
-    std::cout<<"Warning: TimeStep: spatial operator is assumed to be time-independent!"<<std::endl;
-    CGSolver solver;
-    solver.SetOperator( F );
-    solver.SetRelTol( 1e-12 );
-    solver.SetMaxIter( spaceDofs );
-
-    // Main time-stepping routine
-    for ( int t = 0; t < _numProcs; ++t ){
-
-      // - define rhs for this step
-      for ( int i = 0; i < spaceDofs; ++i ){
-        b.GetData()[i] += glbRhs->GetData()[ i + spaceDofs * t ];
-      }
-
-      // - solve for current time-step
-      // CG( F, b, x, 0, spaceDofs, _tol, _tol );
-      solver.Mult( b, x );
-      std::cout<<"Time step: PCG converged in "<<solver.GetNumIterations()<<", final norm: "<<solver.GetFinalNorm()<<std::endl;
-
-      // - send local solution to corresponding processor
-      if( t==0 ){
-        lclSol = x;
-      }else{
-        MPI_Send( x.GetData(), spaceDofs, MPI_DOUBLE, t, t,  _comm );   // TODO: non-blocking + wait before CG solve?
-      }
-
-      // - include solution as rhs for next time-step
-      if( t < _numProcs-1 ){
-        M.Mult( x, b );
-        b.Neg();    //M has negative sign, so flip it
-      }
-
-    }
-
+  AssembleWp();
+  myPSchur.SetAp( &_Ap );
+  myPSchur.SetMp( &_Mp );
+  if( _Pe != 0. ){
+    myPSchur.SetWp( &_Wp, false );   // if there is convection, then clearly Wp differs from Ap (must include pressure convection)
+  }else if( _essQhTDOF.Size() == 0 ){ // otherwise, if there is no outflow
+    myPSchur.SetWp( &_Wp, true );    
   }else{
-    // slaves receive data
-    MPI_Recv( lclSol.GetData(), spaceDofs, MPI_DOUBLE, 0, _myRank, _comm, MPI_STATUS_IGNORE );
+    // _pSchur->SetWp( &_Wp, false );
+    myPSchur.SetWp( &_Wp, true );     // should be false, according to E/S/W!
+    if( _myRank == 0 ){
+      std::cout<<"Warning: spatial part of Fp and Ap flagged to be the same, even though there is outflow."<<std::endl
+               <<"         This goes against what Elman/Silvester/Wathen says (BC for Fp should be Robin"<<std::endl
+               <<"         BC for Ap should be neumann/dirichlet on out). However, results seem much better."<<std::endl;
+    }
   }
 
-  // make sure we're all done
-  MPI_Barrier( _comm );
+  // - inverse of velocity operator (top-left block in precon)
+  const PetscParMatrix myFu( &_Fu );
+  PetscLinearSolver Fsolve( myFu, "VSolver_" );
 
-  // collect space-time solution
-  int col[2] = { spaceDofs * _myRank, spaceDofs * (_myRank+1) };
-  sol = new HypreParVector( _comm, spaceDofs * _numProcs, lclSol.StealData(), col );
+  // - assemble precon
+  BlockUpperTriangularPreconditioner stokesPr(offsets);
+  stokesPr.iterative_mode = false;
+  stokesPr.SetDiagonalBlock( 0, &Fsolve );
+  stokesPr.SetDiagonalBlock( 1, &myPSchur );
+  stokesPr.SetBlock( 0, 1, myB.Transpose() );
 
+
+  // Define solver
+  PetscLinearSolver solver( MPI_COMM_SELF, "solver_" );
+  bool isIterative = true;
+  solver.iterative_mode = isIterative;
+  solver.SetPreconditioner(stokesPr);
+  solver.SetOperator(stokesOp);
+
+  double tol = 1e-10 / sqrt( _numProcs );
+  if( _myRank == 0 ){
+    std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10, scaled by the number of time steps."<<std::endl
+             <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
+             <<"          so make sure to delete it from there!"<<std::endl;    
+  }
+  solver.SetTol(tol);
+  solver.SetRelTol(tol);
+  solver.SetAbsTol(tol);
+
+
+  // Main "time-stepping" routine
+  const int totDofs = x.Size();
+  // - for each time-step, this will contain rhs
+  BlockVector b( offsets );
+  b = 0.0;
+  
+  // - receive solution from previous processor (unless initial time-step)
+  if ( _myRank > 0 ){
+    // - use it as initial guess for the solver (so store in y), unless initial step!
+    MPI_Recv( y.GetData(), totDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
+    // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+    _Mu.Mult( y.GetBlock(0), b.GetBlock(0) );
+    // - M is stored with negative sign for velocity, so flip it
+    b.GetBlock(0).Neg();
+  }
+
+  // - define rhs for this step (includes contribution from sol at previous time-step
+  b += x;
+
+  // - solve for current time-step
+  //  --y acts as an initial guess! So use prev sol, unless first time step
+  solver.Mult( b, y );
+
+  int GMRESit    = solver.GetNumIterations();
+  double resnorm = solver.GetFinalNorm();
+  std::cout<<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+
+  if (!std::experimental::filesystem::exists( path2 )){
+    std::experimental::filesystem::create_directories( path2 );
+  }
+  std::string fname2 = path2 + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + ".txt";
+  std::ofstream myfile;
+  myfile.open( fname2, std::ios::app );
+  myfile <<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+  myfile.close();
+
+  //TODO: I should probably add a check that all the print to file are done in order, but cmon...
+
+
+
+  // - send solution to following processor (unless last time-step)
+  if ( _myRank < _numProcs-1 ){
+    MPI_Send( y.GetData(), totDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
+  }
+
+  // sum residuals at each time step
+  resnorm*= resnorm;
+  MPI_Allreduce( MPI_IN_PLACE, &resnorm, 1, MPI_DOUBLE, MPI_SUM, _comm );
+  double finalResNorm = sqrt(resnorm);
+
+  // average out iterations at each time step
+  MPI_Allreduce( MPI_IN_PLACE, &GMRESit, 1, MPI_INT,    MPI_SUM, _comm );
+  double avgGMRESit = double(GMRESit) / _numProcs;
+
+
+
+
+  // OUTPUT -----------------------------------------------------------------
+  // - save #it to convergence to file
+  if (_myRank == 0){
+    std::cout<<"Solver converged in "    <<avgGMRESit<<" average GMRES it per time-step.";
+    std::cout<<" Final residual norm is "<<finalResNorm   <<".\n";
+  
+    double hmin, hmax, kmin, kmax;
+    this->GetMeshSize( hmin, hmax, kmin, kmax );
+
+    std::ofstream myfile;
+    myfile.open( fname1, std::ios::app );
+    myfile << _dt*_numProcs << ",\t" << _dt  << ",\t" << _numProcs   << ",\t"
+           << hmax << ",\t" << hmin << ",\t" << refLvl << ",\t"
+           << avgGMRESit << ",\t"  << finalResNorm  << std::endl;
+    myfile.close();
+  }
+
+  // wait for write to be completed..possibly non-necessary
+  MPI_Barrier(_comm);
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Optimised Time-stepper
+void StokesSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
+                                          const std::string &fname1, const std::string &path2, int refLvl, int pbType ){
+
+  // Define operator
+  Array<int> offsets(3);
+  offsets[0] = 0;
+  offsets[1] = _Fu.NumRows();
+  offsets[2] =  _B.NumRows();
+  offsets.PartialSum();
+  PetscParMatrix myB( &_B );
+
+  BlockOperator stokesOp( offsets );
+  stokesOp.SetBlock(0, 0, &_Fu );
+  stokesOp.SetBlock(0, 1, myB.Transpose() );
+  stokesOp.SetBlock(1, 0, &_B  );
+
+  BlockUpperTriangularPreconditioner* stokesPr = NULL;
+  StokesSTPreconditioner* myPSchur = NULL;
+
+  PetscParMatrix* myFu = NULL;
+  PetscLinearSolver* Fsolve = NULL;
+  PetscLinearSolver* solver = NULL;
+
+  const int totDofs = x.Size();
+  double finalResNorm = 0.0;
+  double avgGMRESit   = 0.0;
+
+
+  // Define operators
+  if ( pbType == 4 || _myRank == 0 ){
+    // Define preconditioner
+    // - inverse of pressure Schur complement (bottom-right block in precon) - reuse code from ST case, but with single processor
+    myPSchur = new StokesSTPreconditioner( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essQhTDOF, _verbose );
+    AssembleAp();
+    AssembleMp();
+    AssembleWp();
+    myPSchur->SetAp( &_Ap );
+    myPSchur->SetMp( &_Mp );
+    if( _Pe != 0. ){
+      myPSchur->SetWp( &_Wp, false );   // if there is convection, then clearly Wp differs from Ap (must include pressure convection)
+    }else if( _essQhTDOF.Size() == 0 ){ // otherwise, if there is no outflow
+      myPSchur->SetWp( &_Wp, true );    
+    }else{
+      // _pSchur->SetWp( &_Wp, false );
+      myPSchur->SetWp( &_Wp, true );     // should be false, according to E/S/W!
+      if( _myRank == 0 ){
+        std::cout<<"Warning: spatial part of Fp and Ap flagged to be the same, even though there is outflow."<<std::endl
+                 <<"         This goes against what Elman/Silvester/Wathen says (BC for Fp should be Robin"<<std::endl
+                 <<"         BC for Ap should be neumann/dirichlet on out). However, results seem much better."<<std::endl;
+      }
+    }
+
+    // - inverse of velocity operator (top-left block in precon)
+    myFu   = new PetscParMatrix( &_Fu );
+    Fsolve = new PetscLinearSolver( *myFu, "VSolver_" );
+
+    // - assemble precon
+    stokesPr = new BlockUpperTriangularPreconditioner(offsets);
+    stokesPr->iterative_mode = false;
+    stokesPr->SetDiagonalBlock( 0, Fsolve );
+    stokesPr->SetDiagonalBlock( 1, myPSchur );
+    stokesPr->SetBlock( 0, 1, myB.Transpose() );
+
+
+    // Define solver
+    solver = new PetscLinearSolver( MPI_COMM_SELF, "solver_" );
+    bool isIterative = true;
+    solver->iterative_mode = isIterative;
+    solver->SetPreconditioner(*stokesPr);
+    solver->SetOperator(stokesOp);
+
+    double tol = 1e-10 / sqrt( _numProcs );
+    if( _myRank == 0 ){
+      std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10, scaled by the number of time steps."<<std::endl
+               <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
+               <<"          so make sure to delete it from there!"<<std::endl;    
+    }
+    solver->SetTol(tol);
+    solver->SetRelTol(tol);
+    solver->SetAbsTol(tol);
+  }
+
+
+
+  // Main "time-stepping" routine
+  // - if each operator is different, each time step needs to solve its own
+  if ( pbType == 4 ){
+    // - for each time-step, this will contain rhs
+    BlockVector b( offsets );
+    b = 0.0;
+    
+    // - receive solution from previous processor (unless initial time-step)
+    if ( _myRank > 0 ){
+      // - use it as initial guess for the solver (so store in y), unless initial step!
+      MPI_Recv( y.GetData(), totDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
+      // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+      _Mu.Mult( y.GetBlock(0), b.GetBlock(0) );
+      // - M is stored with negative sign for velocity, so flip it
+      b.GetBlock(0).Neg();
+    }
+
+    // - define rhs for this step (includes contribution from sol at previous time-step
+    b += x;
+
+    // - solve for current time-step
+    //  --y acts as an initial guess! So use prev sol, unless first time step
+    solver->Mult( b, y );
+
+    int GMRESit    = solver->GetNumIterations();
+    double resnorm = solver->GetFinalNorm();
+    std::cout<<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+
+    if (!std::experimental::filesystem::exists( path2 )){
+      std::experimental::filesystem::create_directories( path2 );
+    }
+    std::string fname2 = path2 + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + ".txt";
+    std::ofstream myfile;
+    myfile.open( fname2, std::ios::app );
+    myfile <<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+    myfile.close();
+
+    // - send solution to following processor (unless last time-step)
+    if ( _myRank < _numProcs-1 ){
+      MPI_Send( y.GetData(), totDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
+    }
+
+    // sum residuals at each time step
+    resnorm*= resnorm;
+    MPI_Allreduce( MPI_IN_PLACE, &resnorm, 1, MPI_DOUBLE, MPI_SUM, _comm );
+    finalResNorm = sqrt(resnorm);
+
+    // average out iterations at each time step
+    MPI_Allreduce( MPI_IN_PLACE, &GMRESit, 1, MPI_INT,    MPI_SUM, _comm );
+    avgGMRESit = double(GMRESit) / _numProcs;
+
+
+  // - otherwise, master takes care of it all
+  }else{
+    if ( _myRank == 0 ){
+
+      // first time-step is a bit special
+      solver->Mult( x, y );
+      int GMRESit    = solver->GetNumIterations();
+      double resnorm = solver->GetFinalNorm();
+
+      avgGMRESit   += GMRESit;
+      finalResNorm += resnorm*resnorm;
+
+      std::cout<<"Solved for time-step "<<1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+
+      if (!std::experimental::filesystem::exists( path2 )){
+        std::experimental::filesystem::create_directories( path2 );
+      }
+      std::string fname2 = path2 + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + ".txt";
+      std::ofstream myfile;
+      myfile.open( fname2, std::ios::app );
+      myfile <<"Solved for time-step "<<1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+      myfile.close();
+
+      // this will keep track of sol at current time-step
+      BlockVector y0 = y;
+
+      // after first time-step, you need to
+      for ( int t = 1; t < _numProcs; ++t ){
+        // - this will contain rhs
+        BlockVector b( offsets ), temp( offsets );
+        b = 0.0; temp = 0.0;
+
+        MPI_Recv( b.GetData(), totDofs, MPI_DOUBLE, t, 2*t,   _comm, MPI_STATUS_IGNORE );
+        // nah, use prev sol as IG
+        // MPI_Recv( y.GetData(), totDofs, MPI_DOUBLE, t, 3*t+1, _comm, MPI_STATUS_IGNORE );
+
+        // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+        _Mu.Mult( y0.GetBlock(0), temp.GetBlock(0) );
+        // - M is stored with negative sign for velocity, so flip it
+        b -= temp;
+    
+        // - solve for current time-step
+        //  --y acts as an initial guess! So use prev sol
+        solver->Mult( b, y0 );
+
+        int GMRESit    = solver->GetNumIterations();
+        double resnorm = solver->GetFinalNorm();
+
+        avgGMRESit   += GMRESit;
+        finalResNorm += resnorm*resnorm;
+
+        std::cout<<"Solved for time-step "<<t+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+
+        std::string fname2 = path2 + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + ".txt";
+        std::ofstream myfile;
+        myfile.open( fname2, std::ios::app );
+        myfile <<"Solved for time-step "<<t+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+        myfile.close();
+
+        // - send solution to right processor
+        MPI_Send( y0.GetData(), totDofs, MPI_DOUBLE, t, 2*t+1, _comm );
+      }
+
+      avgGMRESit = double(avgGMRESit)/_numProcs;
+      finalResNorm = sqrt(finalResNorm);
+
+    }else{
+      // - send rhs to master
+      MPI_Send( x.GetData(), totDofs, MPI_DOUBLE, 0, 2*_myRank,   _comm );
+      // - send IG to master
+      // MPI_Send( y.GetData(), totDofs, MPI_DOUBLE, 0, 3*_myRank+1, _comm );
+      // - receive solution from master
+      MPI_Recv( y.GetData(), totDofs, MPI_DOUBLE, 0, 2*_myRank+1, _comm, MPI_STATUS_IGNORE );
+    }
+  }
+
+
+
+
+
+  // OUTPUT -----------------------------------------------------------------
+  // - save #it to convergence to file
+  if (_myRank == 0){
+    std::cout<<"Solver converged in "    <<avgGMRESit<<" average GMRES it per time-step.";
+    std::cout<<" Final residual norm is "<<finalResNorm   <<".\n";
+  
+    double hmin, hmax, kmin, kmax;
+    this->GetMeshSize( hmin, hmax, kmin, kmax );
+
+    std::ofstream myfile;
+    myfile.open( fname1, std::ios::app );
+    myfile << _dt*_numProcs << ",\t" << _dt  << ",\t" << _numProcs   << ",\t"
+           << hmax << ",\t" << hmin << ",\t" << refLvl << ",\t"
+           << avgGMRESit << ",\t"  << finalResNorm  << std::endl;
+    myfile.close();
+  }
+
+  // wait for write to be completed..possibly non-necessary
+  MPI_Barrier(_comm);
+
+
+  // clean up
+  delete stokesPr;
+  delete myPSchur;
+  delete myFu;
+  delete Fsolve;
+  delete solver;
+
+}
+
+
+
+
+
+
+
+
 
 
 
@@ -3636,7 +3958,8 @@ StokesSTOperatorAssembler::~StokesSTOperatorAssembler(){
 //   LinearForm *fform( new LinearForm );
 //   fform->Update( _VhFESpace );
 //   fform->AddDomainIntegrator( new VectorDomainLFIntegrator( fFuncCoeff ) );					       //int_\Omega f*v
-//   // fform->AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator( pFuncCoeff, -1.0 ) );  //int_d\Omega -p*v*n + \mu*grad u*v *n (remember to put a minus in the pFuncCoeff definition above)
+//   // fform->AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator( pFuncCoeff, -1.0 ) );  //int_d\Omega -p*v*n + \mu*grad u*v *n 
+//                                                                                               //(remember to put a minus in the pFuncCoeff definition above)
 //   fform->Assemble();
 //   Vector fRhsLoc( fform->Size() );        // should be blockSizeFF
 //   fRhsLoc.SetData( fform->StealData() );

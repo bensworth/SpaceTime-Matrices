@@ -31,3 +31,30 @@
  29 KSP Residual norm 6.842747745539e-10 
  30 KSP Residual norm 4.002346565839e-10 
  31 KSP Residual norm 2.207942046019e-10 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 1.148493906698e+00 
+  1 KSP Residual norm 1.618837616184e-04 
+  2 KSP Residual norm 7.993364665951e-05 
+  3 KSP Residual norm 2.939403159222e-05 
+  4 KSP Residual norm 2.848297259974e-05 
+  5 KSP Residual norm 1.651326911789e-05 
+  6 KSP Residual norm 8.396368708904e-06 
+  7 KSP Residual norm 8.263985739010e-06 
+  8 KSP Residual norm 4.862883878209e-06 
+  9 KSP Residual norm 2.388325890694e-06 
+ 10 KSP Residual norm 1.650313181241e-06 
+ 11 KSP Residual norm 1.650196772557e-06 
+ 12 KSP Residual norm 1.039619836959e-06 
+ 13 KSP Residual norm 6.914906811973e-07 
+ 14 KSP Residual norm 4.184378731823e-07 
+ 15 KSP Residual norm 4.160479200099e-07 
+ 16 KSP Residual norm 2.426720117552e-07 
+ 17 KSP Residual norm 1.427380311195e-07 
+ 18 KSP Residual norm 1.296223041985e-07 
+ 19 KSP Residual norm 8.544885694983e-08 
+ 20 KSP Residual norm 4.868078307442e-08 
+ 21 KSP Residual norm 3.209104775260e-08 
+ 22 KSP Residual norm 3.207910105249e-08 
+ 23 KSP Residual norm 1.769343798035e-08 
+ 24 KSP Residual norm 1.130972069820e-08 
+ 25 KSP Residual norm 6.459028760994e-09 

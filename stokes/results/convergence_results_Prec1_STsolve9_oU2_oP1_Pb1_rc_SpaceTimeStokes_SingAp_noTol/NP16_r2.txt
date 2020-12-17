@@ -1,0 +1,16 @@
+Solved for time-step 1 in 20 iterations. Residual 5.227e-13
+Solved for time-step 2 in 20 iterations. Residual 8.3622e-13
+Solved for time-step 3 in 20 iterations. Residual 8.59957e-13
+Solved for time-step 4 in 20 iterations. Residual 8.63882e-13
+Solved for time-step 5 in 20 iterations. Residual 8.64691e-13
+Solved for time-step 6 in 20 iterations. Residual 8.64843e-13
+Solved for time-step 7 in 20 iterations. Residual 8.6487e-13
+Solved for time-step 8 in 20 iterations. Residual 8.64906e-13
+Solved for time-step 9 in 20 iterations. Residual 8.64862e-13
+Solved for time-step 10 in 19 iterations. Residual 3.54402e-11
+Solved for time-step 11 in 19 iterations. Residual 3.54358e-11
+Solved for time-step 12 in 19 iterations. Residual 3.54394e-11
+Solved for time-step 13 in 19 iterations. Residual 3.54405e-11
+Solved for time-step 14 in 19 iterations. Residual 3.54354e-11
+Solved for time-step 15 in 19 iterations. Residual 3.54377e-11
+Solved for time-step 16 in 19 iterations. Residual 3.54402e-11

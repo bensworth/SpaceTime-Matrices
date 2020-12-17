@@ -1,0 +1,4 @@
+Solved for time-step 1 in 23 iterations. Residual 1.46319e-11
+Solved for time-step 2 in 23 iterations. Residual 2.99129e-11
+Solved for time-step 3 in 22 iterations. Residual 1.09848e-10
+Solved for time-step 4 in 23 iterations. Residual 3.63032e-11
