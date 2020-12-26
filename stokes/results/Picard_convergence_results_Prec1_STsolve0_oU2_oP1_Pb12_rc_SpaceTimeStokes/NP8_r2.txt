@@ -1,0 +1,9 @@
+It	ResidualNorm	ResRelNorm	NormDiffPrevIt	GMRESits
+0	0.639998	1	0	0
+1	1.54998e-10	2.42185e-10	44.9586	37
+It	ResidualNorm	ResRelNorm	NormDiffPrevIt	GMRESits
+0	0.639998	1	0	0
+1	2.93302e-10	4.58285e-10	44.9586	34
+It	ResidualNorm	ResRelNorm	NormDiffPrevIt	GMRESits
+0	0.639998	1	0	0
+1	2.93302e-10	4.58285e-10	44.9586	34

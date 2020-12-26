@@ -3511,16 +3511,19 @@ void StokesSTOperatorAssembler::GetMeshSize( double& h_min, double& h_max, doubl
 
 void StokesSTOperatorAssembler::PrintMatrices( const std::string& filename ) const{
 
-  if( _myRank == 0){
-    if( ! ( _FuAssembled && _MuAssembled && _MpAssembled && _ApAssembled && _BAssembled ) ){
-      std::cerr<<"Make sure all matrices have been initialised, otherwise they can't be printed"<<std::endl;
-      return;
+  if( ! ( _FuAssembled && _MuAssembled && _MpAssembled && _ApAssembled && _BAssembled && (_Pe==0.0 || _WpAssembled) ) ){
+    if( _myRank == 0){
+        std::cerr<<"Make sure all matrices have been initialised, otherwise they can't be printed"<<std::endl;
     }
+    return;
+  }
 
-    std::string myfilename;
-    std::ofstream myfile;
+  std::string myfilename;
+  std::ofstream myfile;
 
-    myfilename = filename + "_Fu.dat";
+
+  if ( _myRank == 0 ){
+    myfilename = filename + "_Fu_" + std::to_string(_myRank) +".dat";
     myfile.open( myfilename );
     _Fu.PrintMatlab(myfile);
     myfile.close( );
@@ -3545,6 +3548,21 @@ void StokesSTOperatorAssembler::PrintMatrices( const std::string& filename ) con
     _B.PrintMatlab(myfile);
     myfile.close( );
   }
+
+  if ( _Pe!=0. ){
+    myfilename = filename + "_Wp_" + std::to_string(_myRank) +".dat";
+    myfile.open( myfilename );
+    _Wp.PrintMatlab(myfile);
+    myfile.close( );
+    if ( _myRank!=0 ){
+      myfilename = filename + "_Fu_" + std::to_string(_myRank) +".dat";
+      myfile.open( myfilename );
+      _Fu.PrintMatlab(myfile);
+      myfile.close( );
+    }
+  }
+
+
 }
 
 

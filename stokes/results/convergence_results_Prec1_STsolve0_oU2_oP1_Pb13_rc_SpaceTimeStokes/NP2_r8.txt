@@ -1,0 +1,605 @@
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 1.250778814040e+01 
+  1 KSP Residual norm 8.382502006825e-03 
+  2 KSP Residual norm 6.973101785752e-03 
+  3 KSP Residual norm 2.621000427605e-03 
+  4 KSP Residual norm 1.984624203377e-03 
+  5 KSP Residual norm 1.967000666486e-03 
+  6 KSP Residual norm 1.901043256272e-03 
+  7 KSP Residual norm 1.873078543792e-03 
+  8 KSP Residual norm 1.863897220122e-03 
+  9 KSP Residual norm 1.863621076533e-03 
+ 10 KSP Residual norm 1.858014041457e-03 
+ 11 KSP Residual norm 1.858010405042e-03 
+ 12 KSP Residual norm 1.857943478006e-03 
+ 13 KSP Residual norm 1.855791184620e-03 
+ 14 KSP Residual norm 1.853637869519e-03 
+ 15 KSP Residual norm 1.852381279701e-03 
+ 16 KSP Residual norm 1.845033317645e-03 
+ 17 KSP Residual norm 1.836760728680e-03 
+ 18 KSP Residual norm 1.827210839185e-03 
+ 19 KSP Residual norm 1.805094472734e-03 
+ 20 KSP Residual norm 1.768758225732e-03 
+ 21 KSP Residual norm 1.712455938599e-03 
+ 22 KSP Residual norm 1.654948051601e-03 
+ 23 KSP Residual norm 1.607510493595e-03 
+ 24 KSP Residual norm 1.560756741863e-03 
+ 25 KSP Residual norm 1.510694941107e-03 
+ 26 KSP Residual norm 1.454577254754e-03 
+ 27 KSP Residual norm 1.393312975907e-03 
+ 28 KSP Residual norm 1.334830609470e-03 
+ 29 KSP Residual norm 1.298096881399e-03 
+ 30 KSP Residual norm 1.265563089962e-03 
+ 31 KSP Residual norm 1.226259135876e-03 
+ 32 KSP Residual norm 1.198106983599e-03 
+ 33 KSP Residual norm 1.173647348957e-03 
+ 34 KSP Residual norm 1.152041513398e-03 
+ 35 KSP Residual norm 1.129142273322e-03 
+ 36 KSP Residual norm 1.105654324918e-03 
+ 37 KSP Residual norm 1.081583904061e-03 
+ 38 KSP Residual norm 1.057604607149e-03 
+ 39 KSP Residual norm 1.034844122049e-03 
+ 40 KSP Residual norm 1.010598563223e-03 
+ 41 KSP Residual norm 9.801536301598e-04 
+ 42 KSP Residual norm 9.439898747608e-04 
+ 43 KSP Residual norm 9.040856321570e-04 
+ 44 KSP Residual norm 8.772862519225e-04 
+ 45 KSP Residual norm 8.572437966929e-04 
+ 46 KSP Residual norm 8.247877509355e-04 
+ 47 KSP Residual norm 7.902268778221e-04 
+ 48 KSP Residual norm 7.543801546985e-04 
+ 49 KSP Residual norm 7.185121095416e-04 
+ 50 KSP Residual norm 6.797361934342e-04 
+ 51 KSP Residual norm 6.266926433615e-04 
+ 52 KSP Residual norm 5.517036457906e-04 
+ 53 KSP Residual norm 4.777056657441e-04 
+ 54 KSP Residual norm 4.258566741017e-04 
+ 55 KSP Residual norm 3.905059306337e-04 
+ 56 KSP Residual norm 3.555197473122e-04 
+ 57 KSP Residual norm 3.118876309652e-04 
+ 58 KSP Residual norm 2.647830357277e-04 
+ 59 KSP Residual norm 2.402166558942e-04 
+ 60 KSP Residual norm 2.185685689277e-04 
+ 61 KSP Residual norm 1.992353043897e-04 
+ 62 KSP Residual norm 1.860256061466e-04 
+ 63 KSP Residual norm 1.738288936774e-04 
+ 64 KSP Residual norm 1.597354007194e-04 
+ 65 KSP Residual norm 1.435760616050e-04 
+ 66 KSP Residual norm 1.276126236304e-04 
+ 67 KSP Residual norm 1.126457051339e-04 
+ 68 KSP Residual norm 9.772249692754e-05 
+ 69 KSP Residual norm 8.163229617452e-05 
+ 70 KSP Residual norm 6.471850252049e-05 
+ 71 KSP Residual norm 4.948633740729e-05 
+ 72 KSP Residual norm 3.827399215948e-05 
+ 73 KSP Residual norm 3.125105309728e-05 
+ 74 KSP Residual norm 2.855926015958e-05 
+ 75 KSP Residual norm 2.516958656515e-05 
+ 76 KSP Residual norm 2.174258629901e-05 
+ 77 KSP Residual norm 1.852407759042e-05 
+ 78 KSP Residual norm 1.543661312951e-05 
+ 79 KSP Residual norm 1.268061731633e-05 
+ 80 KSP Residual norm 1.044900084271e-05 
+ 81 KSP Residual norm 8.765509673093e-06 
+ 82 KSP Residual norm 7.534429247918e-06 
+ 83 KSP Residual norm 6.612816386627e-06 
+ 84 KSP Residual norm 5.854539547597e-06 
+ 85 KSP Residual norm 5.135735107370e-06 
+ 86 KSP Residual norm 4.412716471954e-06 
+ 87 KSP Residual norm 3.762647329063e-06 
+ 88 KSP Residual norm 3.354804843665e-06 
+ 89 KSP Residual norm 3.194128502777e-06 
+ 90 KSP Residual norm 3.001785174217e-06 
+ 91 KSP Residual norm 2.868422479690e-06 
+ 92 KSP Residual norm 2.752018555827e-06 
+ 93 KSP Residual norm 2.605453489595e-06 
+ 94 KSP Residual norm 2.394758605311e-06 
+ 95 KSP Residual norm 2.116509819306e-06 
+ 96 KSP Residual norm 1.810483211926e-06 
+ 97 KSP Residual norm 1.526411419552e-06 
+ 98 KSP Residual norm 1.289990301027e-06 
+ 99 KSP Residual norm 1.104129247250e-06 
+100 KSP Residual norm 9.593944287060e-07 
+101 KSP Residual norm 9.538513997606e-07 
+102 KSP Residual norm 9.464676663149e-07 
+103 KSP Residual norm 9.452530650350e-07 
+104 KSP Residual norm 9.445603964456e-07 
+105 KSP Residual norm 9.350918118150e-07 
+106 KSP Residual norm 9.042458791507e-07 
+107 KSP Residual norm 8.716709556377e-07 
+108 KSP Residual norm 8.497685821877e-07 
+109 KSP Residual norm 8.239497724376e-07 
+110 KSP Residual norm 8.018069040177e-07 
+111 KSP Residual norm 7.833254571952e-07 
+112 KSP Residual norm 7.667471215336e-07 
+113 KSP Residual norm 7.468908648063e-07 
+114 KSP Residual norm 7.101513537570e-07 
+115 KSP Residual norm 6.551746404983e-07 
+116 KSP Residual norm 5.986524512008e-07 
+117 KSP Residual norm 5.735420002003e-07 
+118 KSP Residual norm 5.508904935156e-07 
+119 KSP Residual norm 5.384405046940e-07 
+120 KSP Residual norm 5.340835392051e-07 
+121 KSP Residual norm 5.316477581225e-07 
+122 KSP Residual norm 5.269750323346e-07 
+123 KSP Residual norm 5.160749858750e-07 
+124 KSP Residual norm 4.984577391493e-07 
+125 KSP Residual norm 4.742890355528e-07 
+126 KSP Residual norm 4.454090255955e-07 
+127 KSP Residual norm 4.178455967044e-07 
+128 KSP Residual norm 3.994303175739e-07 
+129 KSP Residual norm 3.914261674833e-07 
+130 KSP Residual norm 3.879891491449e-07 
+131 KSP Residual norm 3.852241879255e-07 
+132 KSP Residual norm 3.833949729325e-07 
+133 KSP Residual norm 3.790470181679e-07 
+134 KSP Residual norm 3.702633182394e-07 
+135 KSP Residual norm 3.574886177761e-07 
+136 KSP Residual norm 3.441266707563e-07 
+137 KSP Residual norm 3.320285694067e-07 
+138 KSP Residual norm 3.187215989823e-07 
+139 KSP Residual norm 2.976276404446e-07 
+140 KSP Residual norm 2.629708744630e-07 
+141 KSP Residual norm 2.217596341248e-07 
+142 KSP Residual norm 1.872807201548e-07 
+143 KSP Residual norm 1.624406312230e-07 
+144 KSP Residual norm 1.444941381142e-07 
+145 KSP Residual norm 1.309429513508e-07 
+146 KSP Residual norm 1.200691462696e-07 
+147 KSP Residual norm 1.150083647689e-07 
+148 KSP Residual norm 1.069328414237e-07 
+149 KSP Residual norm 9.969922502266e-08 
+150 KSP Residual norm 9.576870403445e-08 
+151 KSP Residual norm 9.368454106221e-08 
+152 KSP Residual norm 9.172181023145e-08 
+153 KSP Residual norm 8.839542035977e-08 
+154 KSP Residual norm 8.304137634240e-08 
+155 KSP Residual norm 7.763676975398e-08 
+156 KSP Residual norm 7.402243412391e-08 
+157 KSP Residual norm 7.174305125764e-08 
+158 KSP Residual norm 6.977500970722e-08 
+159 KSP Residual norm 6.726479990492e-08 
+160 KSP Residual norm 6.353112294967e-08 
+161 KSP Residual norm 5.897946798495e-08 
+162 KSP Residual norm 5.643346441223e-08 
+163 KSP Residual norm 5.250207412236e-08 
+164 KSP Residual norm 4.919512899727e-08 
+165 KSP Residual norm 4.662035768816e-08 
+166 KSP Residual norm 4.406997918830e-08 
+167 KSP Residual norm 4.130022566142e-08 
+168 KSP Residual norm 3.889614521291e-08 
+169 KSP Residual norm 3.739008556602e-08 
+170 KSP Residual norm 3.646143460922e-08 
+171 KSP Residual norm 3.559499217635e-08 
+172 KSP Residual norm 3.428585816027e-08 
+173 KSP Residual norm 3.215505128175e-08 
+174 KSP Residual norm 2.940654197641e-08 
+175 KSP Residual norm 2.676166195736e-08 
+176 KSP Residual norm 2.494955364363e-08 
+177 KSP Residual norm 2.373113598327e-08 
+178 KSP Residual norm 2.165221226375e-08 
+179 KSP Residual norm 1.941787674943e-08 
+180 KSP Residual norm 1.733782520217e-08 
+181 KSP Residual norm 1.553373762077e-08 
+182 KSP Residual norm 1.393826078146e-08 
+183 KSP Residual norm 1.241653061145e-08 
+184 KSP Residual norm 1.093697060712e-08 
+185 KSP Residual norm 9.574794779593e-09 
+186 KSP Residual norm 8.336146606066e-09 
+187 KSP Residual norm 7.098487422060e-09 
+188 KSP Residual norm 5.816714752081e-09 
+189 KSP Residual norm 4.642811792409e-09 
+190 KSP Residual norm 3.697190545454e-09 
+191 KSP Residual norm 3.200615976555e-09 
+192 KSP Residual norm 2.737603190550e-09 
+193 KSP Residual norm 2.286135880796e-09 
+194 KSP Residual norm 2.014206245259e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 4.781269926022e-04 
+  1 KSP Residual norm 1.304169437024e-04 
+  2 KSP Residual norm 4.029172945316e-05 
+  3 KSP Residual norm 2.224170265171e-05 
+  4 KSP Residual norm 1.909447322534e-05 
+  5 KSP Residual norm 1.876432567058e-05 
+  6 KSP Residual norm 1.853474692640e-05 
+  7 KSP Residual norm 1.842093778472e-05 
+  8 KSP Residual norm 1.584492099515e-05 
+  9 KSP Residual norm 1.319289407877e-05 
+ 10 KSP Residual norm 1.213120847514e-05 
+ 11 KSP Residual norm 1.209189793222e-05 
+ 12 KSP Residual norm 1.208722355529e-05 
+ 13 KSP Residual norm 1.203120977568e-05 
+ 14 KSP Residual norm 1.202885415004e-05 
+ 15 KSP Residual norm 1.183717966237e-05 
+ 16 KSP Residual norm 1.147747542858e-05 
+ 17 KSP Residual norm 1.113133031791e-05 
+ 18 KSP Residual norm 1.077570362044e-05 
+ 19 KSP Residual norm 1.018516197049e-05 
+ 20 KSP Residual norm 9.226571954620e-06 
+ 21 KSP Residual norm 8.252681163207e-06 
+ 22 KSP Residual norm 7.593447980483e-06 
+ 23 KSP Residual norm 7.152032119734e-06 
+ 24 KSP Residual norm 6.770436938082e-06 
+ 25 KSP Residual norm 6.441194281765e-06 
+ 26 KSP Residual norm 6.211573017176e-06 
+ 27 KSP Residual norm 6.099750988559e-06 
+ 28 KSP Residual norm 5.916972851374e-06 
+ 29 KSP Residual norm 5.579682060998e-06 
+ 30 KSP Residual norm 5.061956449785e-06 
+ 31 KSP Residual norm 4.503121506199e-06 
+ 32 KSP Residual norm 4.049763786995e-06 
+ 33 KSP Residual norm 3.700190685826e-06 
+ 34 KSP Residual norm 3.431338947198e-06 
+ 35 KSP Residual norm 3.215735485100e-06 
+ 36 KSP Residual norm 3.014621594127e-06 
+ 37 KSP Residual norm 2.781527809196e-06 
+ 38 KSP Residual norm 2.500293909433e-06 
+ 39 KSP Residual norm 2.215863372389e-06 
+ 40 KSP Residual norm 1.981496009955e-06 
+ 41 KSP Residual norm 1.807215062143e-06 
+ 42 KSP Residual norm 1.720350236195e-06 
+ 43 KSP Residual norm 1.640856941031e-06 
+ 44 KSP Residual norm 1.548814812774e-06 
+ 45 KSP Residual norm 1.463137962572e-06 
+ 46 KSP Residual norm 1.359229491724e-06 
+ 47 KSP Residual norm 1.217508624606e-06 
+ 48 KSP Residual norm 1.049229200653e-06 
+ 49 KSP Residual norm 9.050019009684e-07 
+ 50 KSP Residual norm 8.128629746388e-07 
+ 51 KSP Residual norm 7.549880494510e-07 
+ 52 KSP Residual norm 7.042167235699e-07 
+ 53 KSP Residual norm 6.427029381827e-07 
+ 54 KSP Residual norm 5.773921219412e-07 
+ 55 KSP Residual norm 5.280047523097e-07 
+ 56 KSP Residual norm 4.957669838600e-07 
+ 57 KSP Residual norm 4.749623559018e-07 
+ 58 KSP Residual norm 4.614129710597e-07 
+ 59 KSP Residual norm 4.361249506081e-07 
+ 60 KSP Residual norm 4.113178765633e-07 
+ 61 KSP Residual norm 3.922802107842e-07 
+ 62 KSP Residual norm 3.787539467551e-07 
+ 63 KSP Residual norm 3.677168780868e-07 
+ 64 KSP Residual norm 3.572707549252e-07 
+ 65 KSP Residual norm 3.477914856837e-07 
+ 66 KSP Residual norm 3.406886503541e-07 
+ 67 KSP Residual norm 3.355332426259e-07 
+ 68 KSP Residual norm 3.306034903861e-07 
+ 69 KSP Residual norm 3.234064604127e-07 
+ 70 KSP Residual norm 3.104451845807e-07 
+ 71 KSP Residual norm 2.903055490882e-07 
+ 72 KSP Residual norm 2.701793575274e-07 
+ 73 KSP Residual norm 2.607333710978e-07 
+ 74 KSP Residual norm 2.459139582495e-07 
+ 75 KSP Residual norm 2.324348235423e-07 
+ 76 KSP Residual norm 2.180820522008e-07 
+ 77 KSP Residual norm 1.997263426502e-07 
+ 78 KSP Residual norm 1.785641605269e-07 
+ 79 KSP Residual norm 1.593793315124e-07 
+ 80 KSP Residual norm 1.436137105462e-07 
+ 81 KSP Residual norm 1.287417130598e-07 
+ 82 KSP Residual norm 1.122423564944e-07 
+ 83 KSP Residual norm 9.469740908976e-08 
+ 84 KSP Residual norm 7.997086477609e-08 
+ 85 KSP Residual norm 7.087556055989e-08 
+ 86 KSP Residual norm 6.627539428915e-08 
+ 87 KSP Residual norm 6.396573385818e-08 
+ 88 KSP Residual norm 6.288702374398e-08 
+ 89 KSP Residual norm 6.169720933604e-08 
+ 90 KSP Residual norm 5.954805419501e-08 
+ 91 KSP Residual norm 5.623685568168e-08 
+ 92 KSP Residual norm 5.154143844118e-08 
+ 93 KSP Residual norm 4.570457906520e-08 
+ 94 KSP Residual norm 3.925020650975e-08 
+ 95 KSP Residual norm 3.283949926184e-08 
+ 96 KSP Residual norm 2.711279422554e-08 
+ 97 KSP Residual norm 2.238473789561e-08 
+ 98 KSP Residual norm 1.853384495232e-08 
+ 99 KSP Residual norm 1.522203130303e-08 
+100 KSP Residual norm 1.224323684501e-08 
+101 KSP Residual norm 1.100245694096e-08 
+102 KSP Residual norm 1.096877220145e-08 
+103 KSP Residual norm 1.096771684061e-08 
+104 KSP Residual norm 1.096764881667e-08 
+105 KSP Residual norm 1.094062379656e-08 
+106 KSP Residual norm 1.056794295275e-08 
+107 KSP Residual norm 9.668128707559e-09 
+108 KSP Residual norm 8.710041803068e-09 
+109 KSP Residual norm 8.025258467188e-09 
+110 KSP Residual norm 7.437240952989e-09 
+111 KSP Residual norm 6.658462632886e-09 
+112 KSP Residual norm 5.640207570636e-09 
+113 KSP Residual norm 4.684832359204e-09 
+114 KSP Residual norm 3.989588550700e-09 
+115 KSP Residual norm 3.535820193782e-09 
+116 KSP Residual norm 3.234536283075e-09 
+117 KSP Residual norm 3.018688104346e-09 
+118 KSP Residual norm 2.852875399962e-09 
+119 KSP Residual norm 2.772927007978e-09 
+120 KSP Residual norm 2.661331679442e-09 
+121 KSP Residual norm 2.507475486927e-09 
+122 KSP Residual norm 2.304652235481e-09 
+123 KSP Residual norm 2.044940569245e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 7.279799549531e-06 
+  1 KSP Residual norm 1.155828925620e-06 
+  2 KSP Residual norm 2.666722617740e-07 
+  3 KSP Residual norm 1.364828347151e-07 
+  4 KSP Residual norm 1.358305339831e-07 
+  5 KSP Residual norm 1.260834568643e-07 
+  6 KSP Residual norm 1.231050867142e-07 
+  7 KSP Residual norm 1.019450515468e-07 
+  8 KSP Residual norm 6.904873106296e-08 
+  9 KSP Residual norm 6.683497693719e-08 
+ 10 KSP Residual norm 6.518878019152e-08 
+ 11 KSP Residual norm 6.130462905923e-08 
+ 12 KSP Residual norm 5.897652681689e-08 
+ 13 KSP Residual norm 5.679594788892e-08 
+ 14 KSP Residual norm 5.435844792316e-08 
+ 15 KSP Residual norm 5.167293294176e-08 
+ 16 KSP Residual norm 4.967679114446e-08 
+ 17 KSP Residual norm 4.760576115879e-08 
+ 18 KSP Residual norm 4.482251118326e-08 
+ 19 KSP Residual norm 4.140255299688e-08 
+ 20 KSP Residual norm 3.789829314841e-08 
+ 21 KSP Residual norm 3.535572964591e-08 
+ 22 KSP Residual norm 3.428798138021e-08 
+ 23 KSP Residual norm 3.402783201442e-08 
+ 24 KSP Residual norm 3.399353266410e-08 
+ 25 KSP Residual norm 3.398696159815e-08 
+ 26 KSP Residual norm 3.395663569654e-08 
+ 27 KSP Residual norm 3.389491777496e-08 
+ 28 KSP Residual norm 3.352120198800e-08 
+ 29 KSP Residual norm 3.218275505606e-08 
+ 30 KSP Residual norm 2.897139623937e-08 
+ 31 KSP Residual norm 2.480375448845e-08 
+ 32 KSP Residual norm 2.181162093729e-08 
+ 33 KSP Residual norm 2.005036304936e-08 
+ 34 KSP Residual norm 1.878168891018e-08 
+ 35 KSP Residual norm 1.770787367788e-08 
+ 36 KSP Residual norm 1.682407804710e-08 
+ 37 KSP Residual norm 1.608852474401e-08 
+ 38 KSP Residual norm 1.535246865775e-08 
+ 39 KSP Residual norm 1.447570423175e-08 
+ 40 KSP Residual norm 1.342008983339e-08 
+ 41 KSP Residual norm 1.226348536325e-08 
+ 42 KSP Residual norm 1.157317723901e-08 
+ 43 KSP Residual norm 1.057403603119e-08 
+ 44 KSP Residual norm 9.334678501565e-09 
+ 45 KSP Residual norm 8.221244978857e-09 
+ 46 KSP Residual norm 7.235130024286e-09 
+ 47 KSP Residual norm 6.280495305946e-09 
+ 48 KSP Residual norm 5.280154699252e-09 
+ 49 KSP Residual norm 4.388309034796e-09 
+ 50 KSP Residual norm 3.810529564573e-09 
+ 51 KSP Residual norm 3.470838496262e-09 
+ 52 KSP Residual norm 3.177569662946e-09 
+ 53 KSP Residual norm 2.792520126502e-09 
+ 54 KSP Residual norm 2.352219801564e-09 
+ 55 KSP Residual norm 2.036643900682e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 8.630197329342e-08 
+  1 KSP Residual norm 1.352346052969e-08 
+  2 KSP Residual norm 3.023628493604e-09 
+  3 KSP Residual norm 2.315133112317e-09 
+  4 KSP Residual norm 2.302859349501e-09 
+  5 KSP Residual norm 2.281950117247e-09 
+  6 KSP Residual norm 2.270326223497e-09 
+  7 KSP Residual norm 2.125658599645e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 1.250778814040e+01 
+  1 KSP Residual norm 5.718773005096e-03 
+  2 KSP Residual norm 1.261411467881e-03 
+  3 KSP Residual norm 7.252403252877e-04 
+  4 KSP Residual norm 2.768596556901e-04 
+  5 KSP Residual norm 9.086307079972e-05 
+  6 KSP Residual norm 3.669003658984e-05 
+  7 KSP Residual norm 2.153235738181e-05 
+  8 KSP Residual norm 1.084331956944e-05 
+  9 KSP Residual norm 5.499655981330e-06 
+ 10 KSP Residual norm 2.798894554823e-06 
+ 11 KSP Residual norm 2.020075115281e-06 
+ 12 KSP Residual norm 1.155451417121e-06 
+ 13 KSP Residual norm 6.596546260572e-07 
+ 14 KSP Residual norm 3.856829476365e-07 
+ 15 KSP Residual norm 2.157985422702e-07 
+ 16 KSP Residual norm 1.254615242199e-07 
+ 17 KSP Residual norm 7.501229949817e-08 
+ 18 KSP Residual norm 5.003186751669e-08 
+ 19 KSP Residual norm 3.262461053738e-08 
+ 20 KSP Residual norm 2.162959426321e-08 
+ 21 KSP Residual norm 1.311361016210e-08 
+ 22 KSP Residual norm 8.655188989202e-09 
+ 23 KSP Residual norm 5.052384324994e-09 
+ 24 KSP Residual norm 2.840379391614e-09 
+ 25 KSP Residual norm 1.562780258269e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 4.781270984172e-04 
+  1 KSP Residual norm 1.304169703540e-04 
+  2 KSP Residual norm 4.029069142462e-05 
+  3 KSP Residual norm 2.224162435021e-05 
+  4 KSP Residual norm 1.909505323873e-05 
+  5 KSP Residual norm 1.876571954068e-05 
+  6 KSP Residual norm 1.853561899869e-05 
+  7 KSP Residual norm 1.842222909782e-05 
+  8 KSP Residual norm 1.584694062989e-05 
+  9 KSP Residual norm 1.319517615155e-05 
+ 10 KSP Residual norm 1.213234536036e-05 
+ 11 KSP Residual norm 1.209290452784e-05 
+ 12 KSP Residual norm 1.208832365486e-05 
+ 13 KSP Residual norm 1.203220095023e-05 
+ 14 KSP Residual norm 1.202985591478e-05 
+ 15 KSP Residual norm 1.183813695874e-05 
+ 16 KSP Residual norm 1.147789804970e-05 
+ 17 KSP Residual norm 1.113131955990e-05 
+ 18 KSP Residual norm 1.077560938042e-05 
+ 19 KSP Residual norm 1.018498585929e-05 
+ 20 KSP Residual norm 9.225393835700e-06 
+ 21 KSP Residual norm 8.250436429628e-06 
+ 22 KSP Residual norm 7.591332157011e-06 
+ 23 KSP Residual norm 7.150693221621e-06 
+ 24 KSP Residual norm 6.769343725513e-06 
+ 25 KSP Residual norm 6.438818120791e-06 
+ 26 KSP Residual norm 6.208053844185e-06 
+ 27 KSP Residual norm 6.096612842972e-06 
+ 28 KSP Residual norm 5.912466200282e-06 
+ 29 KSP Residual norm 5.575911403168e-06 
+ 30 KSP Residual norm 5.059802219557e-06 
+ 31 KSP Residual norm 4.502032733384e-06 
+ 32 KSP Residual norm 4.048783310559e-06 
+ 33 KSP Residual norm 3.698949295209e-06 
+ 34 KSP Residual norm 3.429842492972e-06 
+ 35 KSP Residual norm 3.213989081262e-06 
+ 36 KSP Residual norm 3.012566486468e-06 
+ 37 KSP Residual norm 2.779170003336e-06 
+ 38 KSP Residual norm 2.497862806779e-06 
+ 39 KSP Residual norm 2.213677664567e-06 
+ 40 KSP Residual norm 1.979610928798e-06 
+ 41 KSP Residual norm 1.805463883506e-06 
+ 42 KSP Residual norm 1.718598090390e-06 
+ 43 KSP Residual norm 1.639159695938e-06 
+ 44 KSP Residual norm 1.547185606911e-06 
+ 45 KSP Residual norm 1.461639497598e-06 
+ 46 KSP Residual norm 1.357915459881e-06 
+ 47 KSP Residual norm 1.216369442670e-06 
+ 48 KSP Residual norm 1.048169214125e-06 
+ 49 KSP Residual norm 9.039330734806e-07 
+ 50 KSP Residual norm 8.117505089355e-07 
+ 51 KSP Residual norm 7.538087667701e-07 
+ 52 KSP Residual norm 7.029173290534e-07 
+ 53 KSP Residual norm 6.411831191249e-07 
+ 54 KSP Residual norm 5.756356958405e-07 
+ 55 KSP Residual norm 5.261746928857e-07 
+ 56 KSP Residual norm 4.940115818522e-07 
+ 57 KSP Residual norm 4.730524940079e-07 
+ 58 KSP Residual norm 4.598097923615e-07 
+ 59 KSP Residual norm 4.347276700012e-07 
+ 60 KSP Residual norm 4.099467230886e-07 
+ 61 KSP Residual norm 3.908990482466e-07 
+ 62 KSP Residual norm 3.774026596582e-07 
+ 63 KSP Residual norm 3.664354220484e-07 
+ 64 KSP Residual norm 3.560639545135e-07 
+ 65 KSP Residual norm 3.466263225091e-07 
+ 66 KSP Residual norm 3.395422214980e-07 
+ 67 KSP Residual norm 3.344168276023e-07 
+ 68 KSP Residual norm 3.295465377319e-07 
+ 69 KSP Residual norm 3.224547495893e-07 
+ 70 KSP Residual norm 3.096373538734e-07 
+ 71 KSP Residual norm 2.896115228920e-07 
+ 72 KSP Residual norm 2.694312384233e-07 
+ 73 KSP Residual norm 2.600390320560e-07 
+ 74 KSP Residual norm 2.454065480442e-07 
+ 75 KSP Residual norm 2.320031847636e-07 
+ 76 KSP Residual norm 2.176982594321e-07 
+ 77 KSP Residual norm 1.993615832762e-07 
+ 78 KSP Residual norm 1.782066096538e-07 
+ 79 KSP Residual norm 1.590503266643e-07 
+ 80 KSP Residual norm 1.433393349728e-07 
+ 81 KSP Residual norm 1.285356647199e-07 
+ 82 KSP Residual norm 1.120994211626e-07 
+ 83 KSP Residual norm 9.458565990044e-08 
+ 84 KSP Residual norm 7.985646134959e-08 
+ 85 KSP Residual norm 7.075000095635e-08 
+ 86 KSP Residual norm 6.614448258553e-08 
+ 87 KSP Residual norm 6.383215136060e-08 
+ 88 KSP Residual norm 6.274967188940e-08 
+ 89 KSP Residual norm 6.156714663403e-08 
+ 90 KSP Residual norm 5.942515823401e-08 
+ 91 KSP Residual norm 5.612547187738e-08 
+ 92 KSP Residual norm 5.144883086036e-08 
+ 93 KSP Residual norm 4.563532248033e-08 
+ 94 KSP Residual norm 3.920353675327e-08 
+ 95 KSP Residual norm 3.281014562863e-08 
+ 96 KSP Residual norm 2.709402925754e-08 
+ 97 KSP Residual norm 2.237190279953e-08 
+ 98 KSP Residual norm 1.852435970904e-08 
+ 99 KSP Residual norm 1.521446340139e-08 
+100 KSP Residual norm 1.223665751672e-08 
+101 KSP Residual norm 1.099738535365e-08 
+102 KSP Residual norm 1.096401825466e-08 
+103 KSP Residual norm 1.096300754715e-08 
+104 KSP Residual norm 1.096296381141e-08 
+105 KSP Residual norm 1.093547487538e-08 
+106 KSP Residual norm 1.056352270409e-08 
+107 KSP Residual norm 9.664279918331e-09 
+108 KSP Residual norm 8.707082293021e-09 
+109 KSP Residual norm 8.022344395787e-09 
+110 KSP Residual norm 7.435115314535e-09 
+111 KSP Residual norm 6.657700963110e-09 
+112 KSP Residual norm 5.640482241847e-09 
+113 KSP Residual norm 4.685386827605e-09 
+114 KSP Residual norm 3.990049834580e-09 
+115 KSP Residual norm 3.536484441036e-09 
+116 KSP Residual norm 3.235642601270e-09 
+117 KSP Residual norm 3.020423992710e-09 
+118 KSP Residual norm 2.854734081789e-09 
+119 KSP Residual norm 2.775230058819e-09 
+120 KSP Residual norm 2.663606416790e-09 
+121 KSP Residual norm 2.509521773655e-09 
+122 KSP Residual norm 2.305468360418e-09 
+123 KSP Residual norm 2.044406909788e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 7.279833628768e-06 
+  1 KSP Residual norm 1.155836214798e-06 
+  2 KSP Residual norm 2.666758642651e-07 
+  3 KSP Residual norm 1.365614174661e-07 
+  4 KSP Residual norm 1.359194544172e-07 
+  5 KSP Residual norm 1.261530036231e-07 
+  6 KSP Residual norm 1.231763047594e-07 
+  7 KSP Residual norm 1.020094055133e-07 
+  8 KSP Residual norm 6.907344596630e-08 
+  9 KSP Residual norm 6.685725323759e-08 
+ 10 KSP Residual norm 6.521993207148e-08 
+ 11 KSP Residual norm 6.133865769128e-08 
+ 12 KSP Residual norm 5.901828663419e-08 
+ 13 KSP Residual norm 5.683706633991e-08 
+ 14 KSP Residual norm 5.439920077281e-08 
+ 15 KSP Residual norm 5.171340551289e-08 
+ 16 KSP Residual norm 4.971730975710e-08 
+ 17 KSP Residual norm 4.764621430855e-08 
+ 18 KSP Residual norm 4.486082133853e-08 
+ 19 KSP Residual norm 4.143722282182e-08 
+ 20 KSP Residual norm 3.793038413104e-08 
+ 21 KSP Residual norm 3.538763474326e-08 
+ 22 KSP Residual norm 3.432110945146e-08 
+ 23 KSP Residual norm 3.406188757879e-08 
+ 24 KSP Residual norm 3.402792708819e-08 
+ 25 KSP Residual norm 3.402146142161e-08 
+ 26 KSP Residual norm 3.399103130246e-08 
+ 27 KSP Residual norm 3.392914154384e-08 
+ 28 KSP Residual norm 3.355350558575e-08 
+ 29 KSP Residual norm 3.220803407329e-08 
+ 30 KSP Residual norm 2.898578706074e-08 
+ 31 KSP Residual norm 2.481465949382e-08 
+ 32 KSP Residual norm 2.182421075911e-08 
+ 33 KSP Residual norm 2.006349848810e-08 
+ 34 KSP Residual norm 1.879440439108e-08 
+ 35 KSP Residual norm 1.772074298408e-08 
+ 36 KSP Residual norm 1.683822797120e-08 
+ 37 KSP Residual norm 1.610401710857e-08 
+ 38 KSP Residual norm 1.536839287989e-08 
+ 39 KSP Residual norm 1.449071538161e-08 
+ 40 KSP Residual norm 1.343294870302e-08 
+ 41 KSP Residual norm 1.227430842012e-08 
+ 42 KSP Residual norm 1.158443317587e-08 
+ 43 KSP Residual norm 1.058081458733e-08 
+ 44 KSP Residual norm 9.339535438032e-09 
+ 45 KSP Residual norm 8.225181448628e-09 
+ 46 KSP Residual norm 7.238451209010e-09 
+ 47 KSP Residual norm 6.283074521817e-09 
+ 48 KSP Residual norm 5.281913930253e-09 
+ 49 KSP Residual norm 4.389706201169e-09 
+ 50 KSP Residual norm 3.811970556399e-09 
+ 51 KSP Residual norm 3.472221618331e-09 
+ 52 KSP Residual norm 3.178620100713e-09 
+ 53 KSP Residual norm 2.792993302877e-09 
+ 54 KSP Residual norm 2.352307650071e-09 
+ 55 KSP Residual norm 2.036693689820e-09 
+  Residual norms for solver_ solve.
+  0 KSP Residual norm 8.630249976671e-08 
+  1 KSP Residual norm 1.352352478655e-08 
+  2 KSP Residual norm 3.023617815268e-09 
+  3 KSP Residual norm 2.314765634535e-09 
+  4 KSP Residual norm 2.302547617185e-09 
+  5 KSP Residual norm 2.281674269918e-09 
+  6 KSP Residual norm 2.270032845871e-09 
+  7 KSP Residual norm 2.125176030638e-09 

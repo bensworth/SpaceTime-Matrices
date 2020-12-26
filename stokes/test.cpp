@@ -40,8 +40,8 @@
 // mpirun -np 10 ./test -r 6 -oU 2 -oP 1 -T 1 -P 1 -ST 2 -V 0 -Pb 4 -Pe 10 -petscopts rc_SpaceTimeStokes_FGMRES_SingAp
 // - Same as above, but solving for Navier-Stokes using outer Picard iterations (Pb=11)
 // mpirun -np 10 ./test -r 6 -oU 2 -oP 1 -T 1 -P 1 -ST 2 -V 0 -Pb 11 -petscopts rc_SpaceTimeStokes_FGMRES_SingAp
-// - For eigenvalue analysis, set np=1: this stores the (approximated) eigs of the precon system. Setting V>3 also saves the relevant matrices, for external analysis
-// mpirun -np 1  ./test -r 6 -oU 2 -oP 1 -T 1 -P 1 -ST 0 -V 4 -Pb 1 -petscopts rc_SpaceTimeStokes_SingAp
+// - For eigenvalue analysis, set V=-1: this stores the (approximated) eigs and singvals of the precon system, and saves the relevant matrices, for external analysis
+// mpirun -np 10 ./test -r 4 -oU 2 -oP 1 -T 1 -P 1 -ST 0 -V 3 -Pb 1 -petscopts rc_SpaceTimeStokes_SingAp
 
 
 //---------------------------------------------------------------------------
@@ -185,9 +185,9 @@ int main(int argc, char *argv[])
         "                                  rc_SpaceTimeStokes_approx2 (MG solvers for Ap,Fu, Cheb for Mp)\n"
         "                                  rc_SpaceTimeStokes_FGMRES  (use FGMRES rather than GMRES for outer solver (useful if ST=2))");
   args.AddOption(&verbose, "-V", "--verbose",
-                "Control how much info to print to terminal: >0    basic info\n"
+                "Control how much info to print to terminal:(=-1   print large block matrices, and trigger eigs analysis - bit of a hack)\n"
+        "                                                    >0    basic info\n"
         "                                                    >1   +info on large (space-time) block assembly\n"
-        "                                                   (>3   +print large block matrices - only if np=1, for eigs analysis)\n"
         "                                                    >5   +info on small (single time-step) blocks assembly\n"
         "                                                    >10  +more details on single time-step assembly\n"
         "                                                    >20  +details on each iteration\n"
@@ -246,13 +246,6 @@ int main(int argc, char *argv[])
       pFun_ex = &pFun_ex_cavity;
       pbName = "Cavity";
       Pe = 0.0;
-      if ( pbType > 10 ){
-        pbName += "NS";
-        // ugly hack: the convection term is multiplied by mu*Pe. For NS, this should be 1 regardless, so I'm tweaking Pe here.
-        Pe = 1.0/mu;
-        maxPicardIt = 100;
-        picardTol   = 1e-9;
-      }
       break;
     }
     case 2:
@@ -267,13 +260,6 @@ int main(int argc, char *argv[])
       pFun_ex = &pFun_ex_poiseuille;
       pbName = "Poiseuille";
       Pe = 0.0;
-      if ( pbType > 10 ){
-        pbName += "NS";
-        // ugly hack: the convection term is multiplied by mu*Pe. For NS, this should be 1 regardless, so I'm tweaking Pe here.
-        Pe = 1.0/mu;
-        maxPicardIt = 100;
-        picardTol   = 1e-9;
-      }
       break;
     }
     case 3:
@@ -287,13 +273,6 @@ int main(int argc, char *argv[])
       pFun_ex = &pFun_ex_step;
       pbName = "Step";
       Pe = 0.0;
-      if ( pbType > 10 ){
-        pbName += "NS";
-        // ugly hack: the convection term is multiplied by mu*Pe. For NS, this should be 1 regardless, so I'm tweaking Pe here.
-        Pe = 1.0/mu;
-        maxPicardIt = 100;
-        picardTol   = 1e-9;
-      }
       break;
     }
     case 4:{
@@ -354,6 +333,17 @@ int main(int argc, char *argv[])
     default:
       std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
   }
+
+  // Extension to Navier-Stokes:
+  if ( pbType > 10 ){
+    pbName += "NS";
+    // NB: the convection term is multiplied by mu*Pe. For NS, this should be 1 regardless, so we need to fix Pe = 1.0/mu;
+    //     we do this later, though, since initialisation is done with w=0, and leaving Pe=0 allows for some simplifications
+    maxPicardIt = 50;
+    picardTol   = 1e-9;
+  }
+
+
 
   if(myid == 0){
     args.PrintOptions(cout);
@@ -493,20 +483,26 @@ int main(int argc, char *argv[])
       bool isIterative = true;
       solver->iterative_mode = isIterative;
 
-      // - Flag that most extreme eigs of precon system must be computed, if only one processor is given
-      if ( myid==0 && numProcs == 1 ){
-        // store also the actual matrices, if you want to compute the eigs externally
-        if( verbose > 3 ){
-          string path = string("./results/Operators/Pb")  + to_string(pbType) + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                             + "_oU"   + to_string(ordU)   + "_oP"             + to_string(ordP)  + "/";
-          if (!std::experimental::filesystem::exists( path )){
-            std::experimental::filesystem::create_directories( path );
-          }
-          path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
-          stokesAssembler->PrintMatrices(path);
+      // - Flag that most extreme eigs and singvals of precon system must be computed
+      if ( verbose == -1 && picardIt == 0 ){
+        // also store the actual relevant matrices
+        string path = string("./results/Operators/Pb")  + to_string(pbType) + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                           + "_oU"   + to_string(ordU)   + "_oP"             + to_string(ordP);
+        if(pbType == 4 ){
+          path += "_Pe" + to_string(Pe);
         }
+        path += "/";
+        
+        if (!std::experimental::filesystem::exists( path )){
+          std::experimental::filesystem::create_directories( path );
+        }
+        path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
+        stokesAssembler->PrintMatrices(path);
+        
         KSP ksp = *solver;
-        KSPSetComputeEigenvalues( ksp, PETSC_TRUE );
+        PetscErrorCode ierr;
+        ierr = KSPSetComputeEigenvalues(    ksp, PETSC_TRUE ); CHKERRQ(ierr);
+        ierr = KSPSetComputeSingularValues( ksp, PETSC_TRUE ); CHKERRQ(ierr);
       }
 
 
@@ -615,26 +611,46 @@ int main(int argc, char *argv[])
         std::cout << "Post-processing *******************************************\n";
       }
       // - compute eigs if requested
-      if ( myid==0 && numProcs == 1 ){
+      if ( verbose == -1 && picardIt == 0 && myid == 0 ){
         KSP ksp = *solver;
         PetscInt Neigs = 100;
+        PetscErrorCode ierr;
         double *realPart = new double(Neigs);
         double *imagPart = new double(Neigs);
-        KSPComputeEigenvalues( ksp, Neigs, realPart, imagPart, &Neigs );
+        double smax, smin;
+        ierr = KSPComputeEigenvalues(           ksp, Neigs, realPart, imagPart, &Neigs ); CHKERRQ(ierr);
+        ierr = KSPComputeExtremeSingularValues( ksp,       &smax,    &smin             ); CHKERRQ(ierr);
+
         // and store them
-        ofstream myfile;
-        string fname = string("./results/Operators/eigs_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
-                            + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                            + "_oU"   + to_string(ordU)     + "_oP"      + to_string(ordP)       + "_Pb" + to_string(pbType);
-        if( pbType == 4 ){
-          fname += "_Pe" + to_string(Pe);
+        if ( myid == 0 ){
+          ofstream myfile;
+          string fname;
+          // - both eigenvalues
+          fname = string("./results/Operators/eigs_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
+                       + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
+                       + "_oU"   + to_string(ordU)     + "_oP"      + to_string(ordP)       + "_Pb" + to_string(pbType);
+          if( pbType == 4 ){
+            fname += "_Pe" + to_string(Pe);
+          }
+          fname += string("_") + petscrc_file + ".txt";
+          myfile.open( fname );
+          for ( int i = 0; i < Neigs; ++i ){
+            myfile << realPart[i] << ",\t" << imagPart[i] << std::endl;
+          }
+          myfile.close();
+          // - and most extreme singular values
+          fname = string("./results/Operators/singVals_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
+                       + "_Prec" + to_string(precType)    + "_STsolve" + to_string(STSolveType)
+                       + "_oU"   + to_string(ordU)        + "_oP"      + to_string(ordP)       + "_Pb" + to_string(pbType);
+          if( pbType == 4 ){
+            fname += "_Pe" + to_string(Pe);
+          }
+          fname += string("_") + petscrc_file + ".txt";
+          myfile.open( fname );
+          myfile << smax << ",\t" << smin << std::endl;
+          myfile.close();
+
         }
-        fname += string("_") + petscrc_file + ".txt";
-        myfile.open( fname );
-        for ( int i = 0; i < Neigs; ++i ){
-          myfile << realPart[i] << ",\t" << imagPart[i] << std::endl;
-        }
-        myfile.close();
 
         delete realPart;
         delete imagPart;
@@ -672,8 +688,9 @@ int main(int argc, char *argv[])
       }
   
 
+      // delete XXi;  // TODO: stokesPr doesn't handle well its references: double check this!
+      // delete FFi;
       delete solver;
-      delete stokesOp;
       delete stokesPr;
 
     }
@@ -712,16 +729,15 @@ int main(int argc, char *argv[])
     delete U0;
     delete P0;
 
-    // delete solver;
     delete stokesOp;
-    // delete stokesPr;
     delete stokesAssembler;
-
 
 
     // UPDATE OPERATORS --------------------------------------------------
     // Normally, I'd be done at this stage. If I'm inside a Picard iteration, though, I need to update things with the newly found solution
     if ( pbType > 10 ){
+      // As mentioned before, the convection term is multiplied by mu*Pe. Here we fix Pe = 1.0/mu so that mu*Pe=1
+      Pe = 1.0/mu;
 
       // - store difference wrt previous solution (compute the norm)
       solPrev -= sol;
@@ -787,7 +803,7 @@ int main(int argc, char *argv[])
         }
       }
 
-      // - stop if:  max it reached                 residual small enough        relative residual small enough          difference wrt prev it small enough
+      // - stop if:  max it reached                 residual small enough        relative residual small enough     //     difference wrt prev it small enough
       stopPicard = ( picardIt >= maxPicardIt ) || ( picardRes < picardTol ) || ( picardRes/picardRes0 < picardTol ) || ( picardErrWRTPrevIt < picardTol );
       
       if ( stopPicard ){
@@ -811,7 +827,8 @@ int main(int argc, char *argv[])
     }else{
       std::cout << "Picard outer solver *DID NOT* converge in " << maxPicardIt;
     }
-    std::cout   << " iterations. Residual norm is "             << picardRes  << ".\n";
+    std::cout   << " iterations. Residual norm is "             << picardRes;
+    std::cout   << ", avg internal GMRES it are "               << totGMRESit/picardIt  << ".\n";
 
     // - eventually store info on Picard convergence
     if( output>0 ){
@@ -821,7 +838,7 @@ int main(int argc, char *argv[])
       fname += string("_") + petscrc_file + ".txt";
       myfile.open( fname, std::ios::app );
       myfile << Tend     << ",\t" << dt         << ",\t" << numProcs   << ",\t" << ref_levels << ",\t"
-             << picardIt << ",\t" << totGMRESit/picardIt << std::endl;
+             << picardIt << ",\t" << totGMRESit/picardIt << ",\t" << picardRes << std::endl;
       myfile.close();
     }    
   }
