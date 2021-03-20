@@ -1,7 +1,6 @@
 #ifndef SPACETIMESOLVER_HPP
 #define SPACETIMESOLVER_HPP
 
-#include <mpi.h>
 #include "mfem.hpp"
 
 

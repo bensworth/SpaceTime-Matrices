@@ -1,7 +1,6 @@
 #ifndef IMHD2DMAGNETICSCHURCOMP_HPP
 #define IMHD2DMAGNETICSCHURCOMP_HPP
 
-#include <mpi.h>
 #include "mfem.hpp"
 
 
@@ -21,8 +20,8 @@ private:
 
   // relevant operators
   const PetscParMatrix *_M;	     //	mass matrix
-  SparseMatrix          _W;      // spatial part magnetic convection-diffusion operator
-  Solver               *_CCinv;  // solver for magnetic wave equation
+  const SparseMatrix   *_W;      // spatial part magnetic convection-diffusion operator
+  const Solver         *_CCinv;  // solver for magnetic wave equation
 
   // solvers for relevant operators
   PetscLinearSolver *_Msolve;
@@ -35,7 +34,7 @@ private:
 
 public:
   IMHD2DSTMagneticSchurComplement( const MPI_Comm& comm, double dt,
-                                   const SparseMatrix* M=NULL, const SparseMatrix* W=NULL, const SparseMatrix* CCinv=NULL,
+                                   const SparseMatrix* M=NULL, const SparseMatrix* W=NULL, const Solver* CCinv=NULL,
                                    const Array<int>& essTDOF=Array<int>(), int verbose=0 );
 
 	~IMHD2DSTMagneticSchurComplement();

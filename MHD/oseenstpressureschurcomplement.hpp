@@ -1,7 +1,6 @@
 #ifndef OSEENSTPRESSSCHURCOMP_HPP
 #define OSEENSTPRESSSCHURCOMP_HPP
 
-#include <mpi.h>
 #include "mfem.hpp"
 
 

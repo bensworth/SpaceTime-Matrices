@@ -103,9 +103,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     DenseMatrix tempuu(dof_u);
     MultVVt(shape_u, tempuu);
     scale = ip.weight * detJ;
-#ifndef MULT_BY_DT
-    scale*= 1./_dt;
-#endif
+// #ifndef MULT_BY_DT
+//     scale*= 1./_dt;
+// #endif
     tempuu *= scale;
 
     // this contribution is block-diagonal: for each physical dimension, I can just copy it
@@ -117,9 +117,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
 
     // Stiffness (eventually rescaled by dt) --------------------------------
     scale = ip.weight / detJ * _mu;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     MultAAt( gshape_u, tempuu );
     tempuu *= scale;
 
@@ -134,9 +134,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     Vector wgu(dof_u);  
  
     scale = ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
 
     // - term ((w·∇)u,v)
     gshape_u.Mult(Ueval, wgu);
@@ -169,9 +169,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
    
     gshape_u.GradToDiv(dshape_u); // get the divergence of the basis functions
     scale = - ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     AddMult_a_VWt( scale, shape_p, dshape_u, *(elmats(1,0)) );
 
 
@@ -194,9 +194,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     //***********************************************************************
     // Mass (eventually rescaled by dt) -------------------------------------
     scale = ip.weight * detJ;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     AddMult_a_VVt( scale, shape_z, *(elmats(2,2)) );
 
 
@@ -208,17 +208,17 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     //***********************************************************************
     // Mass (eventually rescaled by 1/dt) -----------------------------------
     scale = ip.weight * detJ;
-#ifndef MULT_BY_DT
-    scale *= 1./_dt;
-#endif
+// #ifndef MULT_BY_DT
+//     scale *= 1./_dt;
+// #endif
     AddMult_a_VVt( scale, shape_a, *(elmats(3,3)) );
 
 
     // Stiffness (eventually rescaled by dt) --------------------------------
     scale = ip.weight / detJ * _eta;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     AddMult_a_AAt( scale, gshape_a, *(elmats(3,3)));
   
 
@@ -226,9 +226,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     Vector gAu(dof_a);
     gshape_a.Mult( Ueval, gAu );
     scale = ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif    
+// #endif    
     AddMult_a_VWt(scale, shape_a, gAu, *(elmats(3,3)) );
 
 
@@ -244,9 +244,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     DenseMatrix tempAu(dof_a,dof_u);
     MultVWt(shape_a, shape_u, tempAu);
     scale = ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif    
+// #endif    
     // -- this contribution is defined block-wise: for each physical dimension, I can just copy it
     for (int k = 0; k < dim; k++){
       elmats(3,0)->AddMatrix( gAeval(k)*scale, tempAu, 0, dof_u*k );
@@ -261,9 +261,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     DenseMatrix tempuz(dof_u,dof_z);
     MultVWt(shape_u, shape_z, tempuz);
     scale = ip.weight / _mu0;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif    
+// #endif    
     // -- this contribution is defined block-wise: for each physical dimension, I can just copy it
     for (int k = 0; k < dim; k++){
       elmats(0,2)->AddMatrix( gAeval(k)*scale, tempuz, dof_u*k, 0 );
@@ -277,9 +277,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     // Linearised Lorentz (eventually rescaled by dt) -----------------------
     DenseMatrix tempuA(dof_u,dof_a);
     scale = Zeval * ip.weight / _mu0;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif    
+// #endif    
     // -- this contribution is also defined block-wise, so loop
     for (int k = 0; k < dim; k++){
       Vector col;
@@ -296,10 +296,15 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     //***********************************************************************
     // Mixed Stiffness (eventually rescaled by dt) --------------------------
     scale = ip.weight / detJ;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     AddMult_a_ABt( scale, gshape_z, gshape_a, *(elmats(2,3)) );
+
+    // NB: integration by parts should give an extra boundary term -int_dO grad(A)n y, however:
+    // - for Dirichlet nodes on A, its contribution is killed (since dA=0 there)
+    // - for Neumann nodes on A, its contribution is also killed (since grad(A)n=0 there, and
+    //    its contribution goes to the rhs)
 
 
 
@@ -412,9 +417,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     //***********************************************************************
     // Mass (eventually rescaled by 1/dt) -----------------------------------
     scale = ip.weight * detJ;
-#ifndef MULT_BY_DT
-    scale*= 1./_dt;
-#endif
+// #ifndef MULT_BY_DT
+//     scale*= 1./_dt;
+// #endif
     // -- this contribution is made block-wise: loop over physical dimensions
     for (int k = 0; k < dim; k++){
       for ( int j = 0; j < dof_u; ++j ){
@@ -427,9 +432,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     // Stiffness (eventually rescaled by dt) --------------------------------
     DenseMatrix tempuu(dof_u,dim);
     scale = ip.weight / detJ * _mu;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     MultABt( gshape_u, gUeval, tempuu ); // compute gU:gV for each V
     tempuu *= scale;
     // -- this contribution is made block-wise: loop over physical dimensions
@@ -443,9 +448,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
 
     // Non-linear convection (eventually rescaled by dt) --------------------
     scale = ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     // -- this contribution is made block-wise: loop over physical dimensions
     for (int k = 0; k < dim; k++){
       for ( int j = 0; j < dof_u; ++j ){
@@ -459,18 +464,18 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     Vector dshape_u(dim*dof_u);
     gshape_u.GradToDiv(dshape_u); // get the divergence of the basis functions
     scale = - ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     elvecs[0]->Add( scale*Peval, dshape_u );
 
     
 
     // Lorentz (eventually rescaled by dt) ----------------------------------
     scale = ip.weight / _mu0;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif    
+// #endif    
     // -- this contribution is defined block-wise: for each physical dimension, I can just copy it
     for (int k = 0; k < dim; k++){
       for ( int j = 0; j < dof_u; ++j ){
@@ -486,9 +491,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     //***********************************************************************
     // Negative Divergence (eventually rescaled by dt) ----------------------
     scale = - ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     elvecs[1]->Add( scale*du, shape_p );
     
 
@@ -499,9 +504,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     //***********************************************************************
     // Mass (eventually rescaled by dt) -------------------------------------
     scale = ip.weight * detJ;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     elvecs[2]->Add( scale*Zeval, shape_z );
 
 
@@ -509,9 +514,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     Vector tempzA(dof_z);
     gshape_z.Mult( gAeval, tempzA );
     scale = ip.weight / detJ;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     elvecs[2]->Add( scale, tempzA );
 
 
@@ -522,9 +527,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     //***********************************************************************
     // Mass (eventually rescaled by 1/dt) -----------------------------------
     scale = ip.weight * detJ;
-#ifndef MULT_BY_DT
-    scale *= 1./_dt;
-#endif
+// #ifndef MULT_BY_DT
+//     scale *= 1./_dt;
+// #endif
     elvecs[3]->Add( scale*Aeval, shape_a );
  
 
@@ -532,17 +537,17 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     Vector tempAA(dof_a);
     gshape_a.Mult(gAeval, tempAA);
     scale = ip.weight / detJ * _eta;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif
+// #endif
     elvecs[3]->Add( scale, tempAA );
   
 
     // Semi-linear convection (eventually rescaled by dt) -------------------
     scale = ip.weight;
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
     scale *= _dt;
-#endif    
+// #endif    
     elvecs[3]->Add( scale*gAu, shape_a );
 
   }

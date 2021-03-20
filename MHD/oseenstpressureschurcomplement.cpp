@@ -150,24 +150,24 @@ void OseenSTPressureSchurComplement::SetApSolve(){
   _Asolve = new PetscLinearSolver( *_Ap, "PSolverLaplacian_" );
   
 
-  PetscErrorCode ierr;
-  PetscBool set;
-  char optName[PETSC_MAX_PATH_LEN];
+  // PetscErrorCode ierr;
+  // PetscBool set;
+  // char optName[PETSC_MAX_PATH_LEN];
 
-  // TODO: delete this. Never use initial guess in preconditioners!
-  _Asolve->iterative_mode = true;  // trigger iterative mode...
-  ierr = PetscOptionsGetString( NULL ,"PSolverLaplacian_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-  if( !strcmp( optName, "preonly" ) ){
-    char optName1[PETSC_MAX_PATH_LEN];
-    ierr = PetscOptionsGetString( NULL ,"PSolverLaplacian_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
-    if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
-      _Asolve->iterative_mode = false;  // ...unless you're using ilu or lu
-    }
-  }
+  // // TODO: delete this. Never use initial guess in preconditioners!
+  // _Asolve->iterative_mode = true;  // trigger iterative mode...
+  // ierr = PetscOptionsGetString( NULL ,"PSolverLaplacian_", "-ksp_type", optName, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+  // if( !strcmp( optName, "preonly" ) ){
+  //   char optName1[PETSC_MAX_PATH_LEN];
+  //   ierr = PetscOptionsGetString( NULL ,"PSolverLaplacian_", "-pc_type", optName1, PETSC_MAX_PATH_LEN, &set ); CHKERRV(ierr);
+  //   if(!( strcmp( optName1, "ilu" ) ) || !( strcmp( optName1, "lu" ) ) ){
+  //     _Asolve->iterative_mode = false;  // ...unless you're using ilu or lu
+  //   }
+  // }
   
-  if ( _verbose && _Asolve->iterative_mode && _myRank==0 ){
-    std::cout<<"Selected iterative solver for pressure 'laplacian'"<<std::endl;
-  }
+  // if ( _verbose && _Asolve->iterative_mode && _myRank==0 ){
+  //   std::cout<<"Selected iterative solver for pressure 'laplacian'"<<std::endl;
+  // }
 
 }
 
@@ -253,13 +253,13 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
   // TODO: do I really need to copy this? Isn't there a way to force lclx to point at lclData and still be const?
   Vector lclx( lclSize );
   for ( int i = 0; i < lclSize; ++i ){
-    lclx.GetData()[i] = lclData[i];
+    lclx(i) = lclData[i];
   }
 
   Vector invAxMine( lclSize ), lcly( lclSize ), invAxPrev( lclSize );
   for ( int i = 0; i < lclSize; ++i ){
-    invAxMine.GetData()[i] = y.GetData()[i];
-    lcly.GetData()[i]      = y.GetData()[i];
+    invAxMine(i) = y(i);
+    lcly(i)      = y(i);
   }
 
 
@@ -279,26 +279,36 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
   if ( !_WpEqualsAp ){
     // - if Wp is not the same as Ap, then Mp^-1 will have to be applied to Wp*Ap^-1 * x
     // - NB: make sure Wp is defined with the viscosity coefficient included in it!
-    _Wp.Mult( invAxMine, lclx );
+    // - NB: if imposing some Dirichlet BC on the PCD operator, we need to kill their contribution here
+    Vector temp = invAxMine;
+    temp.SetSubVector( _essQhTDOF, 0.0 );
+    _Wp.Mult( temp, lclx );
+    lclx.SetSubVector( _essQhTDOF, 0.0 );
 
-    if (_verbose>50 ){
-      std::cout<<"Rank "<<_myRank<<" included contribution from pressure (convection)-diffusion operator"<<std::endl;
-      MPI_Barrier(_comm);
-    }  
   }else{
     // - otherwise, simply apply Mp^-1 to x, and then multiply by mu (or rather, the other way around)
     lclx *= _mu;
   }
 
+  if (_verbose>50 ){
+    std::cout<<"Rank "<<_myRank<<" included contribution from pressure (convection)-diffusion operator"<<std::endl;
+    if ( _verbose>100 ){
+      std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result after spatial contribution: ";
+      lclx.Print(std::cout, lclx.Size());
+    }
+    MPI_Barrier(_comm);
+  }  
 
-#ifndef MULT_BY_DT
-  // - divide "laplacian" solve by dt if you didn't rescale system
-  invAxMine *= (1./_dt);
-  // -- careful not to dirty dirichlet nodes (multiply and divide is ugly as hell, but oh well...)
-  for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
-    invAxMine.GetData()[_essQhTDOF(i)] *= _dt;
-  }
-#endif
+
+
+// #ifndef MULT_BY_DT
+//   // - divide "laplacian" solve by dt if you didn't rescale system
+//   invAxMine *= (1./_dt);
+//   // -- careful not to dirty dirichlet nodes (multiply and divide is ugly as hell, but oh well...)
+//   for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
+//     invAxMine(_essQhTDOF[i]) *= _dt;
+//   }
+// #endif
 
   // Send this partial result to the following processor  
   MPI_Request reqSend, reqRecv;
@@ -313,17 +323,22 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
   // Have each processor solve for the mass matrix
   _Msolve->Mult( lclx, lcly );
+  lcly.SetSubVector( _essQhTDOF, 0.0 ); // eventually kill contribution from Dirichlet nodes on the spatial part of the operator
 
   if (_verbose>50 ){
     std::cout<<"Rank "<<_myRank<<" inverted pressure mass matrix\n";
+    if ( _verbose>100 ){
+      std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result after inverting mass matrix: ";
+      lcly.Print(std::cout, lcly.Size());
+    }
     MPI_Barrier(_comm);
   }
 
 
   // Combine all partial results together locally (once received required data, if necessary)
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
   lcly *= _dt;    //eventually rescale mass solve by dt
-#endif
+// #endif
 
   // - if you want to ignore the "time-stepping" structure in the preconditioner (that is,
   //    the contribution from the Mp/dt terms, just comment out the next few lines
@@ -339,23 +354,29 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
 
   // Assemble global vector
-  for ( int i = 0; i < lclSize; ++i ){
-    // remember to flip sign! Notice the minus in front of XX^-1
-    y.GetData()[i] = - lcly.GetData()[i];
-  }
+  y = lcly;
+  // - remember to flip sign! Notice the minus in front of XX^-1
+  y.Neg();
+
 
   // TODO:
-  // THIS IS A NEW ADDITION:
-  // - Ignore action of solver on Dirichlet BC
-  for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
-    y.GetData()[_essQhTDOF(i)] = lclData[i];
-  }
+  // This shouldn't be necessary: the dirichlet nodes should already be equal to invAxMine
+  // // THIS IS A NEW ADDITION:
+  // // - only consider action of Ap^-1 on Dirichlet BC
+  // for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
+  //   y(_essQhTDOF[i]) = invAxMine(i);
+  // }
 
 
 
   if(_verbose>100){
     std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result for p: ";
     y.Print(std::cout, y.Size());
+  }
+
+  if(_myRank==0 && _verbose>200){
+    int uga;
+    std::cin>>uga;
   }
 
 

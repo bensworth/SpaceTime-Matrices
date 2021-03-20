@@ -11,12 +11,12 @@ BlockUpperTriangularPreconditioner::BlockUpperTriangularPreconditioner(
      offsets(0),
      op(nBlocks, nBlocks)
 {
-   op = static_cast<Operator *>(NULL);
+   op = static_cast<const Operator *>(NULL);
    offsets.MakeRef(offsets_);
 }
 
 void BlockUpperTriangularPreconditioner::SetDiagonalBlock(int iblock,
-                                                          Operator *op)
+                                                          const Operator *op)
 {
    MFEM_VERIFY(offsets[iblock+1] - offsets[iblock] == op->Height() &&
                offsets[iblock+1] - offsets[iblock] == op->Width(),
@@ -26,7 +26,7 @@ void BlockUpperTriangularPreconditioner::SetDiagonalBlock(int iblock,
 }
 
 void BlockUpperTriangularPreconditioner::SetBlock(int iRow, int iCol,
-                                                  Operator *opt)
+                                                  const Operator *opt)
 {
    MFEM_VERIFY(iRow <= iCol,"cannot set block in lower triangle");
    MFEM_VERIFY(offsets[iRow+1] - offsets[iRow] == opt->NumRows() &&

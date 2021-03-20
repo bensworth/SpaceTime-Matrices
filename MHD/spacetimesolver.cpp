@@ -1,6 +1,5 @@
 #include "spacetimesolver.hpp"
 
-#include <mpi.h>
 #include <iostream>
 #include "petsc.h"
 
@@ -36,6 +35,7 @@ SpaceTimeSolver::~SpaceTimeSolver(){
 
 // initialise info on spatial operator
 void SpaceTimeSolver::SetF( const SparseMatrix* F ){
+  delete _F;
   _F = new PetscParMatrix( F );
 
   height = F->Height();

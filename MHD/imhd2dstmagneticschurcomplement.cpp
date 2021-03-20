@@ -1,5 +1,5 @@
 #include "imhd2dstmagneticschurcomplement.hpp"
-
+#include <fstream>
 
 
 namespace mfem{
@@ -47,9 +47,9 @@ namespace mfem{
 
 
 IMHD2DSTMagneticSchurComplement::IMHD2DSTMagneticSchurComplement( const MPI_Comm& comm, double dt,
-                                                                  const SparseMatrix* M, const SparseMatrix* W, const SparseMatrix* CCinv,
+                                                                  const SparseMatrix* M, const SparseMatrix* W, const Solver* CCinv,
                                                                   const Array<int>& essTDOF, int verbose ):
-  _comm(comm), _dt(dt), _eta(eta), _M(NULL), _W(NULL), _CCinv(NULL), _Msolve(NULL), _essTDOF(essTDOF), _verbose(verbose){
+  _comm(comm), _dt(dt), _M(NULL), _W(NULL), _CCinv(NULL), _Msolve(NULL), _essTDOF(essTDOF), _verbose(verbose){
 
   if( M     != NULL ) SetM(     M     );
   if( W     != NULL ) SetW(     W     );
@@ -84,7 +84,8 @@ void IMHD2DSTMagneticSchurComplement::SetM( const SparseMatrix* M ){
 
 // initialise info on spatial operator
 void IMHD2DSTMagneticSchurComplement::SetW( const SparseMatrix* W ){
-  _W.MakeRef( *W );
+  // _W.MakeRef( *W );
+  _W = W;
 
   height = W->Height();
   width  = W->Width();
@@ -140,17 +141,17 @@ void IMHD2DSTMagneticSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
   // TODO: do I really need to copy this? Isn't there a way to force lclx to point at lclData and still be const?
   Vector lclx( lclSize ), prevx( lclSize );
+  prevx = 0.;
   for ( int i = 0; i < lclSize; ++i ){
-    lclx.GetData()[i] = lclData[i];
+    lclx(i) = lclData[i];
   }
 
   // Send my part of rhs to next proc
-  MPI_Request reqSend, reqRecv;
-  if( _myRank < _numProcs ){
-    MPI_Isend( lclx.GetData(),  lclSize, MPI_DOUBLE, _myRank+1, _myRank,   _comm, &reqSend );
+  if( _myRank < _numProcs-1 ){
+    MPI_Send( lclx.GetData(),  lclSize, MPI_DOUBLE, _myRank+1, _myRank,   _comm );
   }
   if( _myRank > 0 ){
-    MPI_Irecv( prevx.GetData(), lclSize, MPI_DOUBLE, _myRank-1, _myRank-1, _comm, &reqRecv );
+    MPI_Recv( prevx.GetData(), lclSize, MPI_DOUBLE, _myRank-1, _myRank-1, _comm, MPI_STATUS_IGNORE );
   }
 
 
@@ -171,11 +172,18 @@ void IMHD2DSTMagneticSchurComplement::Mult( const Vector &x, Vector &y ) const{
     }
   }
 
+  // std::string path = "./results/operators/Prec0_STsolveU0_STsolveA0_oU2_oP1_oZ1_oA2_Pb3_rc_SpaceTimeIMHD2D/NP4_r4/";
+  // std::ofstream myfile;
+  // myfile.precision(std::numeric_limits< double >::max_digits10);
+  // myfile.open( path+"Maix_"+std::to_string(_myRank)+".dat" );
+  // invMx.Print(myfile,1);
+  // myfile.close();
 
 
   // Include contribution from spatial operator
-  _W.Mult( invMx, temp );
   // - kill contributions from Dirichlet BC
+  invMx.SetSubVector( _essTDOF, 0.0 );
+  _W->Mult( invMx, temp );
   temp.SetSubVector( _essTDOF, 0.0 );
 
   if (_verbose>50 ){
@@ -183,26 +191,32 @@ void IMHD2DSTMagneticSchurComplement::Mult( const Vector &x, Vector &y ) const{
     MPI_Barrier(_comm);
   }  
 
+  // myfile.open( path+"WMaix_"+std::to_string(_myRank)+".dat" );
+  // temp.Print(myfile,1);
+  // myfile.close();
 
 
   // Include contribution from subdiagonal
   // - if you want to ignore the "time-stepping" structure in the preconditioner (that is,
   //    the contribution from the subdiag M/dt terms, just comment out the next few lines
   if( _myRank > 0 ){
-    MPI_Wait( &reqRecv, MPI_STATUS_IGNORE );
     // - kill contributions from Dirichlet BC
     prevx.SetSubVector( _essTDOF, 0.0 );
     lclx -= prevx;
   }
 
-#ifdef MULT_BY_DT
+// #ifdef MULT_BY_DT
   temp *= _dt;        //multiply spatial part by dt
-#else
-  lclx *= (1./_dt);   //otherwise rescale the temporal part - careful not to dirty dirichlet BC
-  for ( int i = 0; i < _essTDOF.Size(); ++i ){
-    lclx.GetData()[_essTDOF(i)] *= _dt;
-  }
-#endif
+// #else
+//   lclx *= (1./_dt);   //otherwise rescale the temporal part - careful not to dirty dirichlet BC
+//   for ( int i = 0; i < _essTDOF.Size(); ++i ){
+//     lclx.GetData()[_essTDOF[i]] *= _dt;
+//   }
+// #endif
+
+  // myfile.open( path+"temp_"+std::to_string(_myRank)+".dat" );
+  // lclx.Print(myfile,1);
+  // myfile.close();
 
 
   // Combine temporal and spatial parts
@@ -221,13 +235,12 @@ void IMHD2DSTMagneticSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
 
   // TODO:
-  // THIS IS A NEW ADDITION:
-  // - Ignore action of solver on Dirichlet BC
-  for ( int i = 0; i < _essTDOF.Size(); ++i ){
-    temp.GetData()[_essTDOF(i)] = lclData[i];
-  }
-
-
+  // This shouldn't be necessary: the dirichlet nodes should already be untouched
+  // // THIS IS A NEW ADDITION:
+  // // - Ignore action of solver on Dirichlet BC
+  // for ( int i = 0; i < _essTDOF.Size(); ++i ){
+  //   temp.GetData()[_essTDOF[i]] = lclData[i];
+  // }
 
 
   // Apply space-time wave solver
@@ -245,6 +258,10 @@ void IMHD2DSTMagneticSchurComplement::Mult( const Vector &x, Vector &y ) const{
     }
   }
 
+  if ( _myRank==0 && _verbose>200 ){
+    int uga;
+    std::cin>>uga;
+  }
 
 
   MPI_Barrier( _comm );

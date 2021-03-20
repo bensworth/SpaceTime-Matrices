@@ -1,7 +1,6 @@
 #ifndef SPACETIMEWAVESOLVER_HPP
 #define SPACETIMEWAVESOLVER_HPP
 
-#include <mpi.h>
 #include "mfem.hpp"
 
 
@@ -55,7 +54,7 @@ private:
   PetscLinearSolver *_Cpsolve;
 
   // dirichlet dofs (unused?)
- 	// const Array<int> _essDOF;
+ 	const Array<int> _essTDOF;
 
   mutable HypreParVector* _X;
   mutable HypreParVector* _Y;
@@ -66,8 +65,7 @@ private:
 public:
 
 	SpaceTimeWaveSolver( const MPI_Comm& comm, const SparseMatrix* Cp=NULL, const SparseMatrix* C0=NULL, const SparseMatrix* Cm=NULL,
-		                   // const Array<int>& essVhTDOF=Array<int>(),
-                       bool timeDep=true, bool symmetric=false, int verbose=0);
+		                   const Array<int>& essTDOF=Array<int>(), bool timeDep=true, bool symmetric=false, int verbose=0);
 
   void Mult( const Vector& x, Vector& y ) const;
 

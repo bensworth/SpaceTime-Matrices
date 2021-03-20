@@ -44,7 +44,7 @@ int main(int argc, char *argv[]){
   const double _eta = 1.0;
 
   // initialise mesh
-  std::string meshName = "./meshes/tri-square-open.mesh";
+  std::string meshName = "./meshes/tri-square-test.mesh";
 
   Mesh* _mesh = new Mesh( meshName.c_str(), 1, 1 );
   int _dim = _mesh->Dimension();
@@ -81,6 +81,7 @@ int main(int argc, char *argv[]){
 
 
 
+
   if ( _mesh->bdr_attributes.Size() > 0 ) {
     int numAtts = _mesh->bdr_attributes.Max();
     essBdrU.SetSize( numAtts ); essBdrP.SetSize( numAtts ); essBdrZ.SetSize( numAtts ); essBdrA.SetSize( numAtts );
@@ -103,6 +104,10 @@ int main(int argc, char *argv[]){
   _essTags[2] = &essBdrZ;
   _essTags[3] = &essBdrA;
 
+  Array<int> _essUhTDOF; _UhFESpace->GetEssentialTrueDofs( essBdrU, _essUhTDOF );
+  Array<int> _essPhTDOF; _PhFESpace->GetEssentialTrueDofs( essBdrP, _essPhTDOF );
+  Array<int> _essZhTDOF; _ZhFESpace->GetEssentialTrueDofs( essBdrZ, _essZhTDOF );
+  Array<int> _essAhTDOF; _AhFESpace->GetEssentialTrueDofs( essBdrA, _essAhTDOF );
 
 
 
@@ -123,7 +128,7 @@ int main(int argc, char *argv[]){
   temp[1] = &tempp;
   temp[2] = &tempz;
   temp[3] = &tempa;
-  // _MHDOperator.SetEssentialBC( _essTags, temp );
+  _MHDOperator.SetEssentialBC( _essTags, temp );
 
 
   // initialise linearised state
@@ -131,18 +136,23 @@ int main(int argc, char *argv[]){
   GridFunction _r(_PhFESpace);
   GridFunction _y(_ZhFESpace);
   GridFunction _c(_AhFESpace);
-  // -- constant fields
+  // -- only values on dirichlet nodes
+   _w = 0.; _w.SetSubVector( _essUhTDOF, 1.);
+   _r = 0.; _r.SetSubVector( _essPhTDOF, 2.);
+   _y = 0.; _y.SetSubVector( _essZhTDOF, 3.);
+   _c = 0.; _c.SetSubVector( _essAhTDOF, 4.);
+  // // -- constant fields
   // _w = 1.;
   // _r = 0.;
   // _y = 1.;
   // _c = 1.;
   // -- constant-gradient fields
-  VectorFunctionCoefficient vfun(_dim,vFun_Quad);
-  FunctionCoefficient       afun(     aFun_Quad);
-  _w.ProjectCoefficient( vfun );
-  _r.ProjectCoefficient( afun );
-  _y.ProjectCoefficient( afun );
-  _c.ProjectCoefficient( afun );
+  // VectorFunctionCoefficient vfun(_dim,vFun_Quad);
+  // FunctionCoefficient       afun(     aFun_Quad);
+  // _w.ProjectCoefficient( vfun );
+  // _r.ProjectCoefficient( afun );
+  // _y.ProjectCoefficient( afun );
+  // _c.ProjectCoefficient( afun );
   
 
   Array<int> offsets(5);
@@ -153,11 +163,18 @@ int main(int argc, char *argv[]){
   offsets[4] = _AhFESpace->GetTrueVSize();
   offsets.PartialSum();
   BlockVector x(offsets);
+  BlockVector y(offsets);
   x.GetBlock(0) = _w;
   x.GetBlock(1) = _r;
   x.GetBlock(2) = _y;
   x.GetBlock(3) = _c;
 
+  // apply nonlinear operator
+  _MHDOperator.Mult(x,y);
+  std::cout<<"N(x): - u = "; y.GetBlock(0).Print(); std::cout<<std::endl;
+  std::cout<<"      - p = "; y.GetBlock(1).Print(); std::cout<<std::endl;
+  std::cout<<"      - z = "; y.GetBlock(2).Print(); std::cout<<std::endl;
+  std::cout<<"      - A = "; y.GetBlock(3).Print(); std::cout<<std::endl;
 
   // compute gradient of nonlinear operator
   BlockOperator* J = dynamic_cast<BlockOperator*>( &_MHDOperator.GetGradient( x ) );

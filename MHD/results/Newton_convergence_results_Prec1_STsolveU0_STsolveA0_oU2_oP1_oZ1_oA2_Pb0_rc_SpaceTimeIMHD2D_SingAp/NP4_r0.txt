@@ -1,0 +1,6 @@
+It	ResidualNorm	ResRelNorm	NormDiffPrevIt	GMRESits
+0	0	1	0	0
+1	inf	inf	0	0
+It	ResidualNorm	ResRelNorm	NormDiffPrevIt	GMRESits
+0	0	1	0	0
+1	inf	inf	0	0

@@ -23,8 +23,11 @@
 //                     chebyshev iterations)
 //  
 // - For information on the components of the block preconditioner, see:
-//    H. Elman, D. Silvester, and A. Wathen. Finite elements and fast
-//    iterative solvers: with applications in incompressible fluid dynamics.
+//   [1] H. Elman, D. Silvester, and A. Wathen. "Finite elements and fast
+//    iterative solvers: with applications in incompressible fluid dynamics".
+//   [2] Eric C. Cyr, John N. Shadid, Raymond S. Tuminaro, Roger P. Pawlowski,
+//    and Luis Chacon. "A new approximate block factorization preconditioner
+//    for two-dimensional incompressible (reduced) resistive MHD".
 //
 // Author: Federico Danieli, Numerical Analysis Group
 // University of Oxford, Dept. of Mathematics
@@ -61,14 +64,25 @@
 #ifndef MFEM_USE_PETSC
 #error This example requires that MFEM is built with MFEM_USE_PETSC=YES
 #endif
+// Seems like multiplying every operator by dt gives slightly better results.
+#define MULT_BY_DT
 //---------------------------------------------------------------------------
 using namespace std;
 using namespace mfem;
 //---------------------------------------------------------------------------
 // PB parameters pre-definition:
-void   wFun_zero(  const Vector & x, const double t, Vector & w );
-double cFun_zero(  const Vector & x, const double t             );
-double yFun_zero(  const Vector & x, const double t             );
+void   wFun_0(  const Vector & x, const double t, Vector & w );
+double cFun_0(  const Vector & x, const double t             );
+double yFun_0(  const Vector & x, const double t             );
+void   uFun_ex_0( const Vector & x, const double t, Vector & u );
+double pFun_ex_0( const Vector & x, const double t             );
+double zFun_ex_0( const Vector & x, const double t             );
+double aFun_ex_0( const Vector & x, const double t             );
+void   fFun_0(    const Vector & x, const double t, Vector & f );
+void   nFun_0(    const Vector & x, const double t, Vector & f );
+double gFun_0(    const Vector & x, const double t             );
+double hFun_0(    const Vector & x, const double t             );
+double mFun_0(    const Vector & x, const double t             );
 // - simple cooked-up pb with analytical solution
 void   uFun_ex_an( const Vector & x, const double t, Vector & u );
 double pFun_ex_an( const Vector & x, const double t             );
@@ -132,11 +146,11 @@ PetscErrorCode UPErrorMonitor( KSP ksp, PetscInt n, PetscReal rnorm, void *mctx 
 //---------------------------------------------------------------------------
 // Handy functions for assembling single components of the preconditioner
 void assembleLub( const Operator* Y,   const Operator* Fui,
-                  const Operator* Z1,  const Operator* Mzi, const Array<int>& offsets, Operator*& Lub );
-void assembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi,  const Operator* K,
-                  const Operator* aSi, const Array<int>& offsets, Operator*& Uub );
-void assembleLup( const Operator* Fui, const Operator* B,   Operator*& Lup );
-void assembleUup( const Operator* Fui, const Operator* Bt,  const Operator* pSi, const Array<int>& offsets, Operator*& Uup );
+                  const Operator* Z1,  const Operator* Mzi, BlockLowerTriangularPreconditioner* Lub );
+void assembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi, const Operator* K,
+                  const Operator* aSi, BlockUpperTriangularPreconditioner* Uub );
+void assembleLup( const Operator* Fui, const Operator* B,   BlockLowerTriangularPreconditioner* Lup );
+void assembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup );
 //---------------------------------------------------------------------------
 int main(int argc, char *argv[]){
 
@@ -163,51 +177,54 @@ int main(int argc, char *argv[]){
   int output = 2;
 
   // - stop criteria for newton iterations (only used in NS: changed in the switch pbtype later on)
-  double newtonTol = 0.0;
-  int maxnewtonIt  = 0;
+  double newtonTol = 1e-9;
+  int maxNewtonIt  = 2;
 
 
   // -parse parameters
   OptionsParser args(argc, argv);
-  args.AddOption(&ordW, "-oU", "--orderU",
+  args.AddOption(&ordU, "-oU", "--orderU",
                 "Finite element order (polynomial degree) for velocity field (default: 2)");
   args.AddOption(&ordP, "-oP", "--orderP",
                 "Finite element order (polynomial degree) for pressure field (default: 1)");
-  args.AddOption(&ordV, "-oA", "--orderA",
-                "Finite element order (polynomial degree) for vector potential field (default: 2)");
-  args.AddOption(&ordV, "-oZ", "--orderZ",
+  args.AddOption(&ordZ, "-oZ", "--orderZ",
                 "Finite element order (polynomial degree) for Laplacian of vector potential (default: 1)");
+  args.AddOption(&ordA, "-oA", "--orderA",
+                "Finite element order (polynomial degree) for vector potential field (default: 2)");
   args.AddOption(&ref_levels, "-r", "--rlevel",
                 "Refinement level (default: 4)");
   args.AddOption(&Tend, "-T", "--Tend",
                 "Final time (default: 1.0)");
   args.AddOption(&pbType, "-Pb", "--problem",
-                "Problem: 0-analytical test\n"
-        "                 1-driven cavity flow (default)\n"
-        "                 2-poiseuille\n"
-        "                 3-flow over step\n"
-        "                 4-double-glazing\n"
-        "                 11,12,13- N-S counterpart to 1,2,3 (uses newton iterations as non-lin solver)");
+                "Problem: 0-TODO\n"
+        // "                 1-driven cavity flow (default)\n"
+        // "                 2-poiseuille\n"
+        // "                 3-flow over step\n"
+        // "                 4-double-glazing\n"
+        // "                 11,12,13- N-S counterpart to 1,2,3 (uses newton iterations as non-lin solver)"
+        );
   args.AddOption(&precType, "-P", "--preconditioner",
-                "Type of preconditioner: 0-block diagonal\n"
-        "                                1-block upper triangular -make sure to use it as RIGHT precon (default)\n"
-        "                                2-block lower triangular -make sure to use it as LEFT  precon");
+                "Type of preconditioner: 0-Space-time Cyr et al\n"
+                "                        1-Space-time Cyr et al - simplified (default)\n"
+        // "                                1-block upper triangular -make sure to use it as RIGHT precon (default)\n"
+        // "                                2-block lower triangular -make sure to use it as LEFT  precon"
+        );
   args.AddOption(&STSolveTypeU, "-STU", "--spacetimesolveU",
                 "Type of solver for velocity space-time matrix: 0-time stepping (default)\n"
-        "                                                       1-boomerAMG (AIR)\n"
-        "                                                       2-GMRES+boomerAMG (AIR)\n"
-        "                                                       3-Parareal (not fully tested)\n"
-        "                                                       9-Sequential time-stepping for whole ST system - ignores many other options");
+        // "                                                       9-Sequential time-stepping for whole ST system - ignores many other options"
+        );
   args.AddOption(&STSolveTypeA, "-STA", "--spacetimesolveA",
-                "Type of solver for potential wave space-time matrix: 0-time stepping (default)\n"
-        "                                                             1-boomerAMG (AIR)\n"
-        "                                                             2-GMRES+boomerAMG (AIR)\n"
-        "                                                             3-Parareal (not fully tested)\n"
-        "                                                             9-Sequential time-stepping for whole ST system - ignores many other options");
+                "Type of solver for potential wave space-time matrix: 0-time stepping - implicit leapfrog (default)\n"
+                "                                                     1-time stepping - explicit leapfrog\n"
+        // "                                                             1-boomerAMG (AIR)\n"
+        // "                                                             2-GMRES+boomerAMG (AIR)\n"
+        // "                                                             3-Parareal (not fully tested)\n"
+        // "                                                             9-Sequential time-stepping for whole ST system - ignores many other options"
+        );
   args.AddOption(&petscrc_file, "-petscopts", "--petscopts",
-                "PetscOptions file to use: rc_SpaceTimeStokes         (direct (LU) solvers - remember to flag _SingAp if Ap is singular))\n"
-        "                                  rc_SpaceTimeStokes_approx2 (MG solvers for Ap,Fu, Cheb for Mp)\n"
-        "                                  rc_SpaceTimeStokes_FGMRES  (use FGMRES rather than GMRES for outer solver (useful if ST=2))");
+                "PetscOptions file to use: rc_STMHD         TODO! (direct (LU) solvers - remember to flag _SingAp if Ap is singular))\n"
+        "                                  rc_STMHD_approx2 (MG solvers for Ap,Fu, Cheb for Mp)\n"
+        "                                  rc_STMHD_FGMRES  (use FGMRES rather than GMRES for outer solver (useful if ST=2))");
   args.AddOption(&verbose, "-V", "--verbose",
                 "Control how much info to print to terminal:(=-1   print large block matrices, and trigger eigs analysis - bit of a hack)\n"
         "                                                    >0    basic info\n"
@@ -255,11 +272,11 @@ int main(int argc, char *argv[]){
   switch (pbType){
     // analytical test-case
     case 0:{
-      mesh_file = "./meshes/tri-square-open.mesh";
-      uFun = uFun_0;
-      pFun = pFun_0;
-      zFun = zFun_0;
-      aFun = aFun_0;
+      mesh_file = "./meshes/tri-square-test.mesh";
+      uFun = uFun_ex_0;
+      pFun = pFun_ex_0;
+      zFun = zFun_ex_0;
+      aFun = aFun_ex_0;
       fFun = fFun_0;
       gFun = gFun_0;
       hFun = hFun_0;
@@ -338,15 +355,6 @@ int main(int argc, char *argv[]){
       std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
   }
 
-  // Extension to Navier-Stokes:
-  if ( pbType > 10 ){
-    pbName += "NS";
-    // NB: the convection term is multiplied by mu*Pe. For NS, this should be 1 regardless, so we need to fix Pe = 1.0/mu;
-    //     we do this later, though, since initialisation is done with w=0, and leaving Pe=0 allows for some simplifications
-    maxnewtonIt = 50;
-    newtonTol   = 1e-9;
-  }
-
 
 
   if(myid == 0){
@@ -362,18 +370,14 @@ int main(int argc, char *argv[]){
 
 
   // ASSEMBLE OPERATORS -----------------------------------------------------
-  TODO
-  This assembles the jacobian, but computes the *original* rhs of the system. I need another 
-  function which computes the residual of the newton iteration F(xk) (that is, applies the
-  non-linear operator and removes the rhs)
-  // ( - this works also for newton: use 0 as an initial guess for the advection field: w(x,t)=u(x,t)=0 )
   IMHD2DSTOperatorAssembler *mhdAssembler = new IMHD2DSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP, ordZ, ordA,
-                                                                           dt, mu, Pe, fFun, gFun, nFun,
-                                                                           wFun_ex, pFun_ex, vFun_ex, verbose );
+                                                                           dt, mu, eta, mu0, fFun, gFun, hFun, nFun, mFun, wFun, yFun, cFun,
+                                                                           uFun, pFun, zFun, aFun, verbose );
 
 
-  HypreParMatrix *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *ZZZ1, *ZZZ2, *KKK, *YYY;
-  HypreParVector *frhs, *grhs, *zrhs, *hrhs, *uEx, *pEx, *zEx, *aEx, *U0, *P0, *Z0, *A0;
+  Operator *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *ZZZ1, *ZZZ2, *KKK, *YYY;
+  Vector   *frhs, *grhs, *zrhs, *hrhs, *U0, *P0, *Z0, *A0;
+  // Vector   *uEx, *pEx, *zEx, *aEx;
 
   if( myid == 0 && verbose > 0 ){
     std::cout << "Assembling system and rhs *********************************\n";
@@ -384,14 +388,16 @@ int main(int argc, char *argv[]){
                                 BBB,  ZZZ1, ZZZ2,
                                 KKK,  YYY,
                                 frhs, grhs, zrhs, hrhs,
-                                U0,   P0,   Z0,   A0 );
-  BBBt = BBB->Transpose( );
+                                U0,   P0,   Z0,   A0  );
 
-  Array<int> offsets(4);
+  BBBt = new TransposeOperator( BBB );
+
+  Array<int> offsets(5);
   offsets[0] = 0;
   offsets[1] = FFFu->NumRows();
   offsets[2] =  BBB->NumRows();
   offsets[3] = MMMz->NumRows();
+  offsets[4] = FFFa->NumRows();
   offsets.PartialSum();
 
   // - assemble matrix
@@ -414,24 +420,20 @@ int main(int argc, char *argv[]){
   rhs.GetBlock(2) = *zrhs;
   rhs.GetBlock(3) = *hrhs;
 
-  // - assemble IG
-  BlockVector solPrev(offsets), sol(offsets);
+  // - assemble solution (IG) and initialize delta x (all zeros)
+  BlockVector sol(offsets), deltaSol(offsets);
   sol.GetBlock(0) = *U0;
   sol.GetBlock(1) = *P0;
   sol.GetBlock(2) = *Z0;
   sol.GetBlock(3) = *A0;
-  solPrev = sol;
-
-
-
+  deltaSol.GetBlock(0) = 0.;
+  deltaSol.GetBlock(1) = 0.;
+  deltaSol.GetBlock(2) = 0.;
+  deltaSol.GetBlock(3) = 0.;
 
 
   // - compute residual at zeroth-iteration (only useful for newton: otherwise GMRES does so automatically)
-  BlockVector residual(offsets);
-  residual = 0.0;
-  MHDOp->Mult( solPrev, residual );
-  residual -= rhs;
-  double newtonRes = residual.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
+  double newtonRes = rhs.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
   newtonRes*= newtonRes;
   MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
   newtonRes  = sqrt(newtonRes);
@@ -441,7 +443,7 @@ int main(int argc, char *argv[]){
   double totGMRESit = 0.; //leave it as double, so that when I'll average it, it won't round-off
   bool stopNewton = true;
 
-  if ( pbType > 10 && myid == 0 ){
+  if ( myid == 0 ){
     std::cout << "***********************************************************\n";
     std::cout<<"Newton iteration "<<newtonIt<<", Initial residual "<< newtonRes <<std::endl;
     std::cout << "***********************************************************\n";
@@ -465,445 +467,296 @@ int main(int argc, char *argv[]){
   }
 
 
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Assembling operators for preconditioner *******************\n";
+  }
 
-  // This "do-while" loop is only triggered when solving NS - newton iterations
+  Operator *FFui, *MMzi, *pSi, *aSi;
+  mhdAssembler->AssemblePreconditioner( FFui, MMzi, pSi, aSi, STSolveTypeU, STSolveTypeA );
+
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Set-up solver *********************************************\n";
+  }
+
+  // Define solver
+  PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
+  bool isIterative = true;
+  solver->iterative_mode = isIterative;
+
+  // - Flag that most extreme eigs and singvals of precon system must be computed
+  if ( verbose == -1 && newtonIt == 0 ){
+    // also store the actual relevant matrices
+    string path = string("./results/Operators/Pb")               + "_Prec"     + to_string(precType)
+                         + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
+                         + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
+                         + "_Pb" + to_string(pbType) + "/";
+    if (!std::experimental::filesystem::exists( path )){
+      std::experimental::filesystem::create_directories( path );
+    }
+    path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
+    mhdAssembler->PrintMatrices(path);
+    
+    KSP ksp = *solver;
+    PetscErrorCode ierr;
+    ierr = KSPSetComputeEigenvalues(    ksp, PETSC_TRUE ); CHKERRQ(ierr);
+    ierr = KSPSetComputeSingularValues( ksp, PETSC_TRUE ); CHKERRQ(ierr);
+  }
+
+
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Set-up preconditioner *************************************\n";
+  }
+
+  // Define preconditioner
+  Solver *MHDPr;
+
+  switch(precType){
+    case 0:{
+      // Uup^-1 Lup^-1 Uub^-1 Lub^-1
+      // - assemble single factors
+      BlockUpperTriangularPreconditioner *Uub = new BlockUpperTriangularPreconditioner( offsets ),
+                                         *Uup = new BlockUpperTriangularPreconditioner( offsets );
+      BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsets ),
+                                         *Lup = new BlockLowerTriangularPreconditioner( offsets );
+      assembleLub( YYY, FFui, ZZZ1, MMzi, Lub );
+      assembleUub( ZZZ1,  ZZZ2, MMzi, KKK, aSi, Uub );
+      assembleLup( FFui, BBB,  Lup );
+      assembleUup( FFui, BBBt, pSi, Uup );
+
+      // - combine everything together
+      Array<const Operator*> precOps(4);
+      Array<bool>      precOwn(4);
+      precOps[0] = Lub;  precOwn[0] = true;
+      precOps[1] = Uub;  precOwn[1] = true;
+      precOps[2] = Lup;  precOwn[2] = true;
+      precOps[3] = Uup;  precOwn[3] = true;
+
+      OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
+
+      // -and store
+      MHDPr = temp;
+
+      break;
+    }
+
+    case 1:{
+      // Uup^-1 Lup^-1 Uub^-1
+
+      // - assemble single factors
+      BlockUpperTriangularPreconditioner *Uub = new BlockUpperTriangularPreconditioner( offsets ),
+                                         *Uup = new BlockUpperTriangularPreconditioner( offsets );
+      BlockLowerTriangularPreconditioner *Lup = new BlockLowerTriangularPreconditioner( offsets );
+      assembleUub( ZZZ1,  ZZZ2, MMzi, KKK, aSi, Uub );
+      assembleLup( FFui, BBB,  Lup );
+      assembleUup( FFui, BBBt, pSi, Uup );
+
+      // - Combine everything together
+      Array<const Operator*> precOps(3);
+      Array<bool>      precOwn(3);
+      precOps[0] = Uub;  precOwn[0] = true;
+      precOps[1] = Lup;  precOwn[1] = true;
+      precOps[2] = Uup;  precOwn[2] = true;
+
+      OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
+
+      // --and store
+      MHDPr = temp;
+
+      break;
+    }
+    default:{
+      if ( myid == 0 ){
+        std::cerr<<"ERROR: Option for preconditioner "<<precType<<" not recognised"<<std::endl;
+      }
+      break;
+    }
+  }
+
+  // - register operator and preconditioner with the solver
+  solver->SetPreconditioner(*MHDPr);
+  solver->SetOperator(*MHDOp);
+
+
+
+  // Save residual evolution to file
+  if ( output>1 ){
+    // - create folder which will store all files with various convergence evolution 
+    string path = string("./results/convergence_results")        + "_Prec"     + to_string(precType)
+                         + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
+                         + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
+                         + "_Pb" + to_string(pbType) + "_" + petscrc_file  + "/";
+
+    if (!std::experimental::filesystem::exists( path )){
+      std::experimental::filesystem::create_directories( path );
+    }
+    string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
+    // - create viewer to instruct KSP object how to print residual evolution to file
+    PetscViewer    viewer;
+    PetscViewerAndFormat *vf;
+    PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
+    PetscViewerSetType( viewer, PETSCVIEWERASCII );
+    PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
+    PetscViewerFileSetName( viewer, filename.c_str() );
+    // - register it to the ksp object
+    KSP ksp = *solver;
+    PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
+    PetscViewerDestroy( &viewer );
+    // - create a more complex context if fancier options must be printed (error wrt analytical solution)
+    // UPErrorMonitorCtx mctx;
+    // mctx.lenghtU = offsets[1];
+    // mctx.lenghtP = offsets[2] - offsets[1];
+    // mctx.STassembler = stokesAssembler;
+    // mctx.comm = MPI_COMM_WORLD;
+    // mctx.vf   = vf;
+    // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
+    // UPErrorMonitorCtx* mctxptr = &mctx;
+    // if( pbType == 2 || pbType == 20 ){
+    //   if ( myid == 0 ){
+    //     std::cout<<"Warning: we're printing the error wrt the analytical solution at each iteration."<<std::endl
+    //              <<"         This is bound to slow down GMRES *a lot*, so leave this code only for testing purposes!"<<std::endl;
+    //   }
+    //   KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPErrorMonitor, mctxptr, NULL );
+    // }else
+    KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
+  }
+
+
+
+
+
+
+  // SOLVE SYSTEM -----------------------------------------------------------
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "SOLVE! ****************************************************\n";
+  }
+
+  BlockVector res = rhs;
+
+
+  // Main loop (newton solver)
   do{ 
 
-    // In this case, just solve the system normally, via time-stepping
-    if ( STSolveType==9 ){
-      // SOLVE SYSTEM -----------------------------------------------------------
-      if( myid == 0 && verbose > 0 ){
-        std::cout << "SOLVE! ****************************************************\n";
+    // Main solve routine
+    // - Solve for current residual and state
+    solver->Mult( res, deltaSol );
+
+
+
+
+    // -- save #it to convergence to file
+    GMRESits = solver->GetNumIterations();
+    totGMRESit += GMRESits;
+    if (myid == 0){
+      if (solver->GetConverged()){
+        std::cout << "Solver converged in "           << solver->GetNumIterations();
+      }else{
+        std::cout << "Solver *DID NOT* converge in "  << solver->GetNumIterations();
       }
-
-      // - filename where to store summary of convergence
-      string fname = string("./results/convergence_results")         + "_Prec"     + to_string(precType)
-                             + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-                             + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-                             + "_Pb" + to_string(pbType) + "_" + petscrc_file + ".txt";
-
-      // - solve via time-stepping
-      mhdAssembler->TimeStep( rhs, sol, fname, path, ref_levels, pbType );
-
-    // otherwise, things get serious
-    }else{
-
-
-      if( myid == 0 && verbose > 0 ){
-        std::cout << "Assembling operators for preconditioner *******************\n";
-      }
-
-
-      Operator *FFui, *MMzi, *pSi, *aSi;
-      mhdAssembler->AssemblePreconditioner( FFui, MMzi, pSi, aSi, STSolveTypeU, STSolveTypeA );
-
-
-      if( myid == 0 && verbose > 0 ){
-        std::cout << "Set-up solver *********************************************\n";
-      }
-
-      // Define solver
-      PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
-      bool isIterative = true;
-      solver->iterative_mode = isIterative;
-
-      // - Flag that most extreme eigs and singvals of precon system must be computed
-      if ( verbose == -1 && newtonIt == 0 ){
-        // also store the actual relevant matrices
-        string path = string("./results/Operators/Pb")               + "_Prec"     + to_string(precType)
-                             + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-                             + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-                             + "_Pb" + to_string(pbType) + "/";
-        if (!std::experimental::filesystem::exists( path )){
-          std::experimental::filesystem::create_directories( path );
-        }
-        path += "dt"+ to_string(dt) + "_r"+ to_string(ref_levels);
-        mhdAssembler->PrintMatrices(path);
-        
-        KSP ksp = *solver;
-        PetscErrorCode ierr;
-        ierr = KSPSetComputeEigenvalues(    ksp, PETSC_TRUE ); CHKERRQ(ierr);
-        ierr = KSPSetComputeSingularValues( ksp, PETSC_TRUE ); CHKERRQ(ierr);
-      }
-
-
-      // Define preconditioner
-      Solver *MHDPr;
-
-      switch(precType){
-        case 0:{
-          // Uup^-1 Lup^-1 Uub^-1 Lub^-1
-          // - assemble single factors
-          BlockUpperTriangularPreconditioner *Uub = new BlockUpperTriangularPreconditioner( offsets ),
-                                             *Uup = new BlockUpperTriangularPreconditioner( offsets );
-          BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsets ),
-                                             *Lup = new BlockLowerTriangularPreconditioner( offsets );
-          assembleLub( YYY, FFui, ZZZ1, MMzi, Lub );
-          assembleUub( ZZZ1,  ZZZ2, MMzi, KKK, aSi, Uub );
-          assembleLup( FFui, BBB,  Lup );
-          assembleUup( FFui, BBBt, pSi, Uup );
-
-          // - combine everything together
-          Array<Operator*> precOps(4);
-          Array<bool>      precOwn(4);
-          precOps(0) = Lub;  precOwn(0) = true;
-          precOps(1) = Uub;  precOwn(1) = true;
-          precOps(2) = Lup;  precOwn(2) = true;
-          precOps(3) = Uup;  precOwn(3) = true;
-
-          OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
-
-          // -and store
-          MHDPr = temp;
-
-          break;
-        }
-
-        case 1:{
-          // Uup^-1 Lup^-1 Uub^-1
-
-          // - assemble single factors
-          BlockUpperTriangularPreconditioner *Uub = new BlockUpperTriangularPreconditioner( offsets ),
-                                             *Uup = new BlockUpperTriangularPreconditioner( offsets );
-          BlockLowerTriangularPreconditioner *Lup = new BlockLowerTriangularPreconditioner( offsets );
-          assembleUub( ZZZ1,  ZZZ2, MMzi, KKK, aSi, Uub );
-          assembleLup( FFui, BBB,  Lup );
-          assembleUup( FFui, BBBt, pSi, Uup );
-
-          // - Combine everything together
-          Array<Operator*> precOps(3);
-          Array<bool>      precOwn(3);
-          precOps(0) = Uub;  precOwn(0) = true;
-          precOps(1) = Lup;  precOwn(1) = true;
-          precOps(2) = Uup;  precOwn(2) = true;
-
-          OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
-
-          // --and store
-          MHDPr = temp;
-
-          break;
-        }
-        default:{
-          if ( myid == 0 ){
-            std::cerr<<"ERROR: Option for preconditioner "<<precType<<" not recognised"<<std::endl;
-          }
-          break;
-        }
-      }
-
-      // - register operator and preconditioner with the solver
-      solver->SetPreconditioner(*MHDPr);
-      solver->SetOperator(*MHDOp);
-
-
-
-      // Save residual evolution to file
-      if ( output>1 ){
-        // - create folder which will store all files with various convergence evolution 
-        string path = string("./results/convergence_results")        + "_Prec"     + to_string(precType)
-                             + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-                             + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-                             + "_Pb" + to_string(pbType) + "_" + petscrc_file  + "/";
-
-        if (!std::experimental::filesystem::exists( path )){
-          std::experimental::filesystem::create_directories( path );
-        }
-        string filename = path + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
-        // - create viewer to instruct KSP object how to print residual evolution to file
-        PetscViewer    viewer;
-        PetscViewerAndFormat *vf;
-        PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
-        PetscViewerSetType( viewer, PETSCVIEWERASCII );
-        PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
-        PetscViewerFileSetName( viewer, filename.c_str() );
-        // - register it to the ksp object
-        KSP ksp = *solver;
-        PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
-        PetscViewerDestroy( &viewer );
-        // - create a more complex context if fancier options must be printed (error wrt analytical solution)
-        // UPErrorMonitorCtx mctx;
-        // mctx.lenghtU = offsets[1];
-        // mctx.lenghtP = offsets[2] - offsets[1];
-        // mctx.STassembler = stokesAssembler;
-        // mctx.comm = MPI_COMM_WORLD;
-        // mctx.vf   = vf;
-        // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
-        // UPErrorMonitorCtx* mctxptr = &mctx;
-        // if( pbType == 2 || pbType == 20 ){
-        //   if ( myid == 0 ){
-        //     std::cout<<"Warning: we're printing the error wrt the analytical solution at each iteration."<<std::endl
-        //              <<"         This is bound to slow down GMRES *a lot*, so leave this code only for testing purposes!"<<std::endl;
-        //   }
-        //   KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPErrorMonitor, mctxptr, NULL );
-        // }else
-        KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
-      }
-
-
-
-
-
-      // SOLVE SYSTEM -----------------------------------------------------------
-      if( myid == 0 && verbose > 0 ){
-        std::cout << "SOLVE! ****************************************************\n";
-      }
-
-      // - Main solve routine
-      solver->Mult(rhs, sol);
-
-
-      // OUTPUT -----------------------------------------------------------------
-      if( myid == 0 && verbose > 0 ){
-        std::cout << "Post-processing *******************************************\n";
-      }
-      // - compute eigs if requested
-      if ( verbose == -1 && newtonIt == 0 && myid == 0 ){
-        KSP ksp = *solver;
-        PetscInt Neigs = 100;
-        PetscErrorCode ierr;
-        double *realPart = new double(Neigs);
-        double *imagPart = new double(Neigs);
-        double smax, smin;
-        ierr = KSPComputeEigenvalues(           ksp, Neigs, realPart, imagPart, &Neigs ); CHKERRQ(ierr);
-        ierr = KSPComputeExtremeSingularValues( ksp,       &smax,    &smin             ); CHKERRQ(ierr);
-
-        // and store them
-        if ( myid == 0 ){
-          ofstream myfile;
-          string fname;
-          // - both eigenvalues
-          fname = string("./results/Operators/eigs_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
-                       + "_Prec" + to_string(precType) + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-                       + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-                       + "_Pb" + to_string(pbType) + "_" + petscrc_file + ".txt";
-          myfile.open( fname );
-          for ( int i = 0; i < Neigs; ++i ){
-            myfile << realPart[i] << ",\t" << imagPart[i] << std::endl;
-          }
-          myfile.close();
-          // - and most extreme singular values
-          fname = string("./results/Operators/singVals_") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
-                       + "_Prec" + to_string(precType) + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-                       + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-                       + "_Pb" + to_string(pbType) + "_" + petscrc_file + ".txt";
-          myfile.open( fname );
-          myfile << smax << ",\t" << smin << std::endl;
-          myfile.close();
-
-        }
-
-        delete realPart;
-        delete imagPart;
-      }
-
-      GMRESits = solver->GetNumIterations();
-
-
-      // - save #it to convergence to file
-      if (myid == 0){
-        if (solver->GetConverged()){
-          std::cout << "Solver converged in "           << solver->GetNumIterations();
-        }else{
-          std::cout << "Solver *DID NOT* converge in "  << solver->GetNumIterations();
-        }
-        std::cout << " iterations. Residual norm is "   << solver->GetFinalNorm() << ".\n";
-      
-        if( output>0 ){
-          double hmin, hmax, kmin, kmax;
-          mhdAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
-
-          ofstream myfile;
-          string fname = string("./results/convergence_results") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
-                       + "_Prec" + to_string(precType) + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-                       + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-                       + "_Pb" + to_string(pbType) + "_" + petscrc_file + ".txt";
-          myfile.open( fname, std::ios::app );
-          myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
-                 << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
-                 << solver->GetNumIterations() << std::endl;
-          myfile.close();
-        }
-      }
-  
-
-      // delete XXi;  // TODO: stokesPr doesn't handle well its references: double check this!
-      // delete FFi;
-      delete solver;
-      delete MHDPr;
-
-    }
-
-
-
-    // - save solution (beware of memory consumption!)
-    if( output>2 ){
-      string outFilePath = "ParaView";
-      string outFileName = "STIMHD2D_" + pbName;
-      if (newtonIt == 0){
-        mhdAssembler->SaveExactSolution( outFilePath, outFileName+"_Ex" );
-      }
-      if ( pbType > 10 ){
-        outFileName += "_it" + to_string(newtonIt);
-      }
-      int colsU[2] = { myid*( FFFu->NumRows() ), (myid+1)*( FFFu->NumRows() ) };
-      int colsP[2] = { myid*(  BBB->NumRows() ), (myid+1)*(  BBB->NumRows() ) };
-      int colsZ[2] = { myid*( MMMz->NumRows() ), (myid+1)*( MMMz->NumRows() ) };
-      int colsA[2] = { myid*( FFFa->NumRows() ), (myid+1)*( FFFa->NumRows() ) };
-
-      HypreParVector uh( MPI_COMM_WORLD, numProcs*( FFFu->NumRows() ), sol.GetBlock(0).GetData(), colsU ); 
-      HypreParVector ph( MPI_COMM_WORLD, numProcs*(  BBB->NumRows() ), sol.GetBlock(1).GetData(), colsP ); 
-      HypreParVector zh( MPI_COMM_WORLD, numProcs*( MMMz->NumRows() ), sol.GetBlock(2).GetData(), colsZ ); 
-      HypreParVector ah( MPI_COMM_WORLD, numProcs*( FFFa->NumRows() ), sol.GetBlock(3).GetData(), colsA ); 
-
-      mhdAssembler->SaveSolution( uh, ph, zh, ah, outFilePath, outFileName );
-
-    }
+      std::cout << " iterations. Residual norm is "   << solver->GetFinalNorm() << ".\n";
     
+      if( output>0 ){
+        double hmin, hmax, kmin, kmax;
+        mhdAssembler->GetMeshSize( hmin, hmax, kmin, kmax );
 
-    if( myid == 0 && verbose > 0 ){
-      std::cout << "Clean-up **************************************************\n";
+        ofstream myfile;
+        string fname = string("./results/convergence_results") + "dt"+ to_string(dt) + "_r"+ to_string(ref_levels)
+                     + "_Prec" + to_string(precType) + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
+                     + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
+                     + "_Pb" + to_string(pbType) + "_" + petscrc_file + ".txt";
+        myfile.open( fname, std::ios::app );
+        myfile << Tend << ",\t" << dt   << ",\t" << numProcs   << ",\t"
+               << hmax << ",\t" << hmin << ",\t" << ref_levels << ",\t"
+               << solver->GetNumIterations() << std::endl;
+        myfile.close();
+      }
+    }
+  
+
+
+    // -- compute norm of update
+    double newtonErrWRTPrevIt = deltaSol.Norml2();
+    newtonErrWRTPrevIt*= newtonErrWRTPrevIt;
+    MPI_Allreduce( MPI_IN_PLACE, &newtonErrWRTPrevIt, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
+    newtonErrWRTPrevIt = sqrt(newtonErrWRTPrevIt);
+
+    // - Update solution
+    sol += deltaSol;
+
+    // - Update residual
+    // -- apply operator
+    BlockVector Nsol(offsets);
+    Nsol = 0.;
+    mhdAssembler->ApplyOperator( sol, Nsol );
+    // -- subtract result from operator application to original rhs
+    res  = rhs;
+    res -= Nsol;
+
+    // -- compute residual norm
+    newtonRes = res.Norml2();
+    newtonRes*= newtonRes;
+    MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
+    newtonRes = sqrt(newtonRes);
+    newtonIt++;
+
+    if ( myid == 0 ){
+      std::cout << "***********************************************************\n";
+      std::cout << "Newton iteration "<<newtonIt<<", Residual norm "<< newtonRes <<std::endl;
+      std::cout << "***********************************************************\n";
+      if ( output>1 ){
+        string filename = string("./results/Newton_convergence_results")   + "_Prec"     + to_string(precType)
+                               + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
+                               + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
+                               + "_Pb" + to_string(pbType) + "_" + petscrc_file + "/" + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
+        // - store file with convergence evolution (folder has already been created)
+        ofstream myfile;
+        myfile.open( filename, std::ios::app );
+        myfile << newtonIt <<"\t"<< newtonRes      <<"\t"<< newtonRes/newtonRes0 <<"\t"<< newtonErrWRTPrevIt <<"\t"<< GMRESits   << std::endl;
+        myfile.close();
+      }
     }
 
-    TODO
 
-    delete MMv;
-    delete CCC;
-    delete AAA;
-    delete Mwp;
-    delete FFF;
-    delete BBB;
-
-    delete frhs;
-    delete grhs;
-    delete hrhs;
-
-    delete W0;
-    delete P0;
-    delete V0;
-
-    delete KHIOp;
-    delete khiAssembler;
+    // - stop if:  max it reached                 residual small enough        relative residual small enough       //     difference wrt prev it small enough
+    stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol );  // || ( newtonErrWRTPrevIt < newtonTol );
 
 
-    // UPDATE OPERATORS --------------------------------------------------
-    // Normally, I'd be done at this stage. If I'm inside a newton iteration, though, I need to update things with the newly found solution
-    if ( pbType > 10 ){
-      // As mentioned before, the convection term is multiplied by mu*Pe. Here we fix Pe = 1.0/mu so that mu*Pe=1
-      Pe = 1.0/mu;
-
-      // - store difference wrt previous solution (compute the norm)
-      solPrev -= sol;
-      double newtonErrWRTPrevIt = solPrev.Norml2();
-      newtonErrWRTPrevIt*= newtonErrWRTPrevIt;
-      MPI_Allreduce( MPI_IN_PLACE, &newtonErrWRTPrevIt, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-      newtonErrWRTPrevIt = sqrt(newtonErrWRTPrevIt);
-
-      newtonIt++;
-      totGMRESit += GMRESits;
-
-      // - update solution
-      solPrev = sol;
-      // - reassemble operator using the newly recovered solution as advection field
-      mhdAssembler = new KHISTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordW, ordP, ordV,
-                                                 dt, mu, Pe, fFun, gFun, nFun,
-                                                 solPrev.GetBlock(idxW), solPrev.GetBlock(idxV),
-                                                 wFun_ex, pFun_ex, vFun_ex, verbose );
+    if ( !stopNewton ){
 
       if( myid == 0 && verbose > 0 ){
-        std::cout << "Assembling system and rhs *********************************\n";
-      }
-      khiAssembler->AssembleSystem( FFF,  AAA,  MMv,  BBB,  Mwp,  CCC,
-                                    frhs, grhs, hrhs, W0,   P0,   V0 );
-
-      // - reassemble matrix
-      KHIOp = new BlockOperator( offsets );
-      KHIOp->SetBlock(idxW, idxW, FFF);
-      KHIOp->SetBlock(idxP, idxP, AAA);
-      KHIOp->SetBlock(idxV, idxV, MMv);
-      KHIOp->SetBlock(idxW, idxV, BBB);
-      KHIOp->SetBlock(idxP, idxW, Mwp);
-      KHIOp->SetBlock(idxV, idxP, CCC);
-      
-
-      // - reassign rhs
-      rhs.Destroy();
-      rhs.Update( offsets );
-      rhs.GetBlock(idxW) = *frhs;
-      rhs.GetBlock(idxP) = *grhs;
-      rhs.GetBlock(idxV) = *hrhs;
-
-      // - this time we discard the IG, and rather use the sol at previous iteration as initial guess
-      // -- this is actually quite dangerous: W0,P0 and V0 were storing also the modifications due to the BC, and now
-      //     I'm discarding them: the hope is that the solution at each iteration satisfies them *exactly* anyway
-
-      // - compute residual
-      KHIOp->Mult( solPrev, residual );
-      residual -= rhs;
-      newtonRes = residual.Norml2();
-      newtonRes*= newtonRes;
-      MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-      newtonRes = sqrt(newtonRes);
-
-
-      if ( myid == 0 ){
-        std::cout << "***********************************************************\n";
-        std::cout<<"newton iteration "<<newtonIt<<", Residual norm "<< newtonRes <<std::endl;
-        std::cout << "***********************************************************\n";
-        if ( output>1 ){
-          // - store file with convergence evolution (folder has already been created)
-          string filename = string("./results/newton_convergence_results") + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                            + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType) + "_" + petscrc_file + "/"
-                            + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
-          ofstream myfile;
-          myfile.open( filename, std::ios::app );
-          // myfile << "It"  <<"\t"<< "ResidualNorm" <<"\t"<< "ResRelNorm"         <<"\t"<< "NormDiffPrevIt"   <<"\t"<< "GMRESits" << std::endl;
-          myfile << newtonIt <<"\t"<< newtonRes      <<"\t"<< newtonRes/newtonRes0 <<"\t"<< newtonErrWRTPrevIt <<"\t"<< GMRESits   << std::endl;
-          myfile.close();
-        }
+        std::cout << "Update operators ******************************************\n";
       }
 
-      // - stop if:  max it reached                 residual small enough        relative residual small enough     //     difference wrt prev it small enough
-      stopnewton = ( newtonIt >= maxnewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol ) || ( newtonErrWRTPrevIt < newtonTol );
-      
-      if ( stopnewton ){
-        delete MMv;
-        delete CCC;
-        delete AAA;
-        delete Mwp;
-        delete FFF;
-        delete BBB;
+      // - Update gradient of operator
+      mhdAssembler->UpdateLinearisedOperators( sol );
 
-        delete frhs;
-        delete grhs;
-        delete hrhs;
-
-        delete W0;
-        delete P0;
-        delete V0;
-
-        delete KHIOp;
-        // delete khiAssembler; // deleting khiAssembler makes PETSc angry. Can't be bothered to figure out why
-      }
+      // - Clean IG for next iteration
+      deltaSol = 0.;
     }
-  }while( !stopnewton );
-  
-  // Print info for non-linear solve if solving NS
-  if ( myid == 0 && pbType > 10 ){
-    if( newtonIt < maxnewtonIt ){
-      std::cout << "newton outer solver converged in "          << newtonIt;
+
+
+  }while(!stopNewton);
+
+
+
+
+
+  // Print info for non-linear solve
+  if ( myid == 0 ){
+    if( newtonIt < maxNewtonIt ){
+      std::cout << "Newton outer solver converged in "          << newtonIt;
     }else{
-      std::cout << "newton outer solver *DID NOT* converge in " << maxnewtonIt;
+      std::cout << "Newton outer solver *DID NOT* converge in " << maxNewtonIt;
     }
     std::cout   << " iterations. Residual norm is "             << newtonRes;
     std::cout   << ", avg internal GMRES it are "               << totGMRESit/newtonIt  << ".\n";
 
     // - eventually store info on newton convergence
     if( output>0 ){
+      string fname = string("./results/Newton_convergence_results")   + "_Prec"     + to_string(precType)
+                          + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
+                          + "_oU" + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
+                          + "_Pb" + to_string(pbType) + "_" + petscrc_file + ".txt";
       ofstream myfile;
-      string fname = string("./results/newton_convergence_results")  + "_Prec" + to_string(precType) + "_STsolve" + to_string(STSolveType)
-                          + "_oU"  + to_string(ordU) + "_oP" + to_string(ordP) + "_Pb" + to_string(pbType);
-      fname += string("_") + petscrc_file + ".txt";
       myfile.open( fname, std::ios::app );
       myfile << Tend     << ",\t" << dt         << ",\t" << numProcs   << ",\t" << ref_levels << ",\t"
              << newtonIt << ",\t" << totGMRESit/newtonIt << ",\t" << newtonRes << std::endl;
@@ -912,12 +765,94 @@ int main(int argc, char *argv[]){
   }
 
 
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Clean-up **************************************************\n";
+  }
+
+
+  delete MHDPr;
+  delete MHDOp;
+  delete solver;
+
+  // delete FFFu,
+  // delete MMMz;
+  // delete FFFa;
+  // delete BBBt;
+  // delete BBB;
+  // delete ZZZ1;
+  // delete ZZZ2;
+  // delete KKK;
+  // delete YYY;
+
+  delete frhs;
+  delete grhs;
+  delete zrhs;
+  delete hrhs;
+  // delete uEx;
+  // delete pEx;
+  // delete zEx;
+  // delete aEx;
+  delete U0;
+  delete P0;
+  delete Z0;
+  delete A0;
+
+
+  delete mhdAssembler;
+
+
+
+
+
+
+  // OUTPUT -----------------------------------------------------------------
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Post-processing *******************************************\n";
+  }
+
+
+  // - save solution (beware of memory consumption!)
+  if( output>2 ){
+    string outFilePath = "ParaView";
+    string outFileName = "STIMHD2D_" + pbName;
+    // if (newtonIt == 0){
+    //   mhdAssembler->SaveExactSolution( outFilePath, outFileName+"_Ex" );
+    // }
+    // if ( pbType > 10 ){
+    //   outFileName += "_it" + to_string(newtonIt);
+    // }
+    int colsU[2] = { myid*( FFFu->NumRows() ), (myid+1)*( FFFu->NumRows() ) };
+    int colsP[2] = { myid*(  BBB->NumRows() ), (myid+1)*(  BBB->NumRows() ) };
+    int colsZ[2] = { myid*( MMMz->NumRows() ), (myid+1)*( MMMz->NumRows() ) };
+    int colsA[2] = { myid*( FFFa->NumRows() ), (myid+1)*( FFFa->NumRows() ) };
+
+    HypreParVector uh( MPI_COMM_WORLD, numProcs*( FFFu->NumRows() ), sol.GetBlock(0).GetData(), colsU ); 
+    HypreParVector ph( MPI_COMM_WORLD, numProcs*(  BBB->NumRows() ), sol.GetBlock(1).GetData(), colsP ); 
+    HypreParVector zh( MPI_COMM_WORLD, numProcs*( MMMz->NumRows() ), sol.GetBlock(2).GetData(), colsZ ); 
+    HypreParVector ah( MPI_COMM_WORLD, numProcs*( FFFa->NumRows() ), sol.GetBlock(3).GetData(), colsA ); 
+
+    mhdAssembler->SaveSolution( uh, ph, zh, ah, outFilePath, outFileName );
+
+  }
+  
+
+
+
+
+
+
+
+
+
   MFEMFinalizePetsc();
   // HYPRE_Finalize();  //?
   MPI_Finalize();
 
   return 0;
 }
+
+
+
 
 
 
@@ -1014,29 +949,30 @@ PetscErrorCode UPErrorMonitor( KSP ksp, PetscInt n, PetscReal rnorm, void *mctx 
 
 
 
-
 // Assembles lower factor of LU factorisation of velocity/magnetic field part of preconditioner
 //       ⌈    I                          ⌉
 // Lub = |         I                     |
 //       |                   I           |
 //       ⌊ Y*Fu^-1   -Y*Fu^-1*Z1*Mz^-1 I ⌋
-void assembleLub( const Operator* Y,   const Operator* Fui,
-                  const Operator* Z1,  const Operator* Mzi,
-                  BlockLowerTriangularPreconditioner*& Lub ){
+void assembleLub( const Operator* Y,  const Operator* Fui,
+                  const Operator* Z1, const Operator* Mzi,
+                  BlockLowerTriangularPreconditioner* Lub ){
 
-  Array<Operator*> YFuiOps(2);
-  YFuiOps(0) = Fui;
-  YFuiOps(1) = Y;
+  // std::cout<<"Size of operators: "<<std::endl
+  //          <<"Fui  "<< Fui->NumRows() <<","<< Fui->NumCols() <<std::endl
+
+  Array<const Operator*> YFuiOps(2);
+  YFuiOps[0] = Fui;
+  YFuiOps[1] = Y;
   OperatorsSequence* YFui = new OperatorsSequence( YFuiOps );   // does not own
 
-  ScaledOperator* mY = new ScaledOperator( Y, -1.0 );
-  Array<Operator*> mYFuiZ1Mziops(4);
-  Array<bool>      mYFuiZ1Mziown(4);
-  mYFuiZ1Mziops(0) = Mzi;  mYFuiZ1Mziown(0) = false;
-  mYFuiZ1Mziops(1) = Z1;   mYFuiZ1Mziown(1) = false;
-  mYFuiZ1Mziops(2) = Fui;  mYFuiZ1Mziown(2) = false;
-  mYFuiZ1Mziops(3) = mY;   mYFuiZ1Mziown(3) = true;
+  ScaledOperator* mMzi = new ScaledOperator( Mzi, -1.0 );
 
+  Array<const Operator*> mYFuiZ1Mziops(3);
+  Array<bool>            mYFuiZ1Mziown(3);
+  mYFuiZ1Mziops[0] = mMzi; mYFuiZ1Mziown[0] = true;
+  mYFuiZ1Mziops[1] = Z1;   mYFuiZ1Mziown[1] = false;
+  mYFuiZ1Mziops[2] = YFui; mYFuiZ1Mziown[2] = false;
   OperatorsSequence* mYFuiZ1Mzi = new OperatorsSequence( mYFuiZ1Mziops, mYFuiZ1Mziown );
 
   Lub->iterative_mode = false;
@@ -1052,8 +988,8 @@ void assembleLub( const Operator* Y,   const Operator* Fui,
 // Uub*|       I     | = |   I       |
 //     |         I   |   |     Mz K  |
 //     ⌊           I ⌋   ⌊        aS ⌋
-void assembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi,  const Operator* K,
-                  const Operator* aSi, BlockUpperTriangularPreconditioner*& Uub ){
+void assembleUub( const Operator* Z1, const Operator* Z2, const Operator* Mzi, const Operator* K,
+                  const Operator* aSi, BlockUpperTriangularPreconditioner* Uub ){
   Uub->iterative_mode = false;
   Uub->SetBlock( 0, 2, Z1  );
   Uub->SetBlock( 0, 3, Z2  );
@@ -1061,7 +997,6 @@ void assembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi, 
   Uub->SetBlock( 2, 3, K   );
   Uub->SetBlock( 3, 3, aSi );
   Uub->owns_blocks = false;
-
 }
 
 
@@ -1071,10 +1006,11 @@ void assembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi, 
 // Lup = | B*Fu^-1 I     |
 //       |           I   |
 //       ⌊             I ⌋
-void assembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPreconditioner*& Lup ){
-  Array<Operator*> BFuiOps(2);
-  BFuiOps(0) = Fui;
-  BFuiOps(1) = B;
+void assembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPreconditioner* Lup ){
+
+  Array<const Operator*> BFuiOps(2);
+  BFuiOps[0] = Fui;
+  BFuiOps[1] = B;
   OperatorsSequence* BFui = new OperatorsSequence( BFuiOps );   // does not own
   
   Lup->iterative_mode = false;
@@ -1089,7 +1025,7 @@ void assembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPr
 // Uup = |    pS     |
 //       |       I   |
 //       ⌊         I ⌋
-void assembleUup( const Operator* Fui, const Operator* Bt,  const Operator* pSi, BlockUpperTriangularPreconditioner*& Uup ){
+void assembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup ){
   Uup->iterative_mode = false;
   Uup->SetBlock( 0, 0, Fui );
   Uup->SetBlock( 0, 1, Bt  );
@@ -1097,6 +1033,57 @@ void assembleUup( const Operator* Fui, const Operator* Bt,  const Operator* pSi,
   Uup->owns_blocks = false;
 }
 
+
+
+
+
+
+
+
+
+
+// For debugging
+void wFun_0(const Vector & x, const double t, Vector & w){
+  w(0) = 0.;
+  w(1) = 0.;
+}
+
+double cFun_0(  const Vector & x, const double t ){
+  return 0.;
+}
+double yFun_0(  const Vector & x, const double t ){
+  return 0.;
+}
+void   uFun_ex_0( const Vector & x, const double t, Vector & u ){
+  u(0) = 2.;
+  u(1) = 2.;  
+}
+double pFun_ex_0( const Vector & x, const double t ){
+  return 2.;
+}
+double zFun_ex_0( const Vector & x, const double t ){
+  return 2.;
+}
+double aFun_ex_0( const Vector & x, const double t ){
+  return 2.;
+}
+void   fFun_0( const Vector & x, const double t, Vector & u ){
+  u(0) = 2.;
+  u(1) = 2.;  
+}
+void   nFun_0( const Vector & x, const double t, Vector & u ){
+  u(0) = 2.;
+  u(1) = 2.;  
+}
+double gFun_0( const Vector & x, const double t ){
+  return 2.;
+}
+double hFun_0( const Vector & x, const double t ){
+  return 2.;
+}
+double mFun_0( const Vector & x, const double t ){
+  return 2.;
+}
 
 
 
@@ -1297,15 +1284,6 @@ double gFun(const Vector & x, const double t ){
 //***************************************************************************
 //TEST CASES OF SOME ACTUAL RELEVANCE
 //***************************************************************************
-void wFun_zero(const Vector & x, const double t, Vector & w){
-  w(0) = 0.;
-  w(1) = 0.;
-}
-double wnFun_zero(const Vector & x, const double t ){
-  return 0.;
-}
-
-
 // Simple example -----------------------------------------------------------
 // Exact solution (velocity)
 void uFun_ex_an(const Vector & x, const double t, Vector & u){

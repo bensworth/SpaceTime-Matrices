@@ -1,6 +1,5 @@
 #include "spacetimewavesolver.hpp"
 
-#include <mpi.h>
 #include <iostream>
 #include "petsc.h"
 
@@ -9,14 +8,18 @@ using namespace mfem;
 
 
 SpaceTimeWaveSolver::SpaceTimeWaveSolver( const MPI_Comm& comm, const SparseMatrix* Cp, const SparseMatrix* C0, const SparseMatrix* Cm,
-                                          bool timeDep, bool symmetric, int verbose):
-  _comm(comm), _timeDep(timeDep), _symmetric(symmetric),
+                                          const Array<int>& essTDOF, bool timeDep, bool symmetric, int verbose):
+  _comm(comm), _timeDep(timeDep), _symmetric(symmetric), _essTDOF(essTDOF),
   _Cp(NULL), _C0(NULL), _Cm(NULL), _Cpsolve(NULL),
   _X(NULL), _Y(NULL), _verbose(verbose){
 
-  if( Cp != NULL ) SetCp(Cp);
-  if( C0 != NULL ) SetC0(C0);
-  if( Cm != NULL ) SetCm(Cm);
+  if ( timeDep || !symmetric ){
+    std::cerr<<"Error: only supports symmetric, non-time-dep schemes for now"<<std::endl;
+  }
+
+  if( Cp != NULL ) SetDiag( Cp, 0 );
+  if( C0 != NULL ) SetDiag( C0, 1 );
+  if( Cm != NULL ) SetDiag( Cm, 2 );
 
   // Flag it as an iterative method so to reuse IG in any case. It's up to the setup of its internal solvers
   //  to actually make use of the IG or not
@@ -53,17 +56,17 @@ void SpaceTimeWaveSolver::SetDiag( const SparseMatrix* Op, int diag ){
 
   switch (diag){
     case 0:{
+      delete _Cp;
       _Cp = new PetscParMatrix( Op );
       SetCpSolve();
       break;
     }
     case 1:{
-      _C0 = C0;
+      _C0 = Op;
       break;
     }
     case 2:{
-      _Cm = Cm;
-
+      _Cm = Op;
       break;
     }
     default:
@@ -263,8 +266,12 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
 
       // - if rank 0 is master
       if ( _myRank == master ){
-        // -- rescale the solution accurately (remember you solved for Cp, but need to solve for Cp+Cm)
+        // -- rescale the solution accurately (remember you solved for Cp, but need to solve for Cp+Cm = 2*Cp)
         _Y->operator*=( 0.5 );     
+        // --- but careful not to dirty Dirichlet nodes
+        for ( int i = 0; i < _essTDOF.Size(); ++i ){
+          _Y->operator()(_essTDOF[i]) = _X->operator()(_essTDOF[i]);
+        }
         
         // -- then it needs to solve for instant 1, too
         Vector b(spaceDofs), temp(spaceDofs), ig(spaceDofs);
@@ -284,7 +291,7 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
         }
         
         // --- send sol back to rank 1
-        MPI_Send( ig.GetData(), spaceDofs, MPI_DOUBLE, 1, 2, _comm, MPI_STATUS_IGNORE );
+        MPI_Send( ig.GetData(), spaceDofs, MPI_DOUBLE, 1, 2, _comm );
 
         // ---store previous solutions
         solm1 = ig;
@@ -293,7 +300,7 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
       // - otherwise, 0 needs to send solution to 1
       }else{
         // -- no need to rescale, since in this case at 0 I should've set the solver for Cp+Cm
-        MPI_Send( _Y->GetData(), spaceDofs, MPI_DOUBLE, 1, 0, _comm, MPI_STATUS_IGNORE );
+        MPI_Send( _Y->GetData(), spaceDofs, MPI_DOUBLE, 1, 0, _comm );
       }
 
     }
@@ -309,7 +316,7 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
         MPI_Recv( solm2.GetData(), spaceDofs, MPI_DOUBLE, 0, 0, _comm, MPI_STATUS_IGNORE );
         
         // - solve for instant 1
-        Vector b = *_X
+        Vector b = *_X;
         Vector temp(spaceDofs);
         // -- include result from instant 0 in the rhs
         _C0->Mult( solm2, temp );
@@ -329,8 +336,8 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
 
       // - otherwise, 1 needs to send info to 0 and receive back solution
       }else{
-        MPI_Send( _X->GetData(), spaceDofs, MPI_DOUBLE, 0, 0, _comm, MPI_STATUS_IGNORE );
-        MPI_Send( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, 1, _comm, MPI_STATUS_IGNORE );
+        MPI_Send( _X->GetData(), spaceDofs, MPI_DOUBLE, 0, 0, _comm );
+        MPI_Send( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, 1, _comm );
 
         MPI_Recv( _Y->GetData(), spaceDofs, MPI_DOUBLE, 0, 2, _comm, MPI_STATUS_IGNORE );
 
@@ -365,7 +372,7 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
         }
         
         // -- send sol back to rank 1
-        MPI_Send( ig.GetData(), spaceDofs, MPI_DOUBLE, t, 3*t+2, _comm, MPI_STATUS_IGNORE );
+        MPI_Send( ig.GetData(), spaceDofs, MPI_DOUBLE, t, 3*t+2, _comm );
 
         // -- store previous solutions
         solm2 = solm1;
@@ -387,9 +394,9 @@ void SpaceTimeWaveSolver::Mult( const Vector &x, Vector &y ) const{
   MPI_Barrier( _comm );
 
 
-  if ( _verbose>100 ){
-    std::cout<<"Inside wave solver, rank "<<_myRank<<", result for A: "; _Y->Print(std::cout, _Y->Size());
-  }
+  // if ( _verbose>100 ){
+  //   std::cout<<"Inside wave solver, rank "<<_myRank<<", result for A: "; _Y->Print(std::cout, _Y->Size());
+  // }
 
 }
 
