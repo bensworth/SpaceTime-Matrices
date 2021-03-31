@@ -1,8 +1,8 @@
 function [] = spaceTimeSolve()
-Pb   = 2;
+Pb   = 4;
 Prec = 0;
 STsolveU = 0;
-STsolveA = 0;
+STsolveA = 2;
 oU = 2;
 oP = 1;
 oZ = 1;
@@ -10,7 +10,7 @@ oA = 2;
 
 petscOpt = 'rc_SpaceTimeIMHD2D';
 
-r  = 5;
+r  = 4;
 NT = 4;
 
 mu  = 1;
@@ -19,68 +19,14 @@ mu  = 1;
 rng(1)
 
 
-path = strcat('Prec',int2str(Prec),'_STsolveU',int2str(STsolveU),'_STsolveA',int2str(STsolveA),...
+path = strcat('Pb',int2str(Pb),'_Prec',int2str(Prec),'_STsolveU',int2str(STsolveU),'_STsolveA',int2str(STsolveA),...
               '_oU',int2str(oU),'_oP',int2str(oP),'_oZ',int2str(oZ),'_oA',int2str(oA),...
-              '_Pb',int2str(Pb),'_',petscOpt,'/NP',int2str(NT),'_r',int2str(r),'/Nit');
+              '_',petscOpt,'/NP',int2str(NT),'_r',int2str(r),'/Nit');
 
 
 dt = 1./NT;
 
 
-%% Bunch of auxiliary functions useful in preconditioner definitions
-% Solution for block diagonal
-% - assumes diagonal is constant!
-function y = invertDD(x,Mi)
-  n  = Mi.MatrixSize(1);
-  nT = length(x)/n;
-
-  y = zeros(n*nT,1);
-  
-  for ii=1:nT
-    y((1:n)+n*(ii-1)) = Mi\( x((1:n)+n*(ii-1)) );
-  end
-end
-
-% Forward substitution for block-bidiagonal
-% - assumes lower diagonal is constant!
-function y = invertFF(x,Fi,M)
-  nT = length(Fi);
-  n  = length(x)/nT;
-  
-  y      = zeros(n*nT,1);
-  
-  yprev  = Fi{1}\x(1:n);
-  y(1:n) = yprev;
-
-  for ii=2:nT
-    yprev = Fi{ii}\( x((1:n)+n*(ii-1)) - M*yprev );
-    y((1:n)+n*(ii-1)) = yprev;
-  end
-end
-
-% Forward substitution for block-tridiagonal
-function y = invertCC(x,Ci,C0,Cm,ess)
-  nT = length(Ci);
-  n  = length(x)/nT;
-
-  y      = zeros(n*nT,1);
-  yprev2 = Ci{1}\x(1:n);
-  y(1:n) = yprev2;
-  yprev  = Ci{2}\( x((n+1):(2*n)) - C0{1}*yprev2 );
-  y((n+1):(2*n)) = yprev;
-
-  for ii=3:nT
-    tmp = Ci{ii}\( x((1:n)+n*(ii-1)) - C0{ii-1}*yprev - Cm{ii-2}*yprev2 );
-    y((1:n)+n*(ii-1)) = tmp;
-    yprev2 = yprev;
-    yprev  = tmp;
-  end
-  
-  % leave dirichlet nodes untouched
-  for ii=1:nT
-    y(ess+1+n*(ii-1)) = x(ess+1+n*(ii-1));
-  end  
-end
 
 % apply inverse of Lub
 function y = invertLub(x,FFui,MMzi,YY,ZZ1)
@@ -144,6 +90,8 @@ filename = strcat(path, int2str(0),'__','Mz.dat');
 Mz   = spconvert(load(filename));
 filename = strcat(path, int2str(0),'__','Ma.dat');
 Ma   = spconvert(load(filename));
+filename = strcat(path, int2str(0),'__','Aa.dat');
+Aa   = spconvert(load(filename));
 filename = strcat(path, int2str(0),'__','B.dat');
 B    = spconvert(load(filename));
 filename = strcat(path, int2str(0),'__','K.dat');
@@ -157,12 +105,16 @@ Mp   = spconvert(load(filename));
 filename = strcat(path, int2str(0),'__','MaNZ.dat');
 MaNZ = spconvert(load(filename));
 
+fileID = fopen( strcat( path, int2str(0), "_essU.dat" ),'r');
+essU = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
+fclose(fileID);
+
 fileID = fopen( strcat( path, int2str(0), "_essP.dat" ),'r');
-essP = fscanf(fileID,'%d');
+essP = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
 
 fileID = fopen( strcat( path, int2str(0), "_essA.dat" ),'r');
-essA = fscanf(fileID,'%d');
+essA = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
   
 
@@ -185,7 +137,7 @@ NA = size(Ma,1);
 
 
 
-for newtIt = 0:0
+for newtIt = 0:3
   % import matrices which vary throughout the Newton iterations
   Fu = cell(1,NT);
   Fa = cell(1,NT);
@@ -198,6 +150,7 @@ for newtIt = 0:0
   Cp = cell(1,NT);
   C0 = cell(1,NT);
   Cm = cell(1,NT);
+  B0 = cell(1,NT);
 
   for pp = 1:NT
     filename = strcat(path, int2str(newtIt),'__','Fu_', int2str(pp-1),'.dat');
@@ -217,6 +170,8 @@ for newtIt = 0:0
     Wa{pp} = spconvert(load(filename));
     filename = strcat(path, int2str(newtIt),'__','dtuWa_', int2str(pp-1),'.dat');
     dtuWa{pp} = spconvert(load(filename));
+    filename = strcat(path, int2str(newtIt),'__','B0_', int2str(pp-1),'.dat');
+    B0{pp} = load(filename);
 
     filename = strcat(path, int2str(newtIt),'__','Cp_', int2str(pp-1),'.dat');
     Cp{pp} = spconvert(load(filename));
@@ -254,109 +209,15 @@ for newtIt = 0:0
     Fuinv{pp} = decomposition(Fu{pp}, 'lu');
   end
   
-  FFui = @(x) invertFF(x,Fuinv,Mu);
-  MMzi = @(x) invertDD(x,Mzinv);    
+  FFui = @(x) invertBlockLowTri(x,{Fuinv,{Mu}},essU);
+  MMzi = @(x) invertBlockLowTri(x,{{Mzinv}});
 
-  magSchurComps = [0];
+%   magSchurComps = [0,1,2,10,11,12,13,14,20,21,22,23,24,30,31,32];
+  magSchurComps = 1;
   for magSchurComp = magSchurComps
 
   % experiment with different operators for the magnetic schur complement
-  CCpinv = cell(1,NT);
-  CC0    = cell(1,NT);
-  CCm    = cell(1,NT);
-  for pp = 1:NT   % first of all, kill all contributions to Dirichlet nodes
-    Wa{pp}(essA+1,:) = sparse(length(essA),size(Wa{1},2));
-    Wa{pp}(:,essA+1) = sparse(size(Wa{1},1),length(essA));
-  end
-  switch magSchurComp
-    % -- Inverse of whole Fa*Mai*Fa = Fai*Ma*Fai  -- HOLDS ONLY IF |B0|=0!!
-    case 0
-      Fainv = cell(1,NT);
-      for pp=1:NT
-        Fainv{pp} = decomposition(Fa{pp}, 'lu');
-      end
-      FFai = @(x) invertFF(x,Fainv,Ma);
-      CCi  = @(x) FFai( MMa*FFai(x) );
-    % -- Pure wave equation:
-    case 1
-      for pp=1:NT
-        if pp == 1
-          CCpinv{pp} = decomposition(Cp{pp}, 'chol');  % non-time-dep & sym operator: rank 0 must solve for Cp+Cm = 2Cp
-        else
-          CCpinv{pp} = decomposition(Cp{pp}, 'chol');
-        end
-        CC0{pp} = C0{pp};
-        CCm{pp} = Cm{pp};
-      end
-      CCi  = @(x) invertCC(x,CCpinv,CC0,CCm,essA);
-    % -- Wave equation + terms in dt coming from space-time Fa*Mai*Fa
-    case 2
-      for pp = 1:NT
-        if pp == 1
-          temp = Cp{pp} + 2*dt*Wa{pp};  % non-time-dep & sym operator: rank 0 must solve for Cp+Cm = 2Cp?????
-          CCpinv{pp} = decomposition(temp, 'lu');
-        else
-          temp =   Cp{pp} + 2*dt*Wa{pp};
-          CCpinv{pp} = decomposition(temp, 'lu');
-        end
-        if pp < NT
-          CC0{pp} =  C0{pp} -   dt*(Wa{pp}+Wa{pp+1});
-        end
-        CCm{pp} =  Cm{pp}; % maybe "symmetrise" this?
-      end
-      CCi  = @(x) invertCC(x,CCpinv,CC0,CCm,essA);
-    % -- Wave equation + terms in dt, but organised as if it was the discretisation of a dissipative wave eq
-    case 3
-      for pp = 1:NT
-        if pp == 1
-          temp = Cp{pp} + 2*dt*Wa{pp};  % non-time-dep & sym operator: rank 0 must solve for Cp+Cm = 2Cp?????
-          CCpinv{pp} = decomposition(temp, 'lu');
-        else
-          temp =   Cp{pp} + 2*dt*Wa{pp};
-          CCpinv{pp} = decomposition(temp, 'lu');
-        end
-        CC0{pp} =  C0{pp};
-        CCm{pp} =  Cm{pp} - 2*dt*Wa{pp};
-      end
-      CCi  = @(x) invertCC(x,CCpinv,CC0,CCm,essA);
-    % -- Wave equation + *ALL* terms in dt which would come from the continuous operator: also dtu gradA
-    case 4
-      for pp = 1:NT
-        temp =   Cp{pp} + 2*dt*Wa{pp} + dt*dtuWa{pp}/4;
-        CCpinv{pp} = decomposition(temp, 'lu');
-        CC0{pp} =  C0{pp} + 2*dt*dtuWa{pp}/4;
-        CCm{pp} =  Cm{pp} - 2*dt*Wa{pp} + dt*dtuWa{pp}/4;
-      end
-      CCi  = @(x) invertCC(x,CCpinv,CC0,CCm,essA);
-    % -- Wave equation + terms in dt and terms in dt^2 with inverse of diagonal of mass matrix
-    case 5
-      for pp = 1:NT
-        if pp == 1
-          temp = Cp{pp} + 2*dt*Wa{pp} + dt*dt*Wa{pp}*spdiags(1./diag(MaNZ),0,NA,NA)*Wa{pp};  % non-time-dep & sym operator: rank 0 must solve for Cp+Cm = 2Cp?????
-          CCpinv{pp} = decomposition(temp, 'lu');
-        else
-          temp =   Cp{pp} + 2*dt*Wa{pp} + dt*dt*Wa{pp}*spdiags(1./diag(MaNZ),0,NA,NA)*Wa{pp};  % non-time-dep & sym operator: rank 0 must solve for Cp+Cm = 2Cp?????
-          CCpinv{pp} = decomposition(temp, 'lu');
-        end
-        if pp < NT
-          CC0{pp} =  C0{pp} -   dt*(Wa{pp}+Wa{pp+1});
-        end
-        CCm{pp} =  Cm{pp}; % maybe "symmetrise" this?
-      end
-      CCi  = @(x) invertCC(x,CCpinv,CC0,CCm,essA);
-    % -- Wave equation + terms in dt and dt^2, but as if they came from discretising a continuous operator
-    case 6
-      for pp = 1:NT
-        temp =      Cp{pp} + 2*dt*Wa{pp} + 4*dt*dt*Wa{pp}*spdiags(1./diag(MaNZ),0,NA,NA)*Wa{pp}/4;  % non-time-dep & sym operator: rank 0 must solve for Cp+Cm = 2Cp?????
-        CCpinv{pp} = decomposition(temp, 'lu');
-        if pp < NT
-          CC0{pp} = C0{pp}               + 8*dt*dt*Wa{pp}*spdiags(1./diag(MaNZ),0,NA,NA)*Wa{pp}/4;
-        end
-        CCm{pp} =   Cm{pp} - 2*dt*Wa{pp} + 4*dt*dt*Wa{pp}*spdiags(1./diag(MaNZ),0,NA,NA)*Wa{pp}/4;
-      end
-      CCi  = @(x) invertCC(x,CCpinv,CC0,CCm,essA);
-  end
-  
+  CCi = assembleCCinv( magSchurComp, Fa, MaNZ, Wa, dtuWa, Aa, B0, dt, essA );
 
 
   pSi  = @(x) invertSp(x,Apinv,Mpinv,Wp,dt,mu,essP);
@@ -369,42 +230,70 @@ for newtIt = 0:0
 
   switch Prec
     case 0
-%       precOp = @(x) Uupi(Lupi(Uubi(Lubi(x))));
-      precOp = @(x) Uupi(Uubi(Lubi(x)));
+      precOp = @(x) Uupi(Lupi(Uubi(Lubi(x))));
     case 1
       precOp = @(x) Uupi(Lupi(Uubi(x)));
+    case 2
+      precOp = @(x) Uupi(Uubi(x));  % this actually seems to be giving the (almost) exact same results!
     otherwise
-        error('Preconditioner not recognised')
+      error('Preconditioner not recognised')
   end
 
 
 
   %% Start testing!
-  rhsu  = zeros(NU,NT);
-  rhsp  = zeros(NP,NT);
-  rhsz  = zeros(NZ,NT);
-  rhsa  = zeros(NA,NT);
+  resu   = zeros(NU,NT);
+  resp   = zeros(NP,NT);
+  resz   = zeros(NZ,NT);
+  resa   = zeros(NA,NT);
+  dsolu  = zeros(NU,NT);
+  dsolp  = zeros(NP,NT);
+  dsolz  = zeros(NZ,NT);
+  dsola  = zeros(NA,NT);
   for pp=1:NT
     fileID = fopen( strcat( path, int2str(newtIt), "_rhs",      int2str(pp-1), ".dat" ),'r');
     temp = fscanf(fileID,'%f');
-    rhsu(:,pp) = temp((1:NU)         );
-    rhsp(:,pp) = temp((1:NP)+NU      );
-    rhsz(:,pp) = temp((1:NZ)+NU+NP   );
-    rhsa(:,pp) = temp((1:NA)+NU+NP+NZ);
+    resu(:,pp)  = temp((1:NU)         );
+    resp(:,pp)  = temp((1:NP)+NU      );
+    resz(:,pp)  = temp((1:NZ)+NU+NP   );
+    resa(:,pp)  = temp((1:NA)+NU+NP+NZ);
+    fclose(fileID);
+    
+    fileID = fopen( strcat( path, int2str(newtIt), "_deltaSol", int2str(pp-1), ".dat" ),'r');
+    temp = fscanf(fileID,'%f');
+    dsolu(:,pp) = temp((1:NU)         );
+    dsolp(:,pp) = temp((1:NP)+NU      );
+    dsolz(:,pp) = temp((1:NZ)+NU+NP   );
+    dsola(:,pp) = temp((1:NA)+NU+NP+NZ);
     fclose(fileID);
   end
-  rhs = [rhsu(:); rhsp(:); rhsz(:); rhsa(:) ];
+  res  = [  resu(:);  resp(:);  resz(:);  resa(:) ];
+  dsol = [ dsolu(:); dsolp(:); dsolz(:); dsola(:) ];
 
 
   
 
 
   % - compute equivalent variables internally
-  [ mydsol, err, it ] = GMRESrp( J, rhs, 1e-10, 100, zeros(size(rhs)), precOp );
+  [ mydsol, err, it ] = GMRESrp( J, res, 1e-10, 100, zeros(size(res)), precOp );
   semilogy(err);
   legend(num2str(magSchurComps'));
-  pause(0.1)
   hold on
+  disp(norm(mydsol-dsol));
+  
+  % - print c++ convergence result
+  filename = strcat('../',path(1:end-3), 'GMRESconv_Nit',int2str(newtIt), '.txt');
+  tempfile = strcat('../',path(1:end-3),'temp.txt');
+  command = ['tac ', filename,' | sed ''/Residual norms/q'' | tac | tee ', tempfile ];
+  [dummy, dummier] = unix(command);
+  % read from table
+  T = readtable( tempfile );
+  % extract relevant info (its and residual norm)
+  res = table2array(T(:,5));
+  semilogy(res,'--');
+  pause(0.2)
+
+  
   end
 end
 

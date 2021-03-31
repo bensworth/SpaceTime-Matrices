@@ -68,11 +68,15 @@ private:
   const int _ordA;
   // - info on Dirichlet BC
   Array<int> _essTagsU;
+  Array<int> _essTagsV;
   Array<int> _essTagsP;
   Array<int> _essTagsA;
 	Array<int> _essUhTDOF;
 	Array<int> _essPhTDOF;
 	Array<int> _essAhTDOF;
+
+	// size of domain
+	double _area;
 
   // relevant matrices
   // - blocks for single time-steps
@@ -222,8 +226,8 @@ public:
 	void AssembleSystem( Operator*& FFFu, Operator*& MMMz, Operator*& FFFa,
                        Operator*& BBB,  Operator*& ZZZ1, Operator*& ZZZ2,
                        Operator*& KKK,  Operator*& YYY,
-                       Vector*& frhs,   Vector*& grhs,   Vector*& zrhs,   Vector*& hrhs,
-                       Vector*& IGu,    Vector*& IGp,    Vector*& IGz,    Vector*& IGa );
+                       Vector&  frhs,   Vector&  grhs,   Vector&  zrhs,   Vector& hrhs,
+                       Vector&  IGu,    Vector&  IGp,    Vector&  IGz,    Vector& IGa );
 
 
 	void ApplyOperator( const BlockVector& x, BlockVector& y );
@@ -299,6 +303,8 @@ private:
 
 	
 	void SetEverythingUnassembled();
+	void ComputeDomainArea();
+	void ComputeAvgB( Vector& B ) const;
 
 
 

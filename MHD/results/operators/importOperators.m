@@ -26,60 +26,6 @@ path = strcat('Prec',int2str(Prec),'_STsolveU',int2str(STsolveU),'_STsolveA',int
 dt = 1./NT;
 
 
-%% Bunch of auxiliary functions useful in preconditioner definitions
-% Solution for block diagonal
-% - assumes diagonal is constant!
-function y = invertDD(x,Mi)
-  n  = Mi.MatrixSize(1);
-  nT = length(x)/n;
-
-  y = zeros(n*nT,1);
-  
-  for ii=1:nT
-    y((1:n)+n*(ii-1)) = Mi\( x((1:n)+n*(ii-1)) );
-  end
-end
-
-% Forward substitution for block-bidiagonal
-% - assumes lower diagonal is constant!
-function y = invertFF(x,Fi,M)
-  nT = length(Fi);
-  n  = length(x)/nT;
-  
-  y      = zeros(n*nT,1);
-  
-  yprev  = Fi{1}\x(1:n);
-  y(1:n) = yprev;
-
-  for ii=2:nT
-    yprev = Fi{ii}\( x((1:n)+n*(ii-1)) - M*yprev );
-    y((1:n)+n*(ii-1)) = yprev;
-  end
-end
-
-% Forward substitution for block-tridiagonal
-function y = invertCC(x,Ci,C0,Cm,ess)
-  nT = length(Ci);
-  n  = length(x)/nT;
-
-  y      = zeros(n*nT,1);
-  yprev2 = Ci{1}\x(1:n);
-  y(1:n) = yprev2;
-  yprev  = Ci{2}\( x((n+1):(2*n)) - C0{1}*yprev2 );
-  y((n+1):(2*n)) = yprev;
-
-  for ii=3:nT
-    tmp = Ci{ii}\( x((1:n)+n*(ii-1)) - C0{ii-1}*yprev - Cm{ii-2}*yprev2 );
-    y((1:n)+n*(ii-1)) = tmp;
-    yprev2 = yprev;
-    yprev  = tmp;
-  end
-  
-  % leave dirichlet nodes untouched
-  for ii=1:nT
-    y(ess+1+n*(ii-1)) = x(ess+1+n*(ii-1));
-  end  
-end
 
 % apply inverse of Lub
 function y = invertLub(x,FFui,MMzi,YY,ZZ1)
@@ -148,17 +94,17 @@ function y = invertSp(x,Api,Mpi,Wp,dt,mu,ess)
   for ii =1:nT
     if isempty(Wp{ii})
       tmp = x((1:nP)+nP*(ii-1));
-      tmp(ess+1) = 0.;
+      tmp(ess) = 0.;
       tmp = mu*( Mpi\tmp );
-      tmp(ess+1) = 0.;
+      tmp(ess) = 0.;
       Mpix((1:nP)+nP*(ii-1)) = tmp;
     else
       tmp = Apix((1:nP)+nP*(ii-1));
-      tmp(ess+1) = 0.;
+      tmp(ess) = 0.;
       tmp = Wp{ii}*tmp;
-      tmp(ess+1) = 0.;
+      tmp(ess) = 0.;
       tmp = Mpi\tmp;
-      tmp(ess+1) = 0.;
+      tmp(ess) = 0.;
       Mpix((1:nP)+nP*(ii-1)) = tmp;
     end
   end
@@ -166,7 +112,7 @@ function y = invertSp(x,Api,Mpi,Wp,dt,mu,ess)
   % include lower diagonal in space-time matrix
   for ii =nT:-1:2
     tmp = Apix((1:nP)+nP*(ii-2));
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     Apix((1:nP)+nP*(ii-1)) = Apix((1:nP)+nP*(ii-1)) - tmp;
   end
 
@@ -185,9 +131,9 @@ function y = invertSA(x,CCi,Mai,Wa,dt,ess)
   WMaix = zeros(size(x));
   for ii =1:nT
     tmp = Mai\x((1:nA)+nA*(ii-1));
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     tmp = Wa{ii}*tmp;
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     WMaix((1:nA)+nA*(ii-1)) = tmp;
     
 %     myfileID = fopen( strcat( path(1:end-3), "Maix_", int2str(ii-1), ".dat" ),'r');
@@ -203,7 +149,7 @@ function y = invertSA(x,CCi,Mai,Wa,dt,ess)
   tmp = x;
   for ii =nT:-1:2
     tmp2 = tmp((1:nA)+nA*(ii-2));
-    tmp2(ess+1) = 0.;
+    tmp2(ess) = 0.;
     tmp((1:nA)+nA*(ii-1)) = tmp((1:nA)+nA*(ii-1)) - tmp2;
 %     myfileID = fopen( strcat( path(1:end-3), "temp_", int2str(ii-1), ".dat" ),'r');
 %     outTmp = fscanf(myfileID,'%f');
@@ -243,12 +189,16 @@ Mp   = spconvert(load(filename));
 filename = strcat(path, int2str(0),'__','MaNZ.dat');
 MaNZ = spconvert(load(filename));
 
+fileID = fopen( strcat( path, int2str(0), "_essU.dat" ),'r');
+essU = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
+fclose(fileID);
+
 fileID = fopen( strcat( path, int2str(0), "_essP.dat" ),'r');
-essP = fscanf(fileID,'%d');
+essP = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
 
 fileID = fopen( strcat( path, int2str(0), "_essA.dat" ),'r');
-essA = fscanf(fileID,'%d');
+essA = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
   
 
@@ -340,9 +290,9 @@ for newtIt = 0:0
 
 
   %% Initialise preconditioner
-  FFui = @(x) invertFF(x,Fuinv,Mu);
-  MMzi = @(x) invertDD(x,Mzinv);
-  CCi  = @(x) invertCC(x,Cpinv,C0,Cm,essA);
+  FFui = @(x) invertBlockLowTri(x,{Fuinv,{Mu}},essU);
+  MMzi = @(x) invertBlockLowTri(x,{Mzinv});
+  CCi  = @(x) invertBlockLowTri(x,{Cpinv,C0,Cm},essA);
 
   pSi  = @(x) invertSp(x,Apinv,Mpinv,Wp,dt,mu,essP);
   ASi  = @(x) invertSA(x,CCi,Mainv,Wa,dt,essA);

@@ -11,6 +11,7 @@
 #include <iostream>
 #include <experimental/filesystem>
 #include <limits>
+#include <cmath>
 //---------------------------------------------------------------------------
 #ifndef MFEM_USE_PETSC
 #error This example requires that MFEM is built with MFEM_USE_PETSC=YES
@@ -83,17 +84,32 @@ double mFun_an4(    const Vector & x, const double t             );
 void   wFun_an4(    const Vector & x, const double t, Vector & w );
 double cFun_an4(    const Vector & x, const double t             );
 double yFun_an4(    const Vector & x, const double t             );
-// // - driven cavity flow
-// void   uFun_ex_cavity( const Vector & x, const double t, Vector & u );
-// double pFun_ex_cavity( const Vector & x, const double t             );
-// void   fFun_cavity(    const Vector & x, const double t, Vector & f );
-// void   nFun_cavity(    const Vector & x, const double t, Vector & f );
-// double gFun_cavity(    const Vector & x, const double t             );
-// void   uFun_ex_cavityC(const Vector & x, const double t, Vector & u );  // constant-in-time counterpart
-// double pFun_ex_cavityC(const Vector & x, const double t             );
-// void   fFun_cavityC(   const Vector & x, const double t, Vector & f );
-// void   nFun_cavityC(   const Vector & x, const double t, Vector & f );
-// double gFun_cavityC(   const Vector & x, const double t             );
+// Kelvin-Helmholtz instability
+void   uFun_ex_KHI( const Vector & x, const double t, Vector & u );
+double pFun_ex_KHI( const Vector & x, const double t             );
+double zFun_ex_KHI( const Vector & x, const double t             );
+double aFun_ex_KHI( const Vector & x, const double t             );
+void   fFun_KHI(    const Vector & x, const double t, Vector & f );
+void   nFun_KHI(    const Vector & x, const double t, Vector & f );
+double gFun_KHI(    const Vector & x, const double t             );
+double hFun_KHI(    const Vector & x, const double t             );
+double mFun_KHI(    const Vector & x, const double t             );
+void   wFun_KHI(    const Vector & x, const double t, Vector & w );
+double cFun_KHI(    const Vector & x, const double t             );
+double yFun_KHI(    const Vector & x, const double t             );
+// Island coalescing
+void   uFun_ex_island( const Vector & x, const double t, Vector & u );
+double pFun_ex_island( const Vector & x, const double t             );
+double zFun_ex_island( const Vector & x, const double t             );
+double aFun_ex_island( const Vector & x, const double t             );
+void   fFun_island(    const Vector & x, const double t, Vector & f );
+void   nFun_island(    const Vector & x, const double t, Vector & f );
+double gFun_island(    const Vector & x, const double t             );
+double hFun_island(    const Vector & x, const double t             );
+double mFun_island(    const Vector & x, const double t             );
+void   wFun_island(    const Vector & x, const double t, Vector & w );
+double cFun_island(    const Vector & x, const double t             );
+double yFun_island(    const Vector & x, const double t             );
 // // - poiseuille flow
 // void   uFun_ex_poiseuille( const Vector & x, const double t, Vector & u );
 // double pFun_ex_poiseuille( const Vector & x, const double t             );
@@ -171,7 +187,7 @@ int main(int argc, char *argv[]){
   Array<int> essTagsA(0); 
   
   // - stop criteria for newton iterations (only used in NS: changed in the switch pbtype later on)
-  double newtonTol = 1e-9;
+  double newtonTol = 1e-4;
   int maxNewtonIt  = 2;
 
 
@@ -198,10 +214,9 @@ int main(int argc, char *argv[]){
         // "                 11,12,13- N-S counterpart to 1,2,3 (uses newton iterations as non-lin solver)"
         );
   args.AddOption(&precType, "-P", "--preconditioner",
-                "Type of preconditioner: 0-Space-time Cyr et al\n"
-                "                        1-Space-time Cyr et al - simplified (default)\n"
-        // "                                1-block upper triangular -make sure to use it as RIGHT precon (default)\n"
-        // "                                2-block lower triangular -make sure to use it as LEFT  precon"
+                "Type of preconditioner: 0-Space-time Cyr et al: Uupi*Lupi*Uubi*Lubi\n"
+                "                        1-Space-time Cyr et al simplified: Uupi*Lupi*Uubi (default)\n"
+                "                        2-Space-time Cyr et al uber simplified: Uupi*Uubi\n"
         );
   args.AddOption(&STSolveTypeU, "-STU", "--spacetimesolveU",
                 "Type of solver for velocity space-time matrix: 0-time stepping (default)\n"
@@ -210,6 +225,7 @@ int main(int argc, char *argv[]){
   args.AddOption(&STSolveTypeA, "-STA", "--spacetimesolveA",
                 "Type of solver for potential wave space-time matrix: 0-time stepping - implicit leapfrog (default)\n"
                 "                                                     1-time stepping - explicit leapfrog\n"
+                "                                                     2-time stepping on full Fa*Mai*Fa+|B|/mu*Aa matrix\n"
         // "                                                             1-boomerAMG (AIR)\n"
         // "                                                             2-GMRES+boomerAMG (AIR)\n"
         // "                                                             3-Parareal (not fully tested)\n"
@@ -383,6 +399,80 @@ int main(int argc, char *argv[]){
       pbName = "An4";
       break;
     }
+    // Kelvin-Helmholtz instability
+    case 5:{
+      mesh_file = "./meshes/tri-rect-KHI.mesh";
+      uFun = uFun_ex_KHI;
+      pFun = pFun_ex_KHI;
+      zFun = zFun_ex_KHI;
+      aFun = aFun_ex_KHI;
+      fFun = fFun_KHI;
+      gFun = gFun_KHI;
+      hFun = hFun_KHI;
+      nFun = nFun_KHI;
+      mFun = mFun_KHI;
+      wFun = wFun_KHI;
+      yFun = yFun_KHI;
+      cFun = cFun_KHI;
+      // Set BC:
+      // - Dirichlet on u top, bottom, top left and bottom right
+      // - Dirichlet on p on top right and bottom left (outflow, used only in precon)
+      // - Dirichlet on A on top and bottom
+      essTagsU.SetSize(2); essTagsU[0] = 0; essTagsU[1] = 1;
+      essTagsP.SetSize(1); essTagsP[0] = 2;
+      essTagsA.SetSize(1); essTagsA[0] = 0;
+      pbName = "KHI";
+      break;
+    }
+    // Island coalescence
+    case 6:{
+      mesh_file = "./meshes/tri-rect-island.mesh";
+      uFun = uFun_ex_island;
+      pFun = pFun_ex_island;
+      zFun = zFun_ex_island;
+      aFun = aFun_ex_island;
+      fFun = fFun_island;
+      gFun = gFun_island;
+      hFun = hFun_island;
+      nFun = nFun_island;
+      mFun = mFun_island;
+      wFun = wFun_island;
+      yFun = yFun_island;
+      cFun = cFun_island;
+      // Set BC:
+      // TODO!!!!
+      essTagsU.SetSize(2); essTagsU[0] = 0; essTagsU[1] = 2; // N S
+      essTagsP.SetSize(2); essTagsP[0] = 1; essTagsP[0] = 3; // E W
+      essTagsA.SetSize(2); essTagsA[0] = 0; essTagsA[1] = 2; // N S
+      pbName = "IslandCoalescence";
+      mu0 = 1e-4;
+      eta = 1e-4;
+      break;
+    }
+    // Island coalescence - periodic in x
+    case 7:{
+      mesh_file = "./meshes/tri-rect-island-xper.mesh";
+      uFun = uFun_ex_island;
+      pFun = pFun_ex_island;
+      zFun = zFun_ex_island;
+      aFun = aFun_ex_island;
+      fFun = fFun_island;
+      gFun = gFun_island;
+      hFun = hFun_island;
+      nFun = nFun_island;
+      mFun = mFun_island;
+      wFun = wFun_island;
+      yFun = yFun_island;
+      cFun = cFun_island;
+      // Set BC:
+      // TODO!!!
+      essTagsU.SetSize(2); essTagsU[0] = 0; essTagsU[1] = 2;
+      essTagsA.SetSize(2); essTagsA[0] = 0; essTagsA[1] = 2; // N S
+      pbName = "IslandCoalescenceXPer";
+      mu0 = 1e-4;
+      eta = 1e-4;
+      break;
+    }
 
     default:
       std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
@@ -410,18 +500,18 @@ int main(int argc, char *argv[]){
 
 
   Operator *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *ZZZ1, *ZZZ2, *KKK, *YYY;
-  Vector   *frhs, *grhs, *zrhs, *hrhs, *U0, *P0, *Z0, *A0;
+  Vector   *fres, *gres, *zres, *hres, *U0, *P0, *Z0, *A0;
   // Vector   *uEx, *pEx, *zEx, *aEx;
 
   if( myid == 0 && verbose > 0 ){
-    std::cout << "Assembling system and rhs *********************************\n";
+    std::cout << "Assembling operators for system ***************************\n";
   }
 
   // Assemble the system
   mhdAssembler->AssembleSystem( FFFu, MMMz, FFFa,
                                 BBB,  ZZZ1, ZZZ2,
                                 KKK,  YYY,
-                                frhs, grhs, zrhs, hrhs,
+                                fres, gres, zres, hres,
                                 U0,   P0,   Z0,   A0  );
 
   BBBt = new TransposeOperator( BBB );
@@ -447,12 +537,12 @@ int main(int argc, char *argv[]){
   MHDOp->SetBlock(3, 0,  YYY);
 
 
-  // - assemble rhs
-  BlockVector rhs(offsets);
-  rhs.GetBlock(0) = *frhs;
-  rhs.GetBlock(1) = *grhs;
-  rhs.GetBlock(2) = *zrhs;
-  rhs.GetBlock(3) = *hrhs;
+  // - assemble the original residual
+  BlockVector res(offsets);
+  res.GetBlock(0) = *fres;
+  res.GetBlock(1) = *gres;
+  res.GetBlock(2) = *zres;
+  res.GetBlock(3) = *hres;
 
   // - assemble solution (IG) and initialize delta x (all zeros)
   BlockVector sol(offsets), deltaSol(offsets);
@@ -466,8 +556,8 @@ int main(int argc, char *argv[]){
   deltaSol.GetBlock(3) = 0.;
 
 
-  // - compute residual at zeroth-iteration (only useful for newton: otherwise GMRES does so automatically)
-  double newtonRes = rhs.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
+  // - compute norm of residual at zeroth-iteration (only useful for newton: otherwise GMRES does so automatically)
+  double newtonRes = res.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
   newtonRes*= newtonRes;
   MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
   newtonRes  = sqrt(newtonRes);
@@ -484,19 +574,6 @@ int main(int argc, char *argv[]){
 
   Operator *FFui, *MMzi, *pSi, *aSi;
   mhdAssembler->AssemblePreconditioner( FFui, MMzi, pSi, aSi, STSolveTypeU, STSolveTypeA );
-
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Set-up solver *********************************************\n";
-  }
-
-  // Define solver
-  PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
-  bool isIterative = true;
-  solver->iterative_mode = isIterative;
-
-  if( myid == 0 && verbose > 0 ){
-    std::cout << "Set-up preconditioner *************************************\n";
-  }
 
   // Define preconditioner
   Solver *MHDPr;
@@ -533,10 +610,25 @@ int main(int argc, char *argv[]){
     case 1:{
       // Uup^-1 Lup^-1 Uub^-1
       Array<const Operator*> precOps(3);
-      Array<bool>      precOwn(3);
+      Array<bool>            precOwn(3);
       precOps[0] = Uub;  precOwn[0] = true;
       precOps[1] = Lup;  precOwn[1] = true;
       precOps[2] = Uup;  precOwn[2] = true;
+
+      OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
+
+      // --and store
+      MHDPr = temp;
+
+      break;
+    }
+
+    case 2:{
+      // Uup^-1 Uub^-1
+      Array<const Operator*> precOps(2);
+      Array<bool>            precOwn(2);
+      precOps[0] = Uub;  precOwn[0] = true;
+      precOps[1] = Uup;  precOwn[1] = true;
 
       OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
 
@@ -552,6 +644,17 @@ int main(int argc, char *argv[]){
       break;
     }
   }
+
+
+
+  if( myid == 0 && verbose > 0 ){
+    std::cout << "Set-up solver *********************************************\n";
+  }
+
+  // Define solver
+  PetscLinearSolver *solver = new PetscLinearSolver(MPI_COMM_WORLD, "solver_");
+  bool isIterative = true;
+  solver->iterative_mode = isIterative;
 
   // - register operator and preconditioner with the solver
   solver->SetPreconditioner(*MHDPr);
@@ -579,36 +682,36 @@ int main(int argc, char *argv[]){
   ofstream myfile;
   myfile.precision(std::numeric_limits< double >::max_digits10);
   myfile.open( path+"rhs"+to_string(myid)+".dat" );
-  rhs.Print(myfile,1);
+  res.Print(myfile,1);
   myfile.close();
 
 
   // - Apply various operators and save output
   Vector tmp;
   // -- Time-stepping over the velocity block
-  tmp.SetSize( rhs.GetBlock(0).Size() ); tmp = 0.;
-  FFui->Mult( rhs.GetBlock(0), tmp);
+  tmp.SetSize( res.GetBlock(0).Size() ); tmp = 0.;
+  FFui->Mult( res.GetBlock(0), tmp);
   myfile.open( path+"FFuix"+to_string(myid)+".dat" );
   tmp.Print(myfile,1);
   myfile.close();
 
   // -- Pressure Schur complement
-  tmp.SetSize( rhs.GetBlock(1).Size() ); tmp = 0.;
-  pSi->Mult(  rhs.GetBlock(1), tmp);
+  tmp.SetSize( res.GetBlock(1).Size() ); tmp = 0.;
+  pSi->Mult(  res.GetBlock(1), tmp);
   myfile.open( path+"pSix"+to_string(myid)+".dat" );
   tmp.Print(myfile,1);
   myfile.close();
 
   // -- Inverse of mass matrix for laplacian of vector potential
-  tmp.SetSize( rhs.GetBlock(2).Size() ); tmp = 0.;
-  MMzi->Mult( rhs.GetBlock(2), tmp);
+  tmp.SetSize( res.GetBlock(2).Size() ); tmp = 0.;
+  MMzi->Mult( res.GetBlock(2), tmp);
   myfile.open( path+"MMzix"+to_string(myid)+".dat" );
   tmp.Print(myfile,1);
   myfile.close();
 
   // -- Magnetic Schur complement
-  tmp.SetSize( rhs.GetBlock(3).Size() ); tmp = 0.;
-  aSi->Mult(  rhs.GetBlock(3), tmp);
+  tmp.SetSize( res.GetBlock(3).Size() ); tmp = 0.;
+  aSi->Mult(  res.GetBlock(3), tmp);
   myfile.open( path+"aSix"+to_string(myid)+".dat" );
   tmp.Print(myfile,1);
   myfile.close();
@@ -617,29 +720,29 @@ int main(int argc, char *argv[]){
   // -- Single factors for preconditioner
   BlockVector btmp(offsets); tmp = 0.;
   // --- Lub
-  Lub->Mult(rhs,btmp);
+  Lub->Mult(res,btmp);
   myfile.open( path+"Lubix"+to_string(myid)+".dat" );
   btmp.Print(myfile,1);
   myfile.close();
   // --- Uub
-  Uub->Mult(rhs,btmp);
+  Uub->Mult(res,btmp);
   myfile.open( path+"Uubix"+to_string(myid)+".dat" );
   btmp.Print(myfile,1);
   myfile.close();
   // --- Lup
-  Lup->Mult(rhs,btmp);
+  Lup->Mult(res,btmp);
   myfile.open( path+"Lupix"+to_string(myid)+".dat" );
   btmp.Print(myfile,1);
   myfile.close();
   // --- Uup
-  Uup->Mult(rhs,btmp);
+  Uup->Mult(res,btmp);
   myfile.open( path+"Uupix"+to_string(myid)+".dat" );
   btmp.Print(myfile,1);
   myfile.close();
 
 
   // -- Whole Preconditioner
-  MHDPr->Mult( rhs, btmp );
+  MHDPr->Mult( res, btmp );
   myfile.open( path+"Pix"+to_string(myid)+".dat" );
   btmp.Print(myfile,1);
   myfile.close();
@@ -652,7 +755,7 @@ int main(int argc, char *argv[]){
   }
 
 
-  solver->Mult( rhs, deltaSol );
+  solver->Mult( res, deltaSol );
 
 
   myfile.open( path+"deltaSol"+to_string(myid)+".dat" );
@@ -715,10 +818,10 @@ int main(int argc, char *argv[]){
   // delete KKK;
   // delete YYY;
 
-  delete frhs;
-  delete grhs;
-  delete zrhs;
-  delete hrhs;
+  delete fres;
+  delete gres;
+  delete zres;
+  delete hres;
   // delete uEx;
   // delete pEx;
   // delete zEx;
@@ -773,7 +876,7 @@ PetscErrorCode UPErrorMonitor( KSP ksp, PetscInt n, PetscReal rnorm, void *mctx 
   KSPBuildSolution( ksp, NULL, &x );
   VecGetLocalSize( x, &lclSize );
 
-  if( lclSize != (ctx->lenghtU + ctx->lenghtP) ){
+  if( lclSize != (ctx->lenghtU + ctx->lenghtP + ctx->lenghtZ + ctx->lenghtA) ){
     std::cerr<<"ERROR! ErrorMonitor: Something went very wrong"<<std::endl
              <<"       seems like the solution is stored in a weird way in the PETSC solver,"<<std::endl
              <<"       and sizes mismatch: "<< lclSize << "=/="<<ctx->lenghtU<<"+"<<ctx->lenghtP<<std::endl;
@@ -1534,6 +1637,149 @@ double gFun(const Vector & x, const double t ){
 //***************************************************************************
 //TEST CASES OF SOME ACTUAL RELEVANCE
 //***************************************************************************
+// Kelvin-Helmholtz instability
+// - top/left velocity of 1.5, bottom/right velocity of -1.5
+void uFun_ex_KHI(const Vector & x, const double t, Vector & u){
+  double xx(x(0));
+  double yy(x(1));
+  u(0) = 0.;
+  u(1) = 0.;
+
+  if ( yy == 1. || (xx == 0. && yy>= 0.5) ) //top-left
+    u(0) =  1.5;
+  if ( yy == 0. || (xx == 2. && yy<= 0.5) ) //bottom-right
+    u(0) = -1.5;
+}
+// - pressure - unused
+double pFun_ex_KHI(const Vector & x, const double t ){
+  return 0.;
+}
+// - laplacian of vector potential - unused
+double zFun_ex_KHI(const Vector & x, const double t ){
+  return 0.;
+}
+// - vector potential
+double aFun_ex_KHI(const Vector & x, const double t ){
+  double delta = 0.07957747154595;
+  double yy(x(1));
+  return ( delta * log( cosh( yy/delta ) ) );
+}
+// - rhs of velocity - unused
+void fFun_KHI(const Vector & x, const double t, Vector & f){
+  f = 0.;
+}
+// - normal derivative of velocity * mu
+void nFun_KHI(const Vector & x, const double t, Vector & n){
+  double xx(x(0));
+  double yy(x(1));
+  n = 0.;
+}
+// - rhs of pressure - unused
+double gFun_KHI(const Vector & x, const double t ){
+  return 0.;
+}
+// - rhs of vector potential - unused
+double hFun_KHI( const Vector & x, const double t ){
+  return 0.;
+}
+// - normal derivative of vector potential
+double mFun_KHI( const Vector & x, const double t ){
+  return 0.;
+}
+// - define perturbed IG for every linearised variable
+void wFun_KHI(const Vector & x, const double t, Vector & w){
+  w = 0.;
+}
+double yFun_KHI(  const Vector & x, const double t ){
+  return 0.;
+}
+double cFun_KHI(  const Vector & x, const double t ){
+  return 0.;
+}
+
+
+
+
+
+
+// Iscald coalescence
+void uFun_ex_island(const Vector & x, const double t, Vector & u){
+  u = 0.;
+}
+// - pressure
+double pFun_ex_island(const Vector & x, const double t ){
+  double xx(x(0));
+  double yy(x(1));
+  double delta = 1./(2.*M_PI);
+  double P0 = 1.;
+  double epsilon;
+
+  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
+
+  return ( P0 + ( 1. - epsilon*epsilon ) / ( 2.*temp*temp ) );
+}
+// - laplacian of vector potential - unused
+double zFun_ex_island(const Vector & x, const double t ){
+  return 0.;
+}
+// - vector potential
+double aFun_ex_island(const Vector & x, const double t ){
+  double xx(x(0));
+  double yy(x(1));
+  double delta = 1./(2.*M_PI);
+
+  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
+
+  return ( delta * log( temp ) );
+}
+// - rhs of velocity - unused
+void fFun_island(const Vector & x, const double t, Vector & f){
+  f = 0.;
+}
+// - normal derivative of velocity * mu
+void nFun_island(const Vector & x, const double t, Vector & n){
+  n = 0.;
+}
+// - rhs of pressure - unused
+double gFun_island(const Vector & x, const double t ){
+  return 0.;
+}
+// - rhs of vector potential - unused
+double hFun_island( const Vector & x, const double t ){
+  return 0.;
+}
+// - normal derivative of vector potential
+double mFun_island( const Vector & x, const double t ){
+  return 0.;
+}
+// - define perturbed IG for every linearised variable
+void wFun_island(const Vector & x, const double t, Vector & w){
+  w = 0.;
+}
+double yFun_island(  const Vector & x, const double t ){
+  return 0.;
+}
+double cFun_island(  const Vector & x, const double t ){
+  return 0.;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Simple example -----------------------------------------------------------
 // Exact solution (velocity)
 void uFun_ex_an(const Vector & x, const double t, Vector & u){

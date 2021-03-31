@@ -49,17 +49,17 @@ end
 for ii =1:nT
   if isempty(Wp{ii})
     tmp = x((1:nP)+nP*(ii-1));
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     tmp = mu*( Mpi\tmp );
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     Mpix((1:nP)+nP*(ii-1)) = tmp;
   else
     tmp = Apix((1:nP)+nP*(ii-1));
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     tmp = Wp{ii}*tmp;
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     tmp = Mpi\tmp;
-    tmp(ess+1) = 0.;
+    tmp(ess) = 0.;
     Mpix((1:nP)+nP*(ii-1)) = tmp;
   end
 end
@@ -67,7 +67,7 @@ end
 % include lower diagonal in space-time matrix
 for ii =nT:-1:2
   tmp = Apix((1:nP)+nP*(ii-2));
-  tmp(ess+1) = 0.;
+  tmp(ess) = 0.;
   Apix((1:nP)+nP*(ii-1)) = Apix((1:nP)+nP*(ii-1)) - tmp;
 end
 

@@ -1,5 +1,5 @@
 function [] = timeStep()
-Pb   = 3;
+Pb   = 4;
 Prec = 0;
 STsolveU = 0;
 STsolveA = 0;
@@ -79,19 +79,8 @@ end
 
 % apply inverse of Fa*Mai*Fa = Fai*Ma*Fai
 function y = invertCC(x,FFai,Ma,ess)
-  nA = size(Ma,1);
-  nT = length(x) / nA;
-
-  for ii =1:nT
-    tmp = FFai\x((1:nA)+nA*(ii-1));
-    tmp(ess+1) = 0.;
-    tmp = Wa{ii}*tmp;
-    tmp(ess+1) = 0.;
-    WMaix((1:nA)+nA*(ii-1)) = tmp;
-  end
-  
-  y((nU+1):(nU+nP)) = pSi( x((nU+1):(nU+nP)) );
-  y(1:nU) = FFui\( x(1:nU) - BB'*y((nU+1):(nU+nP)) );
+  y = FFai\(Ma*(FFai\x));
+  y(ess+1) = x(ess+1);  % leave dirichlet nodes untouched
 
 end
 
@@ -176,7 +165,6 @@ for pp = 1:NT
   % filename = strcat(path, int2str(newtIt),'__','Cm_', int2str(pp-1),'.dat');
   % Cm = spconvert(load(filename));
 
-  CC = Fa * MLinv * Fa; % should add diffusion part?
 
 
   % combine them to create the jacobian
@@ -188,7 +176,8 @@ for pp = 1:NT
 
   % initialise inverse of operators which vary throughout the Newton iterations
   Fuinv = decomposition(Fu, 'lu');
-  CCinv = decomposition(CC, 'lu');
+  Fainv = decomposition(Fa, 'lu');
+  CCinv = @(x) invertCC(x,Fainv,Ma,essA);
 
 
 
@@ -206,6 +195,8 @@ for pp = 1:NT
       precOp = @(x) Uupi(Lupi(Uubi(Lubi(x))));
     case 1
       precOp = @(x) Uupi(Lupi(Uubi(x)));
+    case 2
+      precOp = @(x) Uupi(Uubi(x));
     otherwise
         error('Preconditioner not recognised')
   end
@@ -225,7 +216,8 @@ for pp = 1:NT
   
   % solve
   [ mydsol, err, it ] = GMRESrp( J, rhs, 1e-10, 100, zeros(size(rhs)), precOp );
-
+  semilogy(err)
+  hold on
 
 end
 

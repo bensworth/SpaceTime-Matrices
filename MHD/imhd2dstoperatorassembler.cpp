@@ -86,15 +86,19 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   _ZhFESpace = new FiniteElementSpace( _mesh, _ZhFEColl );
   _AhFESpace = new FiniteElementSpace( _mesh, _AhFEColl );
 
+  // - initialise info on domain
+  ComputeDomainArea();
+
   if (_myRank == 0 ){
     std::cout << "***********************************************************\n";
+    std::cout << "|Omega| = " << _area                      << "\n";
     std::cout << "dim(Uh) = " << _UhFESpace->GetTrueVSize() << "\n";
     std::cout << "dim(Ph) = " << _PhFESpace->GetTrueVSize() << "\n";
     std::cout << "dim(Zh) = " << _ZhFESpace->GetTrueVSize() << "\n";
     std::cout << "dim(Ah) = " << _AhFESpace->GetTrueVSize() << "\n";
     std::cout << "***********************************************************\n";
   }
-
+  
 
 
 
@@ -1369,6 +1373,62 @@ void IMHD2DSTOperatorAssembler::AssembleAa(){
 
 
 
+// Compute B_0, the (spatial) average of the magnetic field B = ∇x(kA)
+// - loop over all elements and integrate to recover the average magnetic field
+// TODO: here I'm hacking the ComputeGradError method of GridFunction: I hope no weird reordering of the nodes
+//       of FESpace occurs in the function, otherwise I'm doomed
+void IMHD2DSTOperatorAssembler::ComputeAvgB( Vector& B0 ) const{
+  B0.SetSize(_dim);
+  B0 = 0.;
+  for (int i = 0; i < _AhFESpace->GetNE(); i++){
+    const FiniteElement *fe = _AhFESpace->GetFE(i);
+    ElementTransformation *Tr = _AhFESpace->GetElementTransformation(i);
+    int intorder = 2*fe->GetOrder() + 3;
+    const IntegrationRule *ir = &(IntRules.Get(fe->GetGeomType(), intorder));
+    Array<int> dofs;
+    _AhFESpace->GetElementDofs(i, dofs);
+    for (int j = 0; j < ir->GetNPoints(); j++){
+      const IntegrationPoint &ip = ir->IntPoint(j);
+      Tr->SetIntPoint(&ip);
+      Vector grad;
+      _cFuncCoeff.GetGradient(*Tr,grad);
+      // NB: this will contain \int_{\Omega}[Ax,Ay] dx ...
+      grad *= ip.weight * Tr->Weight();
+      B0 += grad;
+    }
+  }
+  // ... but actually B = [Ay,-Ax], so flip it
+  double temp = B0(0);
+  B0(0) = B0(1);
+  B0(1) = -temp;
+
+}
+
+
+
+// Compute area of domain
+void IMHD2DSTOperatorAssembler::ComputeDomainArea( ){
+  _area = 0.;
+  for (int i = 0; i < _AhFESpace->GetNE(); i++){
+    const FiniteElement *fe = _AhFESpace->GetFE(i);
+    ElementTransformation *Tr = _AhFESpace->GetElementTransformation(i);
+    int intorder = 2*fe->GetOrder() + 3;
+    const IntegrationRule *ir = &(IntRules.Get(fe->GetGeomType(), intorder));
+    // We should consider linear elements: if so, the Jacobian is constant inside each element
+    //  The area of the mapped element is then given by the area of the reference element (0.5)
+    //   times the determinant of the Jacobian
+    const IntegrationPoint &ip = ir->IntPoint(0);
+    Tr->SetIntPoint(&ip);
+    _area += Tr->Weight();
+  }
+  _area *= 0.5;
+}
+
+
+
+
+
+
 
 
 
@@ -1382,7 +1442,12 @@ void IMHD2DSTOperatorAssembler::AssembleAa(){
 //   -- Cp <->    ( A, C )
 //   -- C0 <-> -2*( A, C ) + dt^2*B/mu_0 ( ∇A, ∇C )
 //   -- Cm <->    ( A, C )
+//  - Full term Fa Ma^-1 Fa + |B0|/mu0 Aa
+//   -- Cp <->    Fa Ma^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
+//   -- C0 <-> - ( Fa{t} + Fa{t+1} )
+//   -- Cm <->    Ma
 //  where B = ||B_0||_2, with B_0 being a space(-time) average of the magnetic field
+//  while Wa is the spatial part of the Fa = Ma + dt Wa operatr
 void IMHD2DSTOperatorAssembler::AssembleCs(){
 
   // I'm gonna need a mass matrix and a stiffness matrix regardless
@@ -1397,45 +1462,25 @@ void IMHD2DSTOperatorAssembler::AssembleCs(){
   }
 
 
-  // Now I need to compute ||B_0||_2, the L2 norm of the space-time average of the magnetic
-  //  field B = ∇x(kA)
-  // - loop over all elements and integrate to recover the average magnetic field
-  // -- NB: this will contain \int_{\Omega}[Ax,Ay] dx, while actually B = [Ay,-Ax], but nothing much changes
-  // TODO: here I'm hacking the ComputeGradError method of GridFunction: I hope no weird reordering of the nodes
-  //       of FESpace occurs in the function, otherwise I'm doomed
+  // Now I need to compute ||B_0||_2, the L2 norm of the space-time average of the magnetic field B = ∇x(kA)
   Vector B0(_dim);
-  double area = 0.;
-  B0 = 0.;
-  for (int i = 0; i < _AhFESpace->GetNE(); i++){
-    const FiniteElement *fe = _AhFESpace->GetFE(i);
-    ElementTransformation *Tr = _AhFESpace->GetElementTransformation(i);
-    int intorder = 2*fe->GetOrder() + 3;
-    const IntegrationRule *ir = &(IntRules.Get(fe->GetGeomType(), intorder));
-    Array<int> dofs;
-    _AhFESpace->GetElementDofs(i, dofs);
-    for (int j = 0; j < ir->GetNPoints(); j++){
-      const IntegrationPoint &ip = ir->IntPoint(j);
-      Tr->SetIntPoint(&ip);
-      Vector grad;
-      _cFuncCoeff.GetGradient(*Tr,grad);
-      grad *= ip.weight * Tr->Weight();
-      B0 += grad;
-    }
-    // We should consider linear elements: if so, the Jacobian is constant inside each element
-    //  The area of the mapped element is then given by the area of the reference element (0.5)
-    //   times the determinant of the Jacobian, or:
-    area += 0.5 * (Tr->Weight());
-  }
-  // - average over time as well
-  MPI_Allreduce( MPI_IN_PLACE, B0.GetData(), 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-  // - finally, compute its norm and rescale by domain size to get the average
-  // -- B0 *should have been* rescaled by the space-time domain size, to get the actual average. When computing its ||B0||^2_L2st norm, 
-  //     then, I should integrate over the space-time domain the square of the averaged value. Combining this, I'm missing a 1/( |\Omega|*|T|) factor
-  double B0norm = sqrt( ( B0(0)*B0(0) + B0(1)*B0(1) ) / ( area * _dt*_numProcs) ); 
+  ComputeAvgB( B0 );
+
+  // // - average over time as well
+  // MPI_Allreduce( MPI_IN_PLACE, B0.GetData(), 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
+  // // - finally, compute its norm and rescale by domain size to get the average
+  // // -- B0 *should have been* rescaled by the space-time domain size, to get the actual average. When computing its ||B0||^2_L2 norm, 
+  // //     then, I should integrate over the space-time domain the square of the averaged value. Combining this, I'm missing a 1/( |\Omega|*|T|) factor
+  // double B0norm2 = ( B0(0)*B0(0) + B0(1)*B0(1) ) / ( _area * _dt*_numProcs); 
+  // if ( _myRank == 0 ){
+  //   std::cout<<" Average magnetic field is         (" << B0(0)<<","<<B0(1)<<")"<< std::endl
+  //            <<" Average norm of magnetic field is "  << B0norm                << std::endl;
+  // }
+  
+  // - or just consider different averages in space for each processor
+  double B0norm2 = ( B0(0)*B0(0) + B0(1)*B0(1) ) / _area; 
   if ( _myRank == 0 ){
-    std::cout<<" Area of domain is                 "  << area                   << std::endl
-             <<" Average magnetic field is         (" << B0(1)<<","<<-B0(0)<<")"<< std::endl
-             <<" Average norm of magnetic field is "  << B0norm                 << std::endl;
+    std::cout<<"Warning: Considering only *space* average of magnetic field"<< std::endl;
   }
 
 
@@ -1448,8 +1493,8 @@ void IMHD2DSTOperatorAssembler::AssembleCs(){
       _Cp  = _MaNoZero;
       _C0  = _MaNoZero;
 
-      _Cp.Add(  _dt*_dt*B0norm/(4*_mu0), _Aa );
-      _C0.Add( -_dt*_dt*B0norm/(4*_mu0), _Aa );
+      _Cp.Add(  _dt*_dt*B0norm2/(4*_mu0), _Aa );
+      _C0.Add( -_dt*_dt*B0norm2/(4*_mu0), _Aa );
       _C0 *= -2.;
 
       _Cm  = _Cp;
@@ -1474,7 +1519,7 @@ void IMHD2DSTOperatorAssembler::AssembleCs(){
 
       _C0  = _MaNoZero;
       _C0 *= -2.;
-      _C0.Add( _dt*_dt*B0norm/( 2*_mu0 ), _Aa );
+      _C0.Add( _dt*_dt*B0norm2/( 2*_mu0 ), _Aa );
 
 
       // - impose Dirichlet BC
@@ -1490,8 +1535,86 @@ void IMHD2DSTOperatorAssembler::AssembleCs(){
     }
 
 
-    default:
+    case 2:{
+      // - get inverse of collapsed mass matrix (only diagonal considered)
+      Vector MDiagInv;
+      _MaNoZero.GetDiag( MDiagInv );
+      for ( int i = 0; i < MDiagInv.Size(); ++i ){  // invert it
+        MDiagInv(i) = 1./MDiagInv(i);
+      }
+      SparseMatrix MaLinv(MDiagInv);
+
+      // - assemble the various block-diagonals
+      // -- Main diagonal: Fa*Ma^-1*Fa + dt^2 B/mu0 Aa
+      SparseMatrix *MiF  = Mult(MaLinv,_Fa);
+      SparseMatrix *FMiF = Mult(_Fa,*MiF);
+      _Cp = *FMiF;
+      delete MiF;
+      delete FMiF;
+      _Cp.Add( _dt*_dt*B0norm2/_mu0, _Aa );
+
+      // -- First subdiagonal: -( Fa{t}+Fa{t+1} )
+      // --- send Fa to previous processor
+      // ---- first tell it how many nonzero elems to expect
+      int numNZNext = 0;
+      if ( _myRank > 0 ){
+        int numNZmine = _Fa.NumNonZeroElems();
+        MPI_Send( &numNZmine, 1, MPI_INT, _myRank-1, 4* _myRank,    _comm );        
+      }
+      if ( _myRank < _numProcs-1 ){
+        MPI_Recv( &numNZNext, 1, MPI_INT, _myRank+1, 4*(_myRank+1), _comm, MPI_STATUS_IGNORE );        
+      }
+      // ---- then send the actual matrix data
+      //       this could probably be avoided, as all procs have shared memory, but MPI doesnt make this assumption
+      if ( _myRank > 0 ){
+        MPI_Send( _Fa.GetI(),    _Fa.NumRows()+1,       MPI_INT,    _myRank-1, 4* _myRank   +1, _comm );        
+        MPI_Send( _Fa.GetJ(),    _Fa.NumNonZeroElems(), MPI_INT,    _myRank-1, 4* _myRank   +2, _comm );        
+        MPI_Send( _Fa.GetData(), _Fa.NumNonZeroElems(), MPI_DOUBLE, _myRank-1, 4* _myRank   +3, _comm );    
+      }
+      if ( _myRank < _numProcs-1 ){
+        int    iiNext[_Fa.NumRows()+1];
+        int    jjNext[numNZNext];
+        double ddNext[numNZNext];
+        MPI_Recv( iiNext,        _Fa.NumRows()+1,       MPI_INT,    _myRank+1, 4*(_myRank+1)+1, _comm, MPI_STATUS_IGNORE );        
+        MPI_Recv( jjNext,        numNZNext,             MPI_INT,    _myRank+1, 4*(_myRank+1)+2, _comm, MPI_STATUS_IGNORE );        
+        MPI_Recv( ddNext,        numNZNext,             MPI_DOUBLE, _myRank+1, 4*(_myRank+1)+3, _comm, MPI_STATUS_IGNORE );        
+        // ---- reassemble here operator Fa{t+1}
+        SparseMatrix FaNext( iiNext, jjNext, ddNext, _Fa.NumRows(), _Fa.NumCols(), false, false, true ); // don't own! otherwise youd be deleting twice!
+
+        // --- finally assemble subdiagonal
+        SparseMatrix *temp = Add( FaNext, _Fa );
+        _C0 = *temp;
+        delete temp;
+        _C0 *= -1.;
+
+      }else{
+        // this shouldn't be necessary, but oh well;
+        _C0  = _Fa;
+        _C0 *= -2.;
+      }
+
+      // -- Second subdiagonal: Ma
+      _Cm  = _MaNoZero;
+
+      // - impose Dirichlet BC
+      _Cp.EliminateCols( colsA );
+      _C0.EliminateCols( colsA );
+      _Cm.EliminateCols( colsA );
+      for (int i = 0; i < _essAhTDOF.Size(); ++i){
+        _Cp.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ONE  ); // this one is one the main diag and must be inverted -> set to 1
+        _C0.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO ); // these ones are on the subdiag and only impact rhs  -> set to 0
+        _Cm.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
+      }
+      
+      break;
+
+    }
+
+    default:{
       std::cerr<<"ERROR: Discretisation type for wave equation "<<_ASTSolveType<<" not recognised."<<std::endl;
+      return;
+    }
+
   }
 
 }
@@ -1930,11 +2053,11 @@ void IMHD2DSTOperatorAssembler::AssemblePS(){
   AssembleWp();
 
   if( _myRank == 0 && _essPhTDOF.Size() !=0 ){
-    std::cout<<"Warning: On the PCD operator, we're imposing Dirichlet BC in outflow, just like for Ap."<<std::endl
-             <<"         This goes against what Elman/Silvester/Wathen says (should be Robin everywhere for PCD,"<<std::endl
-             <<"         while for Ap should be neumann/dirichlet on out). However, results seem much better."<<std::endl
+    std::cout<<"Warning: On the PCD operator, we're imposing Dirichlet BC in outflow, just like for Ap."           <<std::endl
+             <<"         This goes against what Elman/Silvester/Wathen says (should be Robin everywhere for PCD,"  <<std::endl
+             <<"         while for Ap should be neumann/dirichlet on out). However, results seem much better."     <<std::endl
              <<"         Particularly, for tolerances up to 1e-6 the convergence profile with Dirichlet in outflow"<<std::endl
-             <<"         is better, while for stricter tolerances the one with Robin seems to work better."<<std::endl
+             <<"         is better, while for stricter tolerances the one with Robin seems to work better."        <<std::endl;
   }
   // pass an empty vector instead of _essPhTDOF to follow E/S/W!
   _pSinv = new OseenSTPressureSchurComplement( _comm, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, _verbose );
@@ -1995,6 +2118,21 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
       break;
     }
 
+    // Use full operator assembly Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
+    case 2:{
+      AssembleCs();
+
+      SpaceTimeWaveSolver *temp  = new SpaceTimeWaveSolver( _comm, NULL, NULL, NULL, _essAhTDOF, true, false, _verbose);
+      temp->SetDiag( &_Cp, 0 );
+      temp->SetDiag( &_C0, 1 );
+      temp->SetDiag( &_Cm, 2 );
+      _CCainv = temp;
+
+      _CCainvAssembled = true;
+      
+      break;
+    }
+
 
     default:{
       if ( _myRank == 0 ){
@@ -2024,11 +2162,11 @@ void IMHD2DSTOperatorAssembler::AssembleAS( ){
     return;
   }
 
-  AssembleCCainv( );
   AssembleMaNoZero();
   AssembleMaNoZeroLumped(); // TODO: these are not necessary...
   AssembledtuWa();          // TODO: these are not necessary...
   AssembleWa();
+  AssembleCCainv( );
 
   _aSinv = new IMHD2DSTMagneticSchurComplement( _comm, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
 
@@ -2194,26 +2332,118 @@ void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int m
 
 
 
-// Assembles operators appearing in space-time KHI block system, and other vectors of interest
-//  DN(x0) Δx0 = rhs - N(x0), with
-//           ⌈ FFFu BBB ZZZ1 ZZZ2 ⌉
-//  DN(x0) = | BBBt               |.
-//           |          MMMz KKK  |
-//           ⌊ YYY           FFFa ⌋
-// This function is designed to be invoked at the beginning of the Newton iteration, and it assembles:
-//  - A suitable initial guess for the system: all-zero, but with dirichlet BC included (inside the IG* vecs)
-//  - The rhs of the Newton system at the zeroth iteration: rhs - N(x0) (inside the *rhs vecs)
+
+
+
+// Assembles operators appearing in space-time 2DMHD block system, and other vectors of interest
+// The Newton iteration solves for b-N(x) = 0, with N(x) being the non-linear MHD operator, and
+//  b the associated right-hand side:
+//      ⌈ int f + effect from Neumann on u + IC on u + effect from Dirichlet BC on u and A ⌉
+//  b = | int g                                      + effect from Dirichlet BC on u       |
+//      | 0                                          + effect from Dirichlet BC on A       |
+//      ⌊ int h + effect from Neumann on A + IC on A + effect from Dirichlet BC on u and A ⌋
+//
+// At each iteration, we need to solve the system
+//  DN(xk) Δxk = b - N(xk), with
+//           ⌈ FFFu(uk) BBB ZZZ1(zk) ZZZ2(Ak) ⌉
+//  DN(xk) = | BBBt                           |.
+//           |              MMMz     KKK      |
+//           ⌊ YYY(uk)               FFFa(uk) ⌋
+//      
+// This function is designed to be invoked before starting the Newton iterations, and it returns:
+//  - A suitable initial guess for the solution x0, starting from the provided w, y, and c functions,
+//     and including Dirichlet BC (inside the IG* vecs)
+//  - The rhs of the Newton system at the zeroth iteration: res = b - N(x0) (inside the *res vecs)
 //  - The various blocks composing the operator gradient at the initial state
-// NB: notice all vectors have zeroed essential nodes, apart from IG (=x0)
+// Furthermore, it initialises a series of useful auxiliary variables, and assembles the rhs of
+//  the non-linear system b once and for all, storing them internally for later use
 void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz, Operator*& FFFa,
                                                 Operator*& BBB,  Operator*& ZZZ1, Operator*& ZZZ2,
                                                 Operator*& KKK,  Operator*& YYY,
-                                                Vector*& frhs,   Vector*& grhs,   Vector*& zrhs,   Vector*& hrhs,
-                                                Vector*& IGu,    Vector*& IGp,    Vector*& IGz,    Vector*& IGa  ){
+                                                Vector&  fres,   Vector&  gres,   Vector& zres,    Vector& hres,
+                                                Vector&  IGu,    Vector&  IGp,    Vector& IGz,     Vector& IGa  ){
+
+
+  //*************************************************************************
+  // ASSEMBLE LOCAL INITIAL GUESS x0
+  //*************************************************************************
+  // // - initialise function with BC
+  // GridFunction uBC(_UhFESpace);
+  // GridFunction zBC(_ZhFESpace);
+  // GridFunction aBC(_AhFESpace);
+  // uBC.ProjectCoefficient(uFuncCoeff);
+  // zBC.ProjectCoefficient(zFuncCoeff);
+  // aBC.ProjectCoefficient(aFuncCoeff);
+  // // - initialise local initial guess to exact solution on Dirichlet nodes
+  // Vector iguLoc = uBC;
+  // Vector igpLoc(_PhFESpace->GetTrueVSize()); igpLoc = 0.;     // dirichlet BC are not actually imposed on p
+  // Vector igzLoc = zBC;
+  // Vector igaLoc = aBC;
+  // iguLoc.SetSubVectorComplement( _essUhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
+  // igzLoc.SetSubVectorComplement( _essZhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
+  // igaLoc.SetSubVectorComplement( _essAhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
+
+  // Vector iguLoc = _wFuncCoeff;
+  // Vector igpLoc(_PhFESpace->GetTrueVSize()); igpLoc = 0.;     // dirichlet BC are not actually imposed on p
+  // Vector igzLoc = _yFuncCoeff;
+  // Vector igaLoc = _cFuncCoeff;
+
+  // - Use linearised state as IG:
+  // -- Make sure the Dirichlet BC are already included in w, y, and c
+  Array<int> offsets(5);
+  offsets[0] = 0;
+  offsets[1] = _UhFESpace->GetTrueVSize();
+  offsets[2] = _PhFESpace->GetTrueVSize();
+  offsets[3] = _ZhFESpace->GetTrueVSize();
+  offsets[4] = _AhFESpace->GetTrueVSize();
+  offsets.PartialSum();
+  BlockVector x(offsets);
+  x.GetBlock(0) = _wFuncCoeff;
+  x.GetBlock(1) = 0.;           // IG on p is actually null
+  x.GetBlock(2) = _yFuncCoeff;
+  x.GetBlock(3) = _cFuncCoeff;
 
 
 
-  // ASSEMBLE LOCAL RHS -----------------------------------------------------
+
+
+
+
+
+  //*************************************************************************
+  // ASSEMBLE LOCAL MATRICES FOR OPERATOR GRADIENT DN(x0)
+  //*************************************************************************
+  // - Compute local operator gradient at IG
+  // -- since we already flagged the relevant esential BC to the local operator,
+  //     the matrices are already constrained
+  BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( x ) );
+  _Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
+  _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
+  _Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
+  _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
+  _Mz = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,2) ) );
+  _K  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,3) ) );
+  _Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
+  _Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
+  _FuAssembled = true;
+  _Z1Assembled = true;
+  _Z2Assembled = true;
+  _BAssembled  = true; 
+  _MzAssembled = true;
+  _KAssembled  = true; 
+  _YAssembled  = true; 
+  _FaAssembled = true;
+
+
+
+
+
+
+
+
+  //*************************************************************************
+  // ASSEMBLE LOCAL RHS b
+  //*************************************************************************
   // Initialise handy functions for rhs
   VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
   FunctionCoefficient       pFuncCoeff( _pFunc );
@@ -2236,9 +2466,9 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   nFuncCoeff.SetTime( _dt*(_myRank+1) );
   mFuncCoeff.SetTime( _dt*(_myRank+1) );
 
+  // Assemble local part of rhs:
 
-  // Assemble local part of rhs
-  // - for u
+  // - For u ----------------------------------------------------------------
   // -- identify neumann nodes for U
   Array<int> neuBdrU(_mesh->bdr_attributes.Max());
   neuBdrU = 0;
@@ -2250,9 +2480,6 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
         neuBdrU[i] = 1;
     }
   }
-  // if (_myRank == 0 ){
-  //   std::cout << "Tags neuU ";  neuBdrU.Print(  mfem::out,  neuBdrU.Size()   ); std::cout<< "\n";
-  // }
   LinearForm *fform( new LinearForm );
   fform->Update( _UhFESpace );
   fform->AddDomainIntegrator(   new VectorDomainLFIntegrator(       fFuncCoeff       )          );  //int_\Omega f*v
@@ -2260,7 +2487,6 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   fform->AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator( pFuncCoeff, -1.0 ), neuBdrU );  //int_d\Omega -p*v*n
 
   fform->Assemble();
-
 // #ifdef MULT_BY_DT
   fform->operator*=( _dt );
 // #endif
@@ -2302,8 +2528,45 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   }
 
 
+  // -- include effect of Dirichlet nodes stemming from time-stepping
+  // --- identify Dirichlet nodes
+  Array<int> colsU( fform->Size() );
+  colsU = 0;
+  for (int i = 0; i < _essUhTDOF.Size(); ++i){
+    colsU[_essUhTDOF[i]] = 1;
+  }
+  // --- assemble _Mu (and modify rhs to take dirichlet on u into account within space-time structure)
+  AssembleMu();
+  uFuncCoeff.SetTime( _dt*_myRank );                // set uFunc to previous time-step
+  GridFunction um1BC(_UhFESpace);
+  um1BC.ProjectCoefficient(uFuncCoeff);
+  um1BC.SetSubVectorComplement( _essUhTDOF, 0.0 );  // just to be on the safe side, kill non-Dirichlet nodes
 
-  // - for p
+  Vector um1Rel( fform->Size() );
+  um1Rel = 0.0;
+  _Mu.EliminateCols( colsU, &um1BC, &um1Rel );
+  for (int i = 0; i < _essUhTDOF.Size(); ++i){
+    _Mu.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
+    // um1Rel(_essUhTDOF[i]) = 0.0;  // rhs will be killed later at dirichlet BC
+  }
+
+  if( _myRank > 0 ){
+    // add to rhs (um1Rel should already take minus sign on _Mu into account)
+    // NB: - no need to rescale by dt, as _Mu will be already scaled accordingly.
+    //     - no need to flip sign, as _Mu carries with it already
+    fform->operator+=( um1Rel );
+  }
+
+  // --- remember to reset function evaluation for u to the current time
+  uFuncCoeff.SetTime( _dt*(_myRank+1) );
+
+  // --- flag that assembly of the velocity mass matrix is now complete
+  _MuAssembled = true;
+
+
+
+
+  // - For p ----------------------------------------------------------------
   LinearForm *gform( new LinearForm );
   gform->Update( _PhFESpace );
   gform->AddDomainIntegrator( new DomainLFIntegrator( gFuncCoeff ) );  //int_\Omega g*q
@@ -2322,7 +2585,8 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 
 
 
-  // - for z
+
+  // - For z ----------------------------------------------------------------
   // -- identify neumann nodes for A
   Array<int> neuBdrA(_mesh->bdr_attributes.Max());
   neuBdrA = 0;
@@ -2350,7 +2614,8 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 
 
 
-  // - for A
+
+  // - for A ----------------------------------------------------------------
   LinearForm *hform( new LinearForm );
   hform->Update( _AhFESpace );
   hform->AddDomainIntegrator(   new DomainLFIntegrator(   hFuncCoeff )          );  //int_\Omega h*B
@@ -2381,14 +2646,11 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 // #endif
     hform->operator+=( *a0form );
 
-
     if ( _verbose>100 ){
       std::cout<<"Contribution from IC on A: "; a0form->Print(std::cout, a0form->Size());
     }
-
     // remember to reset function evaluation for A to the current time
     aFuncCoeff.SetTime( _dt*(_myRank+1) );
-
 
     delete a0form;
 
@@ -2397,148 +2659,22 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
     }
   }
 
-
-
-  // Initialise local rhs with contribution from linear forms
-  Vector fRhsLoc = *fform;
-  Vector gRhsLoc = *gform;
-  Vector zRhsLoc = *zform;
-  Vector hRhsLoc = *hform;
-
-  // - the linear forms have now served their purpose
-  delete fform;
-  delete gform;
-  delete zform;
-  delete hform;
-
-  // - include effect from BC (kill contributions there)
-  fRhsLoc.SetSubVector( _essUhTDOF, 0.0);
-  // gRhsLoc.SetSubVector( _essPhTDOF, 0.0);  // no dirichlet BC imposed on pressure
-  // zRhsLoc.SetSubVector( _essZhTDOF, 0.0);
-  hRhsLoc.SetSubVector( _essAhTDOF, 0.0);
-
-
-
-
-
-
-  // ASSEMBLE LOCAL IG ------------------------------------------------------
-  // // - initialise function with BC
-  // GridFunction uBC(_UhFESpace);
-  // GridFunction zBC(_ZhFESpace);
-  // GridFunction aBC(_AhFESpace);
-  // uBC.ProjectCoefficient(uFuncCoeff);
-  // zBC.ProjectCoefficient(zFuncCoeff);
-  // aBC.ProjectCoefficient(aFuncCoeff);
-  // // - initialise local initial guess to exact solution on Dirichlet nodes
-  // Vector iguLoc = uBC;
-  // Vector igpLoc(_PhFESpace->GetTrueVSize()); igpLoc = 0.;     // dirichlet BC are not actually imposed on p
-  // Vector igzLoc = zBC;
-  // Vector igaLoc = aBC;
-  // iguLoc.SetSubVectorComplement( _essUhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
-  // igzLoc.SetSubVectorComplement( _essZhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
-  // igaLoc.SetSubVectorComplement( _essAhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
-
-  // use linearised state as IG:
-  Vector iguLoc = _wFuncCoeff;
-  Vector igpLoc(_PhFESpace->GetTrueVSize()); igpLoc = 0.;     // dirichlet BC are not actually imposed on p
-  Vector igzLoc = _yFuncCoeff;
-  Vector igaLoc = _cFuncCoeff;
-
-
-
-
-
-
-
-
-  // ASSEMBLE LOCAL MATRICES ------------------------------------------------
-  // - Compute local operator gradient at IG
-  //  -- since we already flagged the relevant esential BC to the local operator,
-  //      the matrices are already constrained
-  Array<int> offsets(5);
-  offsets[0] = 0;
-  offsets[1] = _UhFESpace->GetTrueVSize();
-  offsets[2] = _PhFESpace->GetTrueVSize();
-  offsets[3] = _ZhFESpace->GetTrueVSize();
-  offsets[4] = _AhFESpace->GetTrueVSize();
-  offsets.PartialSum();
-  BlockVector x(offsets);
-  x.GetBlock(0) = iguLoc;
-  x.GetBlock(1) = igpLoc;
-  x.GetBlock(2) = igzLoc;
-  x.GetBlock(3) = igaLoc;
-
-  BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( x ) );
-  _Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
-  _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
-  _Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
-  _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
-  _Mz = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,2) ) );
-  _K  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,3) ) );
-  _Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
-  _Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
-  _FuAssembled = true;
-  _Z1Assembled = true;
-  _Z2Assembled = true;
-  _BAssembled  = true; 
-  _MzAssembled = true;
-  _KAssembled  = true; 
-  _YAssembled  = true; 
-  _FaAssembled = true;
-
-
-
-  // - Only missing are the local mass matrices for time-stepping
-  // -- handy variables indicating dirichlet nodes
-  Array<int> colsU(_Fu.Height());
-  Array<int> colsA(_Fa.Height());
-  colsU = 0;
+  // -- include effect of Dirichlet nodes stemming from time-stepping
+  // --- identify Dirichlet nodes
+  Array<int> colsA( hform->Size() );
   colsA = 0;
-  for (int i = 0; i < _essUhTDOF.Size(); ++i){
-    colsU[_essUhTDOF[i]] = 1;
-  }
   for (int i = 0; i < _essAhTDOF.Size(); ++i){
     colsA[_essAhTDOF[i]] = 1;
   }
 
-
-  // -- Assemble _Mu (and modify rhs to take dirichlet on u into account within space-time structure)
-  AssembleMu();
-  uFuncCoeff.SetTime( _dt*_myRank );                // set uFunc to previous time-step
-  GridFunction um1BC(_UhFESpace);
-  um1BC.ProjectCoefficient(uFuncCoeff);
-
-  Vector um1Rel( fRhsLoc.Size() );
-  um1Rel = 0.0;
-  _Mu.EliminateCols( colsU, &um1BC, &um1Rel );
-  for (int i = 0; i < _essUhTDOF.Size(); ++i){
-    _Mu.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    // um1Rel(_essUhTDOF[i]) = 0.0;  // rhs will be killed later at dirichlet BC
-  }
-
-  if( _myRank > 0 ){
-    // add to rhs (um1Rel should already take minus sign on _Mu into account)
-    // NB: - no need to rescale by dt, as _Mu will be already scaled accordingly.
-    //     - no need to flip sign, as _Mu carries with it already
-    fRhsLoc += um1Rel;
-  }
-
-  // -- remember to reset function evaluation for u to the current time
-  uFuncCoeff.SetTime( _dt*(_myRank+1) );
-
-  // -- assembly of the velocity matrices is now complete
-  _MuAssembled = true;
-
-
-
-  // -- Assemble _Ma (and modify rhs to take dirichlet on A into account within space-time structure)
+  // --- assemble _Ma (and modify rhs to take dirichlet on u into account within space-time structure)
   AssembleMa();
   aFuncCoeff.SetTime( _dt*_myRank );                // set aFunc to previous time-step
   GridFunction am1BC(_AhFESpace);
   am1BC.ProjectCoefficient(aFuncCoeff);
+  am1BC.SetSubVectorComplement( _essAhTDOF, 0.0 );  // just to be on the safe side, kill non-Dirichlet nodes
 
-  Vector am1Rel( hRhsLoc.Size() );
+  Vector am1Rel( hform->Size() );
   am1Rel = 0.0;
   _Ma.EliminateCols( colsA, &am1BC, &am1Rel );
   for (int i = 0; i < _essAhTDOF.Size(); ++i){
@@ -2550,110 +2686,154 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
     // add to rhs (am1Rel should already take minus sign on _Ma into account)
     // NB: - no need to rescale by dt, as _Ma will be already scaled accordingly.
     //     - no need to flip sign, as _Ma carries with it already
-    hRhsLoc += am1Rel;
+    hform->operator+=( am1Rel );
   }
 
-  // -- remember to reset function evaluation for A to the current time
+  // --- remember to reset function evaluation for A to the current time
   aFuncCoeff.SetTime( _dt*(_myRank+1) );
 
-  // -- assembly of the vector potential matrices is now complete
+  // --- flag that assembly of the vector potential mass matrix is now complete
   _MaAssembled = true;
 
 
 
 
+  // Finally, store the rhs -------------------------------------------------
+  _frhs = *fform;  
+  _grhs = *gform;
+  _zrhs = *zform;
+  _hrhs = *hform;
+  // - the linear forms have served their purpose
+  delete fform;
+  delete gform;
+  delete zform;
+  delete hform;
+  // - include definition of Dirichlet nodes
+  //    NB: the original system would have the solution values in the essential nodes. However,
+  //     since we need to compute the residual as rhs-N(x) and N(x) by default returns 0 on the 
+  //     essential nodes, by defining the rhs this way we don't risk dirtying them
+  _frhs.SetSubVector(_essUhTDOF,0.);
+  _hrhs.SetSubVector(_essAhTDOF,0.);
+  // uFuncCoeff.SetTime( _dt*(_myRank+1) );
+  // aFuncCoeff.SetTime( _dt*(_myRank+1) );
+  // GridFunction uBC(_UhFESpace);
+  // GridFunction aBC(_AhFESpace);
+  // uBC.ProjectCoefficient(uFuncCoeff);
+  // aBC.ProjectCoefficient(aFuncCoeff);
+  // for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
+  //   _frhs(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
+  // }
+  // for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
+  //   _hrhs(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
+  // }
+
+  
 
 
-  // ASSEMBLE LOCAL OPERATOR EVALUATIONS ------------------------------------
+
+
+
+
+  //*************************************************************************
+  // ASSEMBLE LOCAL RESIDUAL b-N(x0)
+  //*************************************************************************
   // Compute local action of non-linear operator on initial guess
   // - alright, so, at this stage the rhs vectors contain:
   //  -- evaluations from the boundary integrals, initial conditions, and forcing terms
-  //  -- impacts of dirichlet conditions on the space-time structure (the subdiagonal containing the mass matrix)
-  //   but they're still lacking the impact of the dir BC on the remaining part of the operator!
+  //  -- impacts of Dirichlet conditions on the space-time structure (the subdiagonal containing the mass matrix)
+  // - the residual still lacks the action of N(x0) (including the impact of the Dirichlet nodes on the rhs)
   //   Hopefully the following will include this:
   BlockVector y(offsets);
 
+  // - this computes b-N(x0)
   ApplyOperator(x,y);
-  fRhsLoc -= y.GetBlock(0);
-  gRhsLoc -= y.GetBlock(1);
-  zRhsLoc -= y.GetBlock(2);
-  hRhsLoc -= y.GetBlock(3);
   // ...the advantage of including the impact of the space-time structure directly on the rhs (rather than having to evaluate
   //  it inside ApplyOperator ) is that this way I can store the matrices Mu and Ma with zeroed columns, and be sure that
   //  eventual dirtying of the BC won't have an impact on the operator application. Is it useful? Meh, dunno, but this should
   //  work anyway...
 
-  // - finally, kill the rhs on the Dirichlet nodes (the system we'll solve involves Δx: don't wanna risk dirtying the BC)
-  fRhsLoc.SetSubVector( _essUhTDOF, 0. );
-  // zRhsLoc.SetSubVector( _essZhTDOF, 0. );
-  hRhsLoc.SetSubVector( _essAhTDOF, 0. );
 
 
 
 
 
 
-  // ASSEMBLE GLOBAL (PARALLEL) RHS -----------------------------------------
-  // - for velocity
-  int colPartU[2] = {_myRank*fRhsLoc.Size(), (_myRank+1)*fRhsLoc.Size()};
-  frhs = new HypreParVector( _comm, fRhsLoc.Size()*_numProcs, fRhsLoc.StealData(), colPartU );
-  // frhs->SetOwnership( 1 );
+
+  //*************************************************************************
+  // ASSEMBLE GLOBAL COMPONENTS
+  //*************************************************************************
+  // ASSEMBLE GLOBAL (PARALLEL) RESIDUAL ------------------------------------
+  fres = y.GetBlock(0);
+  gres = y.GetBlock(1);
+  zres = y.GetBlock(2);
+  hres = y.GetBlock(3);
 
   if( _verbose>1 ){
     if ( _myRank==0 ){
-      std::cout<<"Space-time rhs for velocity block f assembled\n";
+      std::cout<<"Space-time residuals assembled\n";
     }
     MPI_Barrier(_comm);
   }  
 
 
-  // - for pressure
-  int colPartP[2] = {_myRank*gRhsLoc.Size(), (_myRank+1)*gRhsLoc.Size()};
-  grhs = new HypreParVector( _comm, gRhsLoc.Size()*_numProcs, gRhsLoc.StealData(), colPartP );
-  // grhs->SetOwnership( 1 );
+  // // - for velocity
+  // int colPartU[2] = {      _myRank*(y.GetBlock(0).Size()),          (_myRank+1)*(y.GetBlock(0).Size())};
+  // fres = new HypreParVector( _comm, y.GetBlock(0).Size()*_numProcs,              y.GetBlock(0).StealData(), colPartU );
+  // // fres->SetOwnership( 1 );
+  // if( _verbose>1 ){
+  //   if ( _myRank==0 ){
+  //     std::cout<<"Space-time residual for velocity block assembled\n";
+  //   }
+  //   MPI_Barrier(_comm);
+  // }  
 
-  if( _verbose>1 ){
-    if ( _myRank==0 ){
-      std::cout<<"Space-time rhs for pressure block g assembled\n";
-    }
-    MPI_Barrier(_comm);
-  }  
+  // // - for pressure
+  // int colPartP[2] = {      _myRank*(y.GetBlock(1).Size()),          (_myRank+1)*(y.GetBlock(1).Size())};
+  // gres = new HypreParVector( _comm, y.GetBlock(1).Size()*_numProcs,              y.GetBlock(1).StealData(), colPartP );
+  // // gres->SetOwnership( 1 );
+  // if( _verbose>1 ){
+  //   if ( _myRank==0 ){
+  //     std::cout<<"Space-time residual for pressure block assembled\n";
+  //   }
+  //   MPI_Barrier(_comm);
+  // }  
+
+  // // - for Laplacian of vector potential
+  // int colPartZ[2] = {      _myRank*(y.GetBlock(2).Size()),         (_myRank+1)*(y.GetBlock(2).Size())};
+  // zres = new HypreParVector( _comm, y.GetBlock(2).Size()*_numProcs,             y.GetBlock(2).StealData(), colPartZ );
+  // // zres->SetOwnership( 1 );
+  // if( _verbose>1 ){
+  //   if ( _myRank==0 ){
+  //     std::cout<<"Space-time residual for Laplacian of vector potential block assembled\n";
+  //   }
+  //   MPI_Barrier(_comm);
+  // }  
+
+  // // - for vector potential
+  // int colPartA[2] = {      _myRank*(y.GetBlock(3).Size()),         (_myRank+1)*(y.GetBlock(3).Size())};
+  // hres = new HypreParVector( _comm, y.GetBlock(3).Size()*_numProcs,             y.GetBlock(3).StealData(), colPartA );
+  // // hres->SetOwnership( 1 );
+  // if( _verbose>1 ){
+  //   if ( _myRank==0 ){
+  //     std::cout<<"Space-time residual for vector potential block assembled\n";
+  //   }
+  //   MPI_Barrier(_comm);
+  // }  
 
 
-  // - for Laplacian of vector potential
-  int colPartZ[2] = {_myRank*zRhsLoc.Size(), (_myRank+1)*zRhsLoc.Size()};
-  zrhs = new HypreParVector( _comm, zRhsLoc.Size()*_numProcs, zRhsLoc.StealData(), colPartZ );
-  // zrhs->SetOwnership( 1 );
-
-  if( _verbose>1 ){
-    if ( _myRank==0 ){
-      std::cout<<"Space-time rhs for Laplacian of vector potential block '0' assembled\n";
-    }
-    MPI_Barrier(_comm);
-  }  
-
-
-  // - for vector potential
-  int colPartA[2] = {_myRank*hRhsLoc.Size(), (_myRank+1)*hRhsLoc.Size()};
-  hrhs = new HypreParVector( _comm, hRhsLoc.Size()*_numProcs, hRhsLoc.StealData(), colPartA );
-  // hrhs->SetOwnership( 1 );
-
-  if( _verbose>1 ){
-    if ( _myRank==0 ){
-      std::cout<<"Space-time rhs for vector potential block h assembled\n";
-    }
-    MPI_Barrier(_comm);
-  }  
 
 
 
-
-  // ASSEMBLE INITIAL GUESS -------------------------------------------------
+  // ASSEMBLE GLOBAL (PARALLEL) INITIAL GUESS -------------------------------------------------
   // Assemble global vectors
-  IGu = new HypreParVector( _comm, iguLoc.Size()*_numProcs, iguLoc.StealData(), colPartU );
-  IGp = new HypreParVector( _comm, igpLoc.Size()*_numProcs, igpLoc.StealData(), colPartP );
-  IGz = new HypreParVector( _comm, igzLoc.Size()*_numProcs, igzLoc.StealData(), colPartZ );
-  IGa = new HypreParVector( _comm, igaLoc.Size()*_numProcs, igaLoc.StealData(), colPartA );
+  IGu = x.GetBlock(0);
+  IGp = x.GetBlock(1);
+  IGz = x.GetBlock(2);
+  IGa = x.GetBlock(3);
+  // IGu = new HypreParVector( _comm, x.GetBlock(0).Size()*_numProcs, x.GetBlock(0).StealData(), colPartU );
+  // IGp = new HypreParVector( _comm, x.GetBlock(1).Size()*_numProcs, x.GetBlock(1).StealData(), colPartP );
+  // IGz = new HypreParVector( _comm, x.GetBlock(2).Size()*_numProcs, x.GetBlock(2).StealData(), colPartZ );
+  // IGa = new HypreParVector( _comm, x.GetBlock(3).Size()*_numProcs, x.GetBlock(3).StealData(), colPartA );
   // IGu->SetOwnership( 1 );
   // IGp->SetOwnership( 1 );
   // IGz->SetOwnership( 1 );
@@ -2835,11 +3015,6 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
       _essPhTDOF.Print(myfile,1);
       myfile.close( );
 
-      // myfilename = "./results/out_essZ.dat";
-      // myfile.open( myfilename );
-      // _essZhTDOF.Print(myfile,1);
-      // myfile.close( );
-
       myfilename = "./results/out_essA.dat";
       myfile.open( myfilename );
       _essAhTDOF.Print(myfile,1);
@@ -2847,7 +3022,6 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 
       std::cout<<"U essential nodes: ";_essUhTDOF.Print(std::cout, _essUhTDOF.Size());
       std::cout<<"P essential nodes: ";_essPhTDOF.Print(std::cout, _essPhTDOF.Size());
-      // std::cout<<"Z essential nodes: ";_essZhTDOF.Print(std::cout, _essZhTDOF.Size());
       std::cout<<"A essential nodes: ";_essAhTDOF.Print(std::cout, _essAhTDOF.Size());
 
     }
@@ -2861,73 +3035,92 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 
 
 
-// Compute application of non-linear operator to state vector (eventually scaled by dt)
-// - When using this function, make sure to populate the state vector with its dirichlet BC,
-//    as they have an impact on the non-linear part of the operator.
-// - Notice however that the Dirichlet nodes *do not* have an impact on the time-derivative part
+
+
+
+// Compute residual b-N(x)
+// - Notice that the Dirichlet nodes *do not* have an impact on the time-derivative part
 //    of this operator (which is linear). Their contribution should've been included once and for all 
-//    in the rhs of the AssembleSystem method. The reasoning behind this choice is that this way I can store
+//    in the rhs by the AssembleSystem method. The reasoning behind this choice is that this way I can store
 //    the mass matrices as square operators surrounded by zeroes (corresponding to the dir nodes), and I don't
 //    risk dirtying the dirichlet nodes when I reuse them in some preconditioner. Maybe a bit of a mess, but oh, well...
-//  dt * N(xk)
 void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector& y ){
-  if ( _myRank == 0 ){
-    std::cout<<"Evaluating action of non-linear operator: did you make sure to include Dirichlet BC on the state x?"<<std::endl;
-  }
-
   if ( !( _MuAssembled && _MaAssembled ) ){ 
     std::cerr<<"ERROR: ApplyOperator: need to assemble Mu and Ma in order to apply the operator\n";
     return;
   }
 
-  // Assemble local part of operator evaluation
-  _IMHD2DOperator.Mult(x,y);
+  // Assemble local part of operator evaluation N(x) ------------------------
+  BlockVector myX(x);
+  // - populate the state vector with Dirichlet nodes, as they have an impact on the non-linear part of the operator
+  VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
+  FunctionCoefficient       aFuncCoeff( _aFunc );
+  uFuncCoeff.SetTime( _dt*(_myRank+1) );
+  aFuncCoeff.SetTime( _dt*(_myRank+1) );
+  GridFunction uBC(_UhFESpace);
+  GridFunction aBC(_AhFESpace);
+  uBC.ProjectCoefficient(uFuncCoeff);
+  aBC.ProjectCoefficient(aFuncCoeff);
+  for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
+    myX.GetBlock(0)(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
+  }
+  for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
+    myX.GetBlock(3)(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
+  }
+  // - compute N(x)
+  _IMHD2DOperator.Mult(myX,y);
+
 
 
   // Include contribution from time derivative ------------------------------
-  // - for u
+  // - For u
   // -- Send lcl solution to next proc
-  const int sizeU = x.GetBlock(0).Size();
+  const int sizeU = myX.GetBlock(0).Size();
   Vector prevU( sizeU ), tempU( sizeU );
   prevU = 0.;
   if ( _myRank < _numProcs-1 ){
-    MPI_Send( x.GetBlock(0).GetData(), sizeU, MPI_DOUBLE, _myRank+1, 2*_myRank,     _comm );
+    MPI_Send( myX.GetBlock(0).GetData(), sizeU, MPI_DOUBLE, _myRank+1, 2*_myRank,     _comm );
   }
   if ( _myRank > 0 ){
-    MPI_Recv(         prevU.GetData(), sizeU, MPI_DOUBLE, _myRank-1, 2*(_myRank-1), _comm, MPI_STATUS_IGNORE );
+    MPI_Recv(           prevU.GetData(), sizeU, MPI_DOUBLE, _myRank-1, 2*(_myRank-1), _comm, MPI_STATUS_IGNORE );
   }
-
   // -- Mu should already be stored with negative sign and scaling by dt
   _Mu.Mult( prevU, tempU );
   y.GetBlock(0) += tempU;
 
 
-
-  // - for A
+  // - For A
   // -- Send lcl solution to next proc
-  const int sizeA = x.GetBlock(3).Size();
+  const int sizeA = myX.GetBlock(3).Size();
   Vector prevA( sizeA ), tempA( sizeA );
   prevA = 0.;
   if ( _myRank < _numProcs-1 ){
-    MPI_Send( x.GetBlock(3).GetData(), sizeA, MPI_DOUBLE, _myRank+1, 2*_myRank+1,     _comm );
+    MPI_Send( myX.GetBlock(3).GetData(), sizeA, MPI_DOUBLE, _myRank+1, 2*_myRank+1,     _comm );
   }
   if ( _myRank > 0 ){
-    MPI_Recv(         prevA.GetData(), sizeA, MPI_DOUBLE, _myRank-1, 2*(_myRank-1)+1, _comm, MPI_STATUS_IGNORE );
+    MPI_Recv(           prevA.GetData(), sizeA, MPI_DOUBLE, _myRank-1, 2*(_myRank-1)+1, _comm, MPI_STATUS_IGNORE );
   }
-
   // -- Ma should already be stored with negative sign and scaling by dt
   _Ma.Mult( prevA, tempA );
   y.GetBlock(3) += tempA;
 
 
+  // Compute residual b-N(x) ------------------------------------------------
+  // - remove previously computed right-hand side
+  y.GetBlock(0) -= _frhs;
+  y.GetBlock(1) -= _grhs;  
+  y.GetBlock(2) -= _zrhs;
+  y.GetBlock(3) -= _hrhs;
+  // - flip sign
+  y.Neg();
 
 
-  // This might be superfluous, but kill all Dirichlet contributions
-  //  (this is in line with what the Mult() method of NonLinearForm does)
+  // Kill all Dirichlet contributions ---------------------------------------
+  // This might be superfluous (rhs-N(x) should already have zeroes on Dirichlet nodes),
+  //  but just to make sure
+  //  (NB: this is in line with what the Mult() method of NonLinearForm does)
   for (int i = 0; i < _essUhTDOF.Size(); ++i)
     y.GetBlock(0)(_essUhTDOF[i]) = 0.;
-  // for (int i = 0; i < _essZhTDOF.Size(); ++i)
-  //   y.GetBlock(2)(_essZhTDOF[i]) = 0.;
   for (int i = 0; i < _essAhTDOF.Size(); ++i)
     y.GetBlock(3)(_essAhTDOF[i]) = 0.;
 
@@ -2940,24 +3133,37 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
 
 
 
+
+
 // Update linearisation
 // We need to re-assemble all the operators which come from linearisations of non-linear ones
 // NB: make sure the Dirichlet conditions are already included in x! Just to be on the safe side...
 void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x ){
-  if ( _myRank == 0 ){
-    std::cout<<"Updating Gradient: did you make sure to include Dirichlet BC on the state x?"<<std::endl;
-  }
   
-
   // Update internal variables
   for ( int i = 0; i < x.GetBlock(0).Size(); ++i ){
-    _wFuncCoeff.GetData()[i] = x.GetBlock(0).GetData()[i];
+    _wFuncCoeff(i) = x.GetBlock(0)(i);
   }
   for ( int i = 0; i < x.GetBlock(2).Size(); ++i ){
-    _yFuncCoeff.GetData()[i] = x.GetBlock(2).GetData()[i];
+    _yFuncCoeff(i) = x.GetBlock(2)(i);
   }
   for ( int i = 0; i < x.GetBlock(3).Size(); ++i ){
-    _cFuncCoeff.GetData()[i] = x.GetBlock(3).GetData()[i];
+    _cFuncCoeff(i) = x.GetBlock(3)(i);
+  }
+  // - populate the state vector with Dirichlet nodes, as they have an impact on the non-linear part of the operator
+  VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
+  FunctionCoefficient       aFuncCoeff( _aFunc );
+  uFuncCoeff.SetTime( _dt*(_myRank+1) );
+  aFuncCoeff.SetTime( _dt*(_myRank+1) );
+  GridFunction uBC(_UhFESpace);
+  GridFunction aBC(_AhFESpace);
+  uBC.ProjectCoefficient(uFuncCoeff);
+  aBC.ProjectCoefficient(aFuncCoeff);
+  for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
+    _wFuncCoeff(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
+  }
+  for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
+    _cFuncCoeff(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
   }
 
 
@@ -2984,38 +3190,6 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   _YY.SetBlockDiag(  &_Y,  0, false );
 
 
-  /*
-  // -- reassemble space-time velocity block
-  if( _FFuAssembled )
-    HYPRE_IJMatrixDestroy( _FFu );
-  _FFuAssembled = false;
-  delete _FFFu; // do I need this?
-  AssembleFFu();
-
-  // -- reassemble space-time vector potential block
-  if( _FFaAssembled )
-    HYPRE_IJMatrixDestroy( _FFa );
-  _FFaAssembled = false;
-  delete _FFFa; // do I need this?
-  AssembleFFa();
-
-  // -- reassemble space-time lorentz block
-  if( _ZZ1Assembled )
-    HYPRE_IJMatrixDestroy( _ZZ1 );
-  _ZZ1Assembled = false;
-  AssembleZZ1();
-  if( _ZZ2Assembled )
-    HYPRE_IJMatrixDestroy( _ZZ2 );
-  _ZZ2Assembled = false;
-  AssembleZZ2();
-
-  // -- reassemble space-time magnetic convection block
-  if( _YYAssembled )
-    HYPRE_IJMatrixDestroy( _YY );
-  _YYAssembled = false;
-  AssembleYY();
-  */
-
 
   // - whole space-time operators for preconditioners
   // -- update pSchur
@@ -3030,7 +3204,6 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
       break;
     }
   }
-
   _pSinv->SetWp( &_Wp, isQuietState );
 
   // if( !isQuietState ){
@@ -3074,9 +3247,10 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   _aSinv->SetW( &_Wa );
 
   switch ( _ASTSolveType ){
-    // Use sequential time-stepping on implicit / explicit leapfrog discretisation to solve for space-time block
+    // Update matrices in CCainv
     case 0:
-    case 1:{
+    case 1:
+    case 2:{
       _CpAssembled = false;
       _C0Assembled = false;
       _CmAssembled = false;
@@ -3163,8 +3337,26 @@ void IMHD2DSTOperatorAssembler::AssemblePreconditioner( Operator*& Fuinv, Operat
 
 
 // Actual Time-stepper
+// This is a huge hack, based on the fact that most of the classes I've implemented for the space-time
+//  setting can be reused in a single time-step fashion, too, although some care needs to be applied
+// This relies on the fact that the constant operators have already been assembled
+// This is also extremely inefficient, as it freezes all allocated processors, while only one does the whole job,
+//  but I can't be bother to re-implement the necessary classes
 void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
                                           const std::string &fname1, const std::string &path2, int refLvl ){
+
+  const int   maxNewtonIt = 20;
+  const double   GMRESTol = 1e-10/ sqrt( _numProcs );
+  const double  newtonTol = 1e-9 / sqrt( _numProcs );
+
+  if( _myRank == 0 ){
+    std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10/1e-9 (Newt/GMRES), scaled by the number of time steps."<<std::endl
+             <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
+             <<"          so make sure to delete it from there!"<<std::endl;    
+  }
+
+
+  // I assume all *constant* operators are already assembled
 
   // Define operator
   Array<int> offsets(5);
@@ -3191,113 +3383,45 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 
   // Define preconditioner components
   // - Inverse of pressure Schur complement - reuse code from ST case, but with single processor
-  OseenSTPressureSchurComplement myPSinv( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, _verbose );
-  AssembleAp();
-  AssembleMp();
-  AssembleWp();
-  // -- check if there is advection (if not, some simplifications can be made)
-  bool isQuietState = true;
-  // --- check whether all node values of w are 0
-  for ( int i = 0; i < _wFuncCoeff.Size(); ++i ){
-    if ( _wFuncCoeff[i] != 0. ){
-      isQuietState = false;
-      break;
-    }
-  }
-  // -- if there is advection, then clearly Wp differs from Ap (must include pressure convection)
-  //     otherwise, they're the same and some simplifications can be made
-  myPSinv.SetWp( &_Wp, isQuietState );
-  myPSinv.SetAp( &_Ap );
-  myPSinv.SetMp( &_Mp );
+  delete _pSinv;
+  _pSinv = new OseenSTPressureSchurComplement( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, _verbose );
+  _pSinv->SetAp( &_Ap );
+  _pSinv->SetWp( &_Wp );
+  _pSinv->SetMp( &_Mp );
 
 
   // - Inverse of magnetic Schur complement - reuse code from ST case, but with single processor
-  IMHD2DSTMagneticSchurComplement myASinv( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
-  AssembleMaNoZero();
-  AssembleWa();
-  myASinv.SetM( &_MaNoZero );
-  myASinv.SetW( &_Wa );
-  // -- compute operators for wave equation:
-  // --- laplacian
-  AssembleAa();
-  // --- inverse of mass matrix (consider only its diagonal)
-  AssembleMaNoZero();
-  Vector MDiagInv;
-  _MaNoZero.GetDiag( MDiagInv );
-  for ( int i = 0; i < MDiagInv.Size(); ++i ){  // invert it
-    MDiagInv(i) = 1./MDiagInv(i);
-  }
-  SparseMatrix MaLinv(MDiagInv);
-  // --- approximation of wave equation
-  // ---- compute the L2 norm of the space-time average of the magnetic field B = ∇x(kA)
-  Vector B0(_dim);
-  double area = 0.;
-  B0 = 0.;
-  for (int i = 0; i < _AhFESpace->GetNE(); i++){
-    const FiniteElement *fe = _AhFESpace->GetFE(i);
-    ElementTransformation *Tr = _AhFESpace->GetElementTransformation(i);
-    int intorder = 2*fe->GetOrder() + 3;
-    const IntegrationRule *ir = &(IntRules.Get(fe->GetGeomType(), intorder));
-    Array<int> dofs;
-    _AhFESpace->GetElementDofs(i, dofs);
-    for (int j = 0; j < ir->GetNPoints(); j++){
-      const IntegrationPoint &ip = ir->IntPoint(j);
-      Tr->SetIntPoint(&ip);
-      Vector grad;
-      _cFuncCoeff.GetGradient(*Tr,grad);
-      grad *= ip.weight * Tr->Weight();
-      B0 += grad;
-    }
-    area += 0.5 * (Tr->Weight());
-  }
-  MPI_Allreduce( MPI_IN_PLACE, B0.GetData(), 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-  double B0norm = sqrt( ( B0(0)*B0(0) + B0(1)*B0(1) ) / ( area * _dt*_numProcs) ); 
-  // ---- assemble matrix for approximate wave equation
-  SparseMatrix *MiF  = Mult(MaLinv,_Fa);
-  SparseMatrix *FMiF = Mult(_Fa,*MiF);
-  SparseMatrix *CC   = Add( 1., *FMiF, _dt*_dt*B0norm/_mu0, _Aa );
-  delete MiF;
-  delete FMiF;
-  // ---- impose dirichlet BC
-  mfem::Array<int> colsA(_Aa.Height());
-  colsA = 0;
-  for (int i = 0; i < _essAhTDOF.Size(); ++i){
-    colsA[_essAhTDOF[i]] = 1;
-  }
-  CC->EliminateCols( colsA );
-  for (int i = 0; i < _essAhTDOF.Size(); ++i){
-    CC->EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ONE  );
-  }
-  // ---- set solver
-  PetscParMatrix myCC( CC );
-  PetscLinearSolver myCCinv( myCC, "AWaveSolver_" );
-  myASinv.SetCCinv( &myCCinv );
-
-
+  delete _CCainv;
+  _CCainv = new SpaceTimeWaveSolver( MPI_COMM_SELF, NULL, NULL, NULL, _essAhTDOF, false, true, _verbose);
+  ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
+  ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
+  ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
+  delete _aSinv;
+  _aSinv = new IMHD2DSTMagneticSchurComplement( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
+  _aSinv->SetM( &_MaNoZero );
+  _aSinv->SetW( &_Wa );
+  _aSinv->SetCCinv( _CCainv );
 
 
   // - Inverse of velocity operator
-  const PetscParMatrix myFu( &_Fu );
-  PetscLinearSolver myFuinv( myFu, "VSolver_" );
-
+  delete _FFuinv;
+  _FFuinv  = new SpaceTimeSolver( MPI_COMM_SELF, NULL, NULL, _essUhTDOF, true, _verbose );
+  ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
+  ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetM( &_Mu );
 
 
   // - Inverse of mass matrix of laplacian of vector field
-  const PetscParMatrix myMz( &_Mz );
-  PetscLinearSolver myMzinv( myMz, "ZSolverMass_" );
-
-
-
+  // can reuse _MMzinv out-of-the-box
 
 
   // Assemble preconditioner
   // - inverse of Lub
   BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsets );
   Array<const Operator*> YFuiOps(2);
-  YFuiOps[0] = &myFuinv;
+  YFuiOps[0] = _FFuinv;
   YFuiOps[1] = &_Y;
   OperatorsSequence* YFui = new OperatorsSequence( YFuiOps );   // does not own
-  ScaledOperator* mMzi    = new ScaledOperator( &myMzinv, -1.0 );
+  ScaledOperator* mMzi    = new ScaledOperator( _MMzinv, -1.0 );
   Array<const Operator*> mYFuiZ1Mziops(3);
   Array<bool>            mYFuiZ1Mziown(3);
   mYFuiZ1Mziops[0] = mMzi; mYFuiZ1Mziown[0] = true;
@@ -3314,15 +3438,15 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   Uub->iterative_mode = false;
   Uub->SetBlock( 0, 2, &_Z1     );
   Uub->SetBlock( 0, 3, &_Z2     );
-  Uub->SetBlock( 2, 2, &myMzinv );
+  Uub->SetBlock( 2, 2, _MMzinv  );
   Uub->SetBlock( 2, 3, &_K      );
-  Uub->SetBlock( 3, 3, &myASinv );
+  Uub->SetBlock( 3, 3, _aSinv  );
   Uub->owns_blocks = false;
   
   // - inverse of Lup
   BlockLowerTriangularPreconditioner *Lup = new BlockLowerTriangularPreconditioner( offsets );
   Array<const Operator*> BFuiOps(2);
-  BFuiOps[0] = &myFuinv;
+  BFuiOps[0] = _FFuinv;
   BFuiOps[1] = &_B;
   OperatorsSequence* BFui = new OperatorsSequence( BFuiOps );   // does not own
   Lup->iterative_mode = false;
@@ -3332,9 +3456,9 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   // - inverse of Uup
   BlockUpperTriangularPreconditioner *Uup = new BlockUpperTriangularPreconditioner( offsets );
   Uup->iterative_mode = false;
-  Uup->SetBlock( 0, 0, &myFuinv );
+  Uup->SetBlock( 0, 0, _FFuinv );
   Uup->SetBlock( 0, 1, myB.Transpose() );
-  Uup->SetBlock( 1, 1, &myPSinv );
+  Uup->SetBlock( 1, 1, _pSinv  );
   Uup->owns_blocks = false;
   
   // - combine them together
@@ -3346,112 +3470,394 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   precOps[3] = Uup;  precOwn[3] = true;
   OperatorsSequence myMHDPr( precOps, precOwn );
 
-
-
-  // Define solver
-  PetscLinearSolver solver( MPI_COMM_SELF, "solver_" );
-  bool isIterative = true;
-  solver.iterative_mode = isIterative;
-  solver.SetPreconditioner(myMHDPr);
-  solver.SetOperator(myMHDOp);
-
-  double tol = 1e-10 / sqrt( _numProcs );
-  if( _myRank == 0 ){
-    std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10, scaled by the number of time steps."<<std::endl
-             <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
-             <<"          so make sure to delete it from there!"<<std::endl;    
-  }
-  solver.SetTol(tol);
-  solver.SetRelTol(tol);
-  solver.SetAbsTol(tol);
-
-
-
-  // Main "time-stepping" routine *******************************************
-  std::cerr<<"CHECK TIME-STEPPING! We are solving for gradient, so initial guess should be 0? And what about the temporal contribution to rhs?"<<std::endl;
-
-  const int totDofs = x.Size();
-  // - for each time-step, this will contain rhs
-  BlockVector b( offsets );
-  b = 0.0;
+  // Ok, so at this stage all the skeletons for the various operators should be there. Now it's time to get serious
   
-  // - receive solution from previous processor (unless initial time-step)
+
+  // Initialise Newton iterations
+  // - y is used as initial guess only for master
+  BlockVector lclSol(offsets);
+  lclSol = y;
+  // - otherwise receive solution from previous processor, and use it as initial guess
   if ( _myRank > 0 ){
-    // - use it as initial guess for the solver (so store in y), unless initial step!
-    MPI_Recv( y.GetData(), totDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
-    // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
-    _Mu.Mult( y.GetBlock(0), b.GetBlock(0) );
-    _Ma.Mult( y.GetBlock(3), b.GetBlock(3) );
-    // - M is stored with negative sign, so flip it
-    b.GetBlock(0).Neg();
-    b.GetBlock(3).Neg();
+    // - overwrite initial guess with solution from previous time-step
+    MPI_Recv( lclSol.GetData(), offsets[4], MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
+    // - include effect from solution at previous time step on rhs (temporal derivative): rhs -= M*x
+    // -- M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+    //     and is stored with negative sign, so multiply by -1
+    _Mu.AddMult( lclSol.GetBlock(0), _frhs, -1.0 );
+    _Ma.AddMult( lclSol.GetBlock(3), _hrhs, -1.0 );
+    // - however, remember to preserve Dirichlet nodes
+    for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
+      lclSol.GetBlock(0)(_essUhTDOF[i]) = y.GetBlock(0)(_essUhTDOF[i]);
+    }
+    for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
+      lclSol.GetBlock(3)(_essAhTDOF[i]) = y.GetBlock(3)(_essAhTDOF[i]);
+    }
   }
 
-  // - define rhs for this step (includes contribution from sol at previous time-step
-  b += x;
+  // - initialise operators with initial guess on solution
+  UpdateLinearisedOperators( lclSol );  // fun fact: this works fine also if called as non-collective
 
-  // - solve for current time-step
-  //  --y acts as an initial guess! So use prev sol, unless first time step
-  solver.Mult( b, y );
+  // - compute residual
+  BlockVector lclRes(offsets);
+  _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
+  lclRes.GetBlock(0) -= _frhs;             // N(x) - b
+  lclRes.GetBlock(1) -= _grhs;
+  lclRes.GetBlock(2) -= _zrhs;
+  lclRes.GetBlock(3) -= _hrhs;
+  lclRes.Neg();                            // b - N(x)
 
-  int GMRESit    = solver.GetNumIterations();
-  double resnorm = solver.GetFinalNorm();
-  std::cout<<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+  // - compute norm of residual and initialise relevant quantities for Newton iteration
+  double newtonRes = lclRes.Norml2();
+  double newtonRes0 = newtonRes;
+  int newtonIt = 0;
+  double totGMRESit = 0.; //leave it as double, so that when I'll average it, it won't round-off
+  // - stop if:       max it reached                 residual small enough        relative residual small enough       //     difference wrt prev it small enough
+  bool stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol );  // || ( newtonErrWRTPrevIt < newtonTol );
 
-  if (!std::experimental::filesystem::exists( path2 )){
-    std::experimental::filesystem::create_directories( path2 );
+  std::cout << "***********************************************************\n";
+  std::cout << "Starting Newton for time-step "<<_myRank+1<<", initial residual "<< newtonRes <<std::endl;
+  std::cout << "***********************************************************\n";
+
+  // Main loop (newton solver)
+  while( !stopNewton ){ 
+    // Define internal (GMRES) solver
+    PetscLinearSolver solver( MPI_COMM_SELF, "solver_" );
+    bool isIterative = true;
+    solver.iterative_mode = isIterative;
+    solver.SetPreconditioner(myMHDPr);
+    solver.SetOperator(myMHDOp);
+
+    solver.SetTol(GMRESTol);
+    solver.SetRelTol(GMRESTol);
+    solver.SetAbsTol(GMRESTol);
+
+    // Define initial guess for update to solution (all zero)
+    BlockVector lclDeltaSol( offsets );
+    lclDeltaSol = 0.;
+
+    // Solve for current linearisation
+    solver.Mult( lclRes, lclDeltaSol );
+
+    // Report relevant measurements
+    newtonIt++;
+    int GMRESits   = solver.GetNumIterations();
+    double resnorm = solver.GetFinalNorm();
+    totGMRESit += GMRESits;
+    if (solver.GetConverged()){
+      std::cout << "Inner solver converged in ";
+    }else{
+      std::cout << "Inner solver *DID NOT* converge in ";
+    }
+    std::cout<< GMRESits << " iterations. Residual "<<resnorm<<std::endl;
+
+    // Update relevant quantities
+    // - solution
+    lclSol += lclDeltaSol;
+    // - residual
+    _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
+    lclRes.GetBlock(0) -= _frhs;             // N(x) - b
+    lclRes.GetBlock(1) -= _grhs;
+    lclRes.GetBlock(2) -= _zrhs;
+    lclRes.GetBlock(3) -= _hrhs;
+    lclRes.Neg();                            // b - N(x)
+    newtonRes = lclRes.Norml2();
+    std::cout << "***********************************************************\n";
+    std::cout << "Newton iteration "<<newtonIt<<" for time-step "<<_myRank+1<<", residual "<< newtonRes <<std::endl;
+    std::cout << "***********************************************************\n";
+    // - stopping criterion
+    stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol );  // || ( newtonErrWRTPrevIt < newtonTol );
+    // - and eventually the operators themselves
+    if( !stopNewton ){
+      UpdateLinearisedOperators( lclSol );
+    }
+
   }
-  std::string fname2 = path2 + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + ".txt";
-  std::ofstream myfile;
-  myfile.open( fname2, std::ios::app );
-  myfile <<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
-  myfile.close();
 
-  //TODO: I should probably add a check that all the print to file are done in order, but cmon...
+  std::cout   << "Newton outer solver for time-step " <<_myRank+1;
+  if( newtonIt < maxNewtonIt ){
+    std::cout << " converged in "                     << newtonIt;
+  }else{
+    std::cout << " *DID NOT* converge in "            << maxNewtonIt;
+  }
+  std::cout   << " iterations. Residual norm is "     << newtonRes;
+  std::cout   << ", avg internal GMRES it are "       << totGMRESit/newtonIt  << ".\n";
+  std::cout   << "***********************************************************\n";
 
+  // Store final solution for this time-step and send to next processor
+  y = lclSol;
 
-
-  // - send solution to following processor (unless last time-step)
   if ( _myRank < _numProcs-1 ){
-    MPI_Send( y.GetData(), totDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
+    MPI_Send( y.GetData(), offsets[4], MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
   }
 
   // sum residuals at each time step
-  resnorm*= resnorm;
-  MPI_Allreduce( MPI_IN_PLACE, &resnorm, 1, MPI_DOUBLE, MPI_SUM, _comm );
-  double finalResNorm = sqrt(resnorm);
+  newtonRes*= newtonRes;
+  MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, _comm );
+  double finalResNorm = sqrt(newtonRes);
 
   // average out iterations at each time step
-  MPI_Allreduce( MPI_IN_PLACE, &GMRESit, 1, MPI_INT,    MPI_SUM, _comm );
-  double avgGMRESit = double(GMRESit) / _numProcs;
+  MPI_Allreduce( MPI_IN_PLACE, &newtonIt, 1, MPI_INT,    MPI_SUM, _comm );
+  double avgNewtonIt = double(newtonIt) / _numProcs;
 
 
-
-
-  // OUTPUT -----------------------------------------------------------------
-  // - save #it to convergence to file
-  if (_myRank == 0){
-    std::cout<<"Solver converged in "    <<avgGMRESit<<" average GMRES it per time-step.";
-    std::cout<<" Final residual norm is "<<finalResNorm   <<".\n";
-  
-    double hmin, hmax, kmin, kmax;
-    this->GetMeshSize( hmin, hmax, kmin, kmax );
-
-    std::ofstream myfile;
-    myfile.open( fname1, std::ios::app );
-    myfile << _dt*_numProcs << ",\t" << _dt  << ",\t" << _numProcs   << ",\t"
-           << hmax << ",\t" << hmin << ",\t" << refLvl << ",\t"
-           << avgGMRESit << ",\t"  << finalResNorm  << std::endl;
-    myfile.close();
+  if( _myRank == 0 ){
+    std::cout<<"***********************************************************"  <<std::endl
+             <<"*********** TIME-STEPPING PROCEDURE COMPLETED! ************"  <<std::endl
+             <<"***********************************************************"  <<std::endl
+             <<"* - Final space-time residual               " << finalResNorm <<std::endl
+             <<"* - Average Newton its per time-step        " << avgNewtonIt  <<std::endl
+             <<"***********************************************************"<<std::endl
+             <<"***********************************************************"<<std::endl;
   }
+
 
   // wait for write to be completed..possibly non-necessary
   MPI_Barrier(_comm);
 
 
-  // clean up
-  delete CC;
 }
+
+
+
+
+
+
+
+
+
+// void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
+//                                           const std::string &fname1, const std::string &path2, int refLvl ){
+
+//   // Define operator
+//   Array<int> offsets(5);
+//   offsets[0] = 0;
+//   offsets[1] = _Fu.NumRows();
+//   offsets[2] =  _B.NumRows();
+//   offsets[3] = _Mz.NumRows();
+//   offsets[4] = _Fa.NumRows();
+//   offsets.PartialSum();
+//   PetscParMatrix myB( &_B );
+
+//   // - assemble matrix
+//   BlockOperator myMHDOp( offsets );
+//   myMHDOp.SetBlock(0, 0, &_Fu);
+//   myMHDOp.SetBlock(2, 2, &_Mz);
+//   myMHDOp.SetBlock(3, 3, &_Fa);
+//   myMHDOp.SetBlock(0, 1, myB.Transpose());
+//   myMHDOp.SetBlock(0, 2, &_Z1);
+//   myMHDOp.SetBlock(0, 3, &_Z2);
+//   myMHDOp.SetBlock(1, 0, &_B);
+//   myMHDOp.SetBlock(2, 3, &_K);
+//   myMHDOp.SetBlock(3, 0, &_Y);
+
+//   // Define preconditioner components
+//   // - Inverse of pressure Schur complement - reuse code from ST case, but with single processor
+//   OseenSTPressureSchurComplement myPSinv( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, _verbose );
+//   AssembleAp();
+//   AssembleMp();
+//   AssembleWp();
+//   // -- check if there is advection (if not, some simplifications can be made)
+//   bool isQuietState = true;
+//   // --- check whether all node values of w are 0
+//   for ( int i = 0; i < _wFuncCoeff.Size(); ++i ){
+//     if ( _wFuncCoeff[i] != 0. ){
+//       isQuietState = false;
+//       break;
+//     }
+//   }
+//   // -- if there is advection, then clearly Wp differs from Ap (must include pressure convection)
+//   //     otherwise, they're the same and some simplifications can be made
+//   myPSinv.SetWp( &_Wp, isQuietState );
+//   myPSinv.SetAp( &_Ap );
+//   myPSinv.SetMp( &_Mp );
+
+
+//   // - Inverse of magnetic Schur complement - reuse code from ST case, but with single processor
+//   IMHD2DSTMagneticSchurComplement myASinv( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
+//   AssembleMaNoZero();
+//   AssembleWa();
+//   AssembleCCainv( );
+//   myASinv.SetM( &_MaNoZero );
+//   myASinv.SetW( &_Wa );
+//   myASinv.SetCCinv( _CCainv );
+
+
+
+//   // - Inverse of velocity operator
+//   const PetscParMatrix myFu( &_Fu );
+//   PetscLinearSolver myFuinv( myFu, "VSolver_" );
+
+
+
+//   // - Inverse of mass matrix of laplacian of vector field
+//   const PetscParMatrix myMz( &_Mz );
+//   PetscLinearSolver myMzinv( myMz, "ZSolverMass_" );
+
+
+
+
+
+//   // Assemble preconditioner
+//   // - inverse of Lub
+//   BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsets );
+//   Array<const Operator*> YFuiOps(2);
+//   YFuiOps[0] = &myFuinv;
+//   YFuiOps[1] = &_Y;
+//   OperatorsSequence* YFui = new OperatorsSequence( YFuiOps );   // does not own
+//   ScaledOperator* mMzi    = new ScaledOperator( &myMzinv, -1.0 );
+//   Array<const Operator*> mYFuiZ1Mziops(3);
+//   Array<bool>            mYFuiZ1Mziown(3);
+//   mYFuiZ1Mziops[0] = mMzi; mYFuiZ1Mziown[0] = true;
+//   mYFuiZ1Mziops[1] = &_Z1; mYFuiZ1Mziown[1] = false;
+//   mYFuiZ1Mziops[2] = YFui; mYFuiZ1Mziown[2] = false;
+//   OperatorsSequence* mYFuiZ1Mzi = new OperatorsSequence( mYFuiZ1Mziops, mYFuiZ1Mziown );
+//   Lub->iterative_mode = false;
+//   Lub->SetBlock( 3, 0,       YFui );
+//   Lub->SetBlock( 3, 2, mYFuiZ1Mzi );
+//   Lub->owns_blocks = true;
+
+//   // - inverse of Uub
+//   BlockUpperTriangularPreconditioner *Uub = new BlockUpperTriangularPreconditioner( offsets );
+//   Uub->iterative_mode = false;
+//   Uub->SetBlock( 0, 2, &_Z1     );
+//   Uub->SetBlock( 0, 3, &_Z2     );
+//   Uub->SetBlock( 2, 2, &myMzinv );
+//   Uub->SetBlock( 2, 3, &_K      );
+//   Uub->SetBlock( 3, 3, &myASinv );
+//   Uub->owns_blocks = false;
+  
+//   // - inverse of Lup
+//   BlockLowerTriangularPreconditioner *Lup = new BlockLowerTriangularPreconditioner( offsets );
+//   Array<const Operator*> BFuiOps(2);
+//   BFuiOps[0] = &myFuinv;
+//   BFuiOps[1] = &_B;
+//   OperatorsSequence* BFui = new OperatorsSequence( BFuiOps );   // does not own
+//   Lup->iterative_mode = false;
+//   Lup->SetBlock( 1, 0, BFui );
+//   Lup->owns_blocks = true;
+  
+//   // - inverse of Uup
+//   BlockUpperTriangularPreconditioner *Uup = new BlockUpperTriangularPreconditioner( offsets );
+//   Uup->iterative_mode = false;
+//   Uup->SetBlock( 0, 0, &myFuinv );
+//   Uup->SetBlock( 0, 1, myB.Transpose() );
+//   Uup->SetBlock( 1, 1, &myPSinv );
+//   Uup->owns_blocks = false;
+  
+//   // - combine them together
+//   Array<const Operator*> precOps(4);
+//   Array<bool>      precOwn(4);
+//   precOps[0] = Lub;  precOwn[0] = true;
+//   precOps[1] = Uub;  precOwn[1] = true;
+//   precOps[2] = Lup;  precOwn[2] = true;
+//   precOps[3] = Uup;  precOwn[3] = true;
+//   OperatorsSequence myMHDPr( precOps, precOwn );
+
+
+
+//   // Define solver
+//   PetscLinearSolver solver( MPI_COMM_SELF, "solver_" );
+//   bool isIterative = true;
+//   solver.iterative_mode = isIterative;
+//   solver.SetPreconditioner(myMHDPr);
+//   solver.SetOperator(myMHDOp);
+
+//   double tol = 1e-10 / sqrt( _numProcs );
+//   if( _myRank == 0 ){
+//     std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10, scaled by the number of time steps."<<std::endl
+//              <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
+//              <<"          so make sure to delete it from there!"<<std::endl;    
+//   }
+//   solver.SetTol(tol);
+//   solver.SetRelTol(tol);
+//   solver.SetAbsTol(tol);
+
+
+
+//   // Main "time-stepping" routine *******************************************
+//   std::cerr<<"CHECK TIME-STEPPING! We are solving for gradient, so initial guess should be 0? And what about the temporal contribution to rhs?"<<std::endl;
+
+//   const int totDofs = x.Size();
+//   // - for each time-step, this will contain rhs
+//   BlockVector b( offsets );
+//   b = 0.0;
+  
+//   // - receive solution from previous processor (unless initial time-step)
+//   if ( _myRank > 0 ){
+//     // - use it as initial guess for the solver (so store in y), unless initial step!
+//     MPI_Recv( y.GetData(), totDofs, MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
+//     // - M should be the same for every proc, so it doesn't really matter which one performs the multiplication
+//     _Mu.Mult( y.GetBlock(0), b.GetBlock(0) );
+//     _Ma.Mult( y.GetBlock(3), b.GetBlock(3) );
+//     // - M is stored with negative sign, so flip it
+//     b.GetBlock(0).Neg();
+//     b.GetBlock(3).Neg();
+//   }
+
+//   // - define rhs for this step (includes contribution from sol at previous time-step
+//   b += x;
+
+//   // - solve for current time-step
+//   //  --y acts as an initial guess! So use prev sol, unless first time step
+//   solver.Mult( b, y );
+
+//   int GMRESit    = solver.GetNumIterations();
+//   double resnorm = solver.GetFinalNorm();
+//   std::cout<<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+
+//   if (!std::experimental::filesystem::exists( path2 )){
+//     std::experimental::filesystem::create_directories( path2 );
+//   }
+//   std::string fname2 = path2 + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + ".txt";
+//   std::ofstream myfile;
+//   myfile.open( fname2, std::ios::app );
+//   myfile <<"Solved for time-step "<<_myRank+1<<" in "<<GMRESit<<" iterations. Residual "<<resnorm<<std::endl;
+//   myfile.close();
+
+//   //TODO: I should probably add a check that all the print to file are done in order, but cmon...
+
+
+
+//   // - send solution to following processor (unless last time-step)
+//   if ( _myRank < _numProcs-1 ){
+//     MPI_Send( y.GetData(), totDofs, MPI_DOUBLE, _myRank+1, _myRank+1, _comm );
+//   }
+
+//   // sum residuals at each time step
+//   resnorm*= resnorm;
+//   MPI_Allreduce( MPI_IN_PLACE, &resnorm, 1, MPI_DOUBLE, MPI_SUM, _comm );
+//   double finalResNorm = sqrt(resnorm);
+
+//   // average out iterations at each time step
+//   MPI_Allreduce( MPI_IN_PLACE, &GMRESit, 1, MPI_INT,    MPI_SUM, _comm );
+//   double avgGMRESit = double(GMRESit) / _numProcs;
+
+
+
+
+//   // OUTPUT -----------------------------------------------------------------
+//   // - save #it to convergence to file
+//   if (_myRank == 0){
+//     std::cout<<"Solver converged in "    <<avgGMRESit<<" average GMRES it per time-step.";
+//     std::cout<<" Final residual norm is "<<finalResNorm   <<".\n";
+  
+//     double hmin, hmax, kmin, kmax;
+//     this->GetMeshSize( hmin, hmax, kmin, kmax );
+
+//     std::ofstream myfile;
+//     myfile.open( fname1, std::ios::app );
+//     myfile << _dt*_numProcs << ",\t" << _dt  << ",\t" << _numProcs   << ",\t"
+//            << hmax << ",\t" << hmin << ",\t" << refLvl << ",\t"
+//            << avgGMRESit << ",\t"  << finalResNorm  << std::endl;
+//     myfile.close();
+//   }
+
+//   // wait for write to be completed..possibly non-necessary
+//   MPI_Barrier(_comm);
+
+
+// }
 
 
 
@@ -4123,6 +4529,16 @@ void IMHD2DSTOperatorAssembler::PrintMatrices( const std::string& filename ) con
   myfile.open( myfilename );
   _Cm.PrintMatlab(myfile);
   myfile.close( );
+
+
+  Vector B0(_dim);
+  ComputeAvgB( B0 );
+  double B0norm2 = ( B0(0)*B0(0) + B0(1)*B0(1) ) / (_area*_mu0); 
+  myfilename = filename + "_B0_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  myfile<<B0norm2;
+  myfile.close( );
+
 
 }
 

@@ -10,7 +10,7 @@ MFEM mesh v1.0
 # TETRAHEDRON = 4
 # CUBE        = 5
 #
-# Boundary tags: north=0 east=1 south=2 west=3
+# Boundary tags: north=1 east=2 south=3 west=4
 
 dimension
 2

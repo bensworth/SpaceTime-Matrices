@@ -43,9 +43,9 @@ nT = length(x) / nA;
 WMaix = zeros(size(x));
 for ii =1:nT
   tmp = Mai\x((1:nA)+nA*(ii-1));
-  tmp(ess+1) = 0.;
+  tmp(ess) = 0.;
   tmp = Wa{ii}*tmp;
-  tmp(ess+1) = 0.;
+  tmp(ess) = 0.;
   WMaix((1:nA)+nA*(ii-1)) = tmp;
 
 %     myfileID = fopen( strcat( path(1:end-3), "Maix_", int2str(ii-1), ".dat" ),'r');
@@ -61,7 +61,7 @@ end
 tmp = x;
 for ii =nT:-1:2
   tmp2 = tmp((1:nA)+nA*(ii-2));
-  tmp2(ess+1) = 0.;
+  tmp2(ess) = 0.;
   tmp((1:nA)+nA*(ii-1)) = tmp((1:nA)+nA*(ii-1)) - tmp2;
 %     myfileID = fopen( strcat( path(1:end-3), "temp_", int2str(ii-1), ".dat" ),'r');
 %     outTmp = fscanf(myfileID,'%f');

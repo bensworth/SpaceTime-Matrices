@@ -13,9 +13,9 @@ SpaceTimeWaveSolver::SpaceTimeWaveSolver( const MPI_Comm& comm, const SparseMatr
   _Cp(NULL), _C0(NULL), _Cm(NULL), _Cpsolve(NULL),
   _X(NULL), _Y(NULL), _verbose(verbose){
 
-  if ( timeDep || !symmetric ){
-    std::cerr<<"Error: only supports symmetric, non-time-dep schemes for now"<<std::endl;
-  }
+  // if ( timeDep || !symmetric ){
+  //   std::cerr<<"Error: only supports symmetric, non-time-dep schemes for now"<<std::endl;
+  // }
 
   if( Cp != NULL ) SetDiag( Cp, 0 );
   if( C0 != NULL ) SetDiag( C0, 1 );

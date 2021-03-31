@@ -376,7 +376,7 @@ int main(int argc, char *argv[]){
 
 
   Operator *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *ZZZ1, *ZZZ2, *KKK, *YYY;
-  Vector   *frhs, *grhs, *zrhs, *hrhs, *U0, *P0, *Z0, *A0;
+  Vector   *fres, *gres, *zres, *hres, *U0, *P0, *Z0, *A0;
   // Vector   *uEx, *pEx, *zEx, *aEx;
 
   if( myid == 0 && verbose > 0 ){
@@ -387,7 +387,7 @@ int main(int argc, char *argv[]){
   mhdAssembler->AssembleSystem( FFFu, MMMz, FFFa,
                                 BBB,  ZZZ1, ZZZ2,
                                 KKK,  YYY,
-                                frhs, grhs, zrhs, hrhs,
+                                fres, gres, zres, hres,
                                 U0,   P0,   Z0,   A0  );
 
   BBBt = new TransposeOperator( BBB );
@@ -413,12 +413,12 @@ int main(int argc, char *argv[]){
   MHDOp->SetBlock(3, 0,  YYY);
 
 
-  // - assemble rhs
-  BlockVector rhs(offsets);
-  rhs.GetBlock(0) = *frhs;
-  rhs.GetBlock(1) = *grhs;
-  rhs.GetBlock(2) = *zrhs;
-  rhs.GetBlock(3) = *hrhs;
+  // - assemble resisual (appearing as rhs)
+  BlockVector res(offsets);
+  res.GetBlock(0) = *fres;
+  res.GetBlock(1) = *gres;
+  res.GetBlock(2) = *zres;
+  res.GetBlock(3) = *hres;
 
   // - assemble solution (IG) and initialize delta x (all zeros)
   BlockVector sol(offsets), deltaSol(offsets);
@@ -432,8 +432,8 @@ int main(int argc, char *argv[]){
   deltaSol.GetBlock(3) = 0.;
 
 
-  // - compute residual at zeroth-iteration (only useful for newton: otherwise GMRES does so automatically)
-  double newtonRes = rhs.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
+  // - compute norm of residual at zeroth-iteration (only useful for newton: otherwise GMRES does so automatically)
+  double newtonRes = res.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
   newtonRes*= newtonRes;
   MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
   newtonRes  = sqrt(newtonRes);
@@ -630,8 +630,6 @@ int main(int argc, char *argv[]){
     std::cout << "SOLVE! ****************************************************\n";
   }
 
-  BlockVector res = rhs;
-
 
   // Main loop (newton solver)
   do{ 
@@ -684,12 +682,7 @@ int main(int argc, char *argv[]){
 
     // - Update residual
     // -- apply operator
-    BlockVector Nsol(offsets);
-    Nsol = 0.;
-    mhdAssembler->ApplyOperator( sol, Nsol );
-    // -- subtract result from operator application to original rhs
-    res  = rhs;
-    res -= Nsol;
+    mhdAssembler->ApplyOperator( sol, res );
 
     // -- compute residual norm
     newtonRes = res.Norml2();
@@ -784,10 +777,10 @@ int main(int argc, char *argv[]){
   // delete KKK;
   // delete YYY;
 
-  delete frhs;
-  delete grhs;
-  delete zrhs;
-  delete hrhs;
+  delete fres;
+  delete gres;
+  delete zres;
+  delete hres;
   // delete uEx;
   // delete pEx;
   // delete zEx;

@@ -1,5 +1,5 @@
 function [] = timeStep()
-Pb   = 3;
+Pb   = 4;
 Prec = 0;
 STsolveU = 0;
 STsolveA = 0;
@@ -80,7 +80,7 @@ end
 % apply inverse of Fa*Mai*Fa = Fai*Ma*Fai
 function y = invertCC(x,FFai,Ma,ess)
   y = FFai\(Ma*(FFai\x));
-  y(ess+1) = x(ess+1);  % leave dirichlet nodes untouched
+  y(ess) = x(ess);  % leave dirichlet nodes untouched
 
 end
 
@@ -111,12 +111,16 @@ Aa   = spconvert(load(filename));
 filename = strcat(path, int2str(0),'__','MaNZL.dat');
 MaNZL= spconvert(load(filename));
 
+fileID = fopen( strcat( path, int2str(0), "_essU.dat" ),'r');
+essU = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
+fclose(fileID);
+
 fileID = fopen( strcat( path, int2str(0), "_essP.dat" ),'r');
-essP = fscanf(fileID,'%d');
+essP = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
 
 fileID = fopen( strcat( path, int2str(0), "_essA.dat" ),'r');
-essA = fscanf(fileID,'%d');
+essA = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
   
 
@@ -195,6 +199,8 @@ for pp = 1:NT
       precOp = @(x) Uupi(Lupi(Uubi(Lubi(x))));
     case 1
       precOp = @(x) Uupi(Lupi(Uubi(x)));
+    case 2
+      precOp = @(x) Uupi(Uubi(x));
     otherwise
         error('Preconditioner not recognised')
   end

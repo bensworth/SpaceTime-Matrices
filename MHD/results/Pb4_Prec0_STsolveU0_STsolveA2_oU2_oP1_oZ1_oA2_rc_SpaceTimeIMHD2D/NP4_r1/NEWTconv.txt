@@ -1,0 +1,34 @@
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.33846e-08	100
+2	0.00562675	0.00257273	0.00562675	0	6.50759e-09	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.33846e-08	100
+2	0.00562675	0.00257273	0.00562675	0	6.50759e-09	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.33846e-08	100
+2	0.00562675	0.00257273	0.00562675	0	6.50759e-09	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.33846e-08	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.33846e-08	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.33846e-08	100
+2	0.00562675	0.00257273	0.00562675	0	6.50759e-09	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	3.31036	1.5136	3.31036	0	7.33846e-08	100
+2	0.266137	0.121686	0.266137	0	5.06823e-08	100
+#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
+0	2.18708	1	0	0	0	0
+1	0.951012	0.434832	0.951012	0	7.28291e-08	100
+2	0.00562675	0.00257273	0.00562675	0	6.50522e-09	100
