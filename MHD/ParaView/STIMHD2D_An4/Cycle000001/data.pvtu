@@ -16,7 +16,7 @@
 <PDataArray type="Float64" Name="z" NumberOfComponents="1" format="binary" />
 </PPointData>
 <PCellData>
-	<PDataArray type="Int32" Name="material" NumberOfComponents="1" format="binary"/>
+	<PDataArray type="Int32" Name="attribute" NumberOfComponents="1" format="binary"/>
 </PCellData>
 <Piece Source="proc000000.vtu"/>
 </PUnstructuredGrid>

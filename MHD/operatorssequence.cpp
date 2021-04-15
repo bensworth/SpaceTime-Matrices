@@ -17,8 +17,8 @@ OperatorsSequence::OperatorsSequence(const Array<const Operator*>& ops, const Ar
 
 // Operator application
 void OperatorsSequence::Mult (const Vector & x, Vector & y) const{
-  MFEM_ASSERT(x.Size() == width, "incorrect input Vector size");
-  MFEM_ASSERT(y.Size() == height, "incorrect output Vector size");
+  MFEM_VERIFY(x.Size() == width, "incorrect input Vector size");
+  MFEM_VERIFY(y.Size() == height, "incorrect output Vector size");
 
   _tmp = x;
 
@@ -43,8 +43,8 @@ void OperatorsSequence::Mult (const Vector & x, Vector & y) const{
 
 // Operator transpose application
 void OperatorsSequence::MultTranspose (const Vector & x, Vector & y) const{
-   MFEM_ASSERT(x.Size() == height, "incorrect input Vector size");
-   MFEM_ASSERT(y.Size() == width, "incorrect output Vector size");
+   MFEM_VERIFY(x.Size() == height, "incorrect input Vector size");
+   MFEM_VERIFY(y.Size() == width, "incorrect output Vector size");
 
   _tmp = x;
 

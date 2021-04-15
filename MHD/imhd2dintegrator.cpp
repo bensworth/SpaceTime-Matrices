@@ -15,39 +15,25 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
 
   int dim = el[0]->GetDim();
 
-  elmats(0,0)->SetSize(dof_u*dim, dof_u*dim);
-  elmats(0,1)->SetSize(dof_u*dim, dof_p);
-  elmats(0,2)->SetSize(dof_u*dim, dof_z);
-  elmats(0,3)->SetSize(dof_u*dim, dof_a);
-  elmats(1,0)->SetSize(dof_p,     dof_u*dim);
-  elmats(1,1)->SetSize(dof_p,     dof_p);
-  elmats(1,2)->SetSize(dof_p,     dof_z);
-  elmats(1,3)->SetSize(dof_p,     dof_a);
-  elmats(2,0)->SetSize(dof_z,     dof_u*dim);
-  elmats(2,1)->SetSize(dof_z,     dof_p);
-  elmats(2,2)->SetSize(dof_z,     dof_z);
-  elmats(2,3)->SetSize(dof_z,     dof_a);
-  elmats(3,0)->SetSize(dof_a,     dof_u*dim);
-  elmats(3,1)->SetSize(dof_a,     dof_p);
-  elmats(3,2)->SetSize(dof_a,     dof_z);
-  elmats(3,3)->SetSize(dof_a,     dof_a);
+  elmats(0,0)->SetSize(dof_u*dim, dof_u*dim);  *elmats(0,0) = 0.0;
+  elmats(0,1)->SetSize(dof_u*dim, dof_p);      *elmats(0,1) = 0.0;
+  elmats(0,2)->SetSize(dof_u*dim, dof_z);      *elmats(0,2) = 0.0;
+  elmats(0,3)->SetSize(dof_u*dim, dof_a);      *elmats(0,3) = 0.0;
+  elmats(1,0)->SetSize(dof_p,     dof_u*dim);  *elmats(1,0) = 0.0;
+  elmats(1,1)->SetSize(dof_p,     dof_p);      *elmats(1,1) = 0.0;
+  elmats(1,2)->SetSize(dof_p,     dof_z);      *elmats(1,2) = 0.0;
+  elmats(1,3)->SetSize(dof_p,     dof_a);      *elmats(1,3) = 0.0;
+  elmats(2,0)->SetSize(dof_z,     dof_u*dim);  *elmats(2,0) = 0.0;
+  elmats(2,1)->SetSize(dof_z,     dof_p);      *elmats(2,1) = 0.0;
+  elmats(2,2)->SetSize(dof_z,     dof_z);      *elmats(2,2) = 0.0;
+  elmats(2,3)->SetSize(dof_z,     dof_a);      *elmats(2,3) = 0.0;
+  elmats(3,0)->SetSize(dof_a,     dof_u*dim);  *elmats(3,0) = 0.0;
+  elmats(3,1)->SetSize(dof_a,     dof_p);      *elmats(3,1) = 0.0;
+  elmats(3,2)->SetSize(dof_a,     dof_z);      *elmats(3,2) = 0.0;
+  elmats(3,3)->SetSize(dof_a,     dof_a);      *elmats(3,3) = 0.0;
 
-  *elmats(0,0) = 0.0;
-  *elmats(0,1) = 0.0;
-  *elmats(0,2) = 0.0;
-  *elmats(0,3) = 0.0;
-  *elmats(1,0) = 0.0;
-  *elmats(1,1) = 0.0;
-  *elmats(1,2) = 0.0;
-  *elmats(1,3) = 0.0;
-  *elmats(2,0) = 0.0;
-  *elmats(2,1) = 0.0;
-  *elmats(2,2) = 0.0;
-  *elmats(2,3) = 0.0;
-  *elmats(3,0) = 0.0;
-  *elmats(3,1) = 0.0;
-  *elmats(3,2) = 0.0;
-  *elmats(3,3) = 0.0;
+  DenseMatrix adJ;
+  adJ.SetSize(dim);    
 
   shape_u.SetSize(dof_u);
   shape_p.SetSize(dof_p);
@@ -71,7 +57,8 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     // - Jacobian-related
     const IntegrationPoint &ip = ir.IntPoint(i);
     Tr.SetIntPoint(&ip);
-    const DenseMatrix adJ( Tr.AdjugateJacobian() );
+    CalcAdjugate(Tr.Jacobian(), adJ);
+
     const double detJ = Tr.Weight();
     // - basis functions evaluations (on reference element)
     el[0]->CalcShape(  ip, shape_u  );
@@ -195,7 +182,7 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     // Mass (eventually rescaled by dt) -------------------------------------
     scale = ip.weight * detJ;
 // #ifdef MULT_BY_DT
-    scale *= _dt;
+    // scale *= _dt;
 // #endif
     AddMult_a_VVt( scale, shape_z, *(elmats(2,2)) );
 
@@ -215,7 +202,7 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
 
 
     // Stiffness (eventually rescaled by dt) --------------------------------
-    scale = ip.weight / detJ * _eta;
+    scale = ip.weight / detJ * _eta/_mu0;
 // #ifdef MULT_BY_DT
     scale *= _dt;
 // #endif
@@ -297,14 +284,14 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
     // Mixed Stiffness (eventually rescaled by dt) --------------------------
     scale = ip.weight / detJ;
 // #ifdef MULT_BY_DT
-    scale *= _dt;
+    // scale *= _dt;
 // #endif
     AddMult_a_ABt( scale, gshape_z, gshape_a, *(elmats(2,3)) );
 
-    // NB: integration by parts should give an extra boundary term -int_dO grad(A)n y, however:
-    // - for Dirichlet nodes on A, its contribution is killed (since dA=0 there)
-    // - for Neumann nodes on A, its contribution is also killed (since grad(A)n=0 there, and
-    //    its contribution goes to the rhs)
+    // NB: integration by parts gives an extra boundary term -int_dO grad(A)n y.
+    //     While its contribution is included in the rhs for the Neumann part of
+    //     the boundary, thiw needs to be explicitly computed for the Dirichlet part.
+    //     This is done in AssembleFaceGrad()
 
 
 
@@ -316,6 +303,9 @@ void IncompressibleMHD2DIntegrator::AssembleElementGrad(
   //***********************************************************************
   // Negative Gradient (eventually rescaled by dt) ------------------------
   elmats(0,1)->Transpose( *(elmats(1,0)) );
+
+
+  // elmats(0,2)->Print(mfem::out, elmats(0,2)->NumCols());  
 
 
 }
@@ -345,16 +335,10 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
 
   int dim = el[0]->GetDim();
 
-  elvecs[0]->SetSize(dof_u*dim);
-  elvecs[1]->SetSize(dof_p    );
-  elvecs[2]->SetSize(dof_z    );
-  elvecs[3]->SetSize(dof_a    );
-
-  *(elvecs[0]) = 0.;
-  *(elvecs[1]) = 0.;
-  *(elvecs[2]) = 0.;
-  *(elvecs[3]) = 0.;
-
+  elvecs[0]->SetSize(dof_u*dim);    *(elvecs[0]) = 0.;
+  elvecs[1]->SetSize(dof_p    );    *(elvecs[1]) = 0.;
+  elvecs[2]->SetSize(dof_z    );    *(elvecs[2]) = 0.;
+  elvecs[3]->SetSize(dof_a    );    *(elvecs[3]) = 0.;
 
   shape_u.SetSize(dof_u);
   shape_p.SetSize(dof_p);
@@ -505,7 +489,7 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     // Mass (eventually rescaled by dt) -------------------------------------
     scale = ip.weight * detJ;
 // #ifdef MULT_BY_DT
-    scale *= _dt;
+    // scale *= _dt;
 // #endif
     elvecs[2]->Add( scale*Zeval, shape_z );
 
@@ -515,7 +499,7 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     gshape_z.Mult( gAeval, tempzA );
     scale = ip.weight / detJ;
 // #ifdef MULT_BY_DT
-    scale *= _dt;
+    // scale *= _dt;
 // #endif
     elvecs[2]->Add( scale, tempzA );
 
@@ -536,7 +520,7 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
     // Stiffness (eventually rescaled by dt) --------------------------------
     Vector tempAA(dof_a);
     gshape_a.Mult(gAeval, tempAA);
-    scale = ip.weight / detJ * _eta;
+    scale = ip.weight / detJ * _eta/_mu0;
 // #ifdef MULT_BY_DT
     scale *= _dt;
 // #endif
@@ -554,6 +538,214 @@ void IncompressibleMHD2DIntegrator::AssembleElementVector(
 
 
 }
+
+
+
+
+
+
+void IncompressibleMHD2DIntegrator::AssembleFaceGrad(
+  const Array< const FiniteElement * > &  el1,
+  const Array< const FiniteElement * > &  el2,
+  FaceElementTransformations &  Trans,
+  const Array< const Vector * > &   elfun,
+  const Array2D< DenseMatrix * > &  elmats ){
+
+  if (Trans.Elem2No >= 0){
+    MFEM_ABORT("AssembleFaceGrad only works for boundary faces");
+  }
+
+  int dof_u = el1[0]->GetDof();
+  int dof_p = el1[1]->GetDof();
+  int dof_z = el1[2]->GetDof();
+  int dof_a = el1[3]->GetDof();
+
+  int dim = el1[0]->GetDim();
+
+  elmats(0,0)->SetSize(dof_u*dim, dof_u*dim);   *elmats(0,0) = 0.0;
+  elmats(0,1)->SetSize(dof_u*dim, dof_p);       *elmats(0,1) = 0.0;
+  elmats(0,2)->SetSize(dof_u*dim, dof_z);       *elmats(0,2) = 0.0;
+  elmats(0,3)->SetSize(dof_u*dim, dof_a);       *elmats(0,3) = 0.0;
+  elmats(1,0)->SetSize(dof_p,     dof_u*dim);   *elmats(1,0) = 0.0;
+  elmats(1,1)->SetSize(dof_p,     dof_p);       *elmats(1,1) = 0.0;
+  elmats(1,2)->SetSize(dof_p,     dof_z);       *elmats(1,2) = 0.0;
+  elmats(1,3)->SetSize(dof_p,     dof_a);       *elmats(1,3) = 0.0;
+  elmats(2,0)->SetSize(dof_z,     dof_u*dim);   *elmats(2,0) = 0.0;
+  elmats(2,1)->SetSize(dof_z,     dof_p);       *elmats(2,1) = 0.0;
+  elmats(2,2)->SetSize(dof_z,     dof_z);       *elmats(2,2) = 0.0;
+  elmats(2,3)->SetSize(dof_z,     dof_a);       *elmats(2,3) = 0.0;
+  elmats(3,0)->SetSize(dof_a,     dof_u*dim);   *elmats(3,0) = 0.0;
+  elmats(3,1)->SetSize(dof_a,     dof_p);       *elmats(3,1) = 0.0;
+  elmats(3,2)->SetSize(dof_a,     dof_z);       *elmats(3,2) = 0.0;
+  elmats(3,3)->SetSize(dof_a,     dof_a);       *elmats(3,3) = 0.0;
+
+  shape_z.SetSize(dof_z);
+  shape_Da.SetSize(dof_a, dim);
+  shape_Dan.SetSize(dof_a);
+
+  nor.SetSize(dim);
+  ni.SetSize(dim);
+  nh.SetSize(dim);
+
+  // a simple choice for the integration order; is this OK?
+  int order = el1[2]->GetOrder() + el1[3]->GetOrder();
+  const IntegrationRule *ir = &IntRules.Get(Trans.FaceGeom, order);
+  // const IntegrationRule *ir = IntRule;
+  // if (ir == NULL){
+  //   // a simple choice for the integration order; is this OK?
+  //   int order = el1[2]->GetOrder() + el1[3]->GetOrder();
+  //   // ir = &IntRules.Get(Trans.GetGeometryType(), order);
+  //   ir = &IntRules.Get(Trans.FaceGeom, order);
+  // }
+
+  for (int p = 0; p < ir->GetNPoints(); p++){
+    const IntegrationPoint &ip = ir->IntPoint(p);
+    // compute quantities specific to this integration point
+    // - Jacobian-related
+    IntegrationPoint eip1;
+    Trans.Loc1.Transform(ip, eip1);
+    Trans.Face->SetIntPoint(&ip);
+    Trans.Elem1->SetIntPoint(&eip1);
+    double scale = ip.weight/Trans.Elem1->Weight();
+// #ifdef MULT_BY_DT
+    // scale *= _dt;
+// #endif
+    const DenseMatrix adjJ( Trans.Elem1->AdjugateJacobian() );
+    // CalcAdjugate(Trans.Elem1->Jacobian(), adjJ);
+    // - normal to face
+    if (dim == 1){
+      nor(0) = 2*eip1.x - 1.0;
+    }else{
+      // CalcOrtho(Trans.Jacobian(), nor);
+      CalcOrtho(Trans.Face->Jacobian(), nor);
+    }
+    ni.Set(scale, nor);
+    adjJ.Mult(ni, nh);
+
+    // - basis functions evaluations (on reference element)
+    el1[3]->CalcDShape(eip1, shape_Da);
+    el1[2]->CalcShape(eip1,  shape_z);
+
+
+    //***********************************************************************
+    // z,A block
+    //***********************************************************************
+    // Neumann boundary term (eventually rescaled by dt) --------------------
+    // \int_\Gamma_N < ∇A·n,z >
+    shape_Da.Mult(nh, shape_Dan);
+    AddMult_a_VWt( -1., shape_z, shape_Dan, *elmats(2,3) );
+
+  }
+
+}
+
+
+
+
+
+
+
+
+void IncompressibleMHD2DIntegrator::AssembleFaceVector(
+  const Array< const FiniteElement * > &  el1,
+  const Array< const FiniteElement * > &  el2,
+  FaceElementTransformations &  Trans,
+  const Array< const Vector * > &   elfun,
+  const Array< Vector * > &   elvecs ){
+
+  if (Trans.Elem2No >= 0){
+    MFEM_ABORT("AssembleFaceVector only works for boundary faces");
+  }
+
+  int dof_u = el1[0]->GetDof();
+  int dof_p = el1[1]->GetDof();
+  int dof_z = el1[2]->GetDof();
+  int dof_a = el1[3]->GetDof();
+
+  int dim = el1[0]->GetDim();
+
+  elvecs[0]->SetSize(dof_u*dim);  *(elvecs[0]) = 0.;
+  elvecs[1]->SetSize(dof_p    );  *(elvecs[1]) = 0.;
+  elvecs[2]->SetSize(dof_z    );  *(elvecs[2]) = 0.;
+  elvecs[3]->SetSize(dof_a    );  *(elvecs[3]) = 0.;
+
+  shape_z.SetSize(dof_z);
+  shape_Da.SetSize(dof_a, dim);
+  shape_Dan.SetSize(dof_a);
+
+  nor.SetSize(dim);
+  ni.SetSize(dim);
+  nh.SetSize(dim);
+
+
+  // a simple choice for the integration order; is this OK?
+  int order = el1[2]->GetOrder() + el1[3]->GetOrder();
+  const IntegrationRule *ir = &IntRules.Get(Trans.FaceGeom, order);
+  // const IntegrationRule *ir = IntRule;
+  // if (ir == NULL){
+  //   // a simple choice for the integration order; is this OK?
+  //   int order = el1[2]->GetOrder() + el1[3]->GetOrder();
+  //   // ir = &IntRules.Get(Trans.GetGeometryType(), order);
+  //   ir = &IntRules.Get(Trans.FaceGeom, order);
+  // }
+
+  for (int p = 0; p < ir->GetNPoints(); p++){
+    const IntegrationPoint &ip = ir->IntPoint(p);
+    // compute quantities specific to this integration point
+    // - Jacobian-related
+    IntegrationPoint eip1;
+    Trans.Loc1.Transform(ip, eip1);
+    Trans.Face->SetIntPoint(&ip);
+    Trans.Elem1->SetIntPoint(&eip1);
+    double scale = ip.weight/Trans.Elem1->Weight();
+// #ifdef MULT_BY_DT
+//    scale *= _dt;
+// #endif
+    const DenseMatrix adjJ( Trans.Elem1->AdjugateJacobian() );
+    // CalcAdjugate(Trans.Elem1->Jacobian(), adjJ);
+    // - normal to face
+    if (dim == 1){
+      nor(0) = 2*eip1.x - 1.0;
+    }else{
+      // CalcOrtho(Trans.Jacobian(), nor);
+      CalcOrtho(Trans.Face->Jacobian(), nor);
+    }
+    ni.Set(scale, nor);
+    adjJ.Mult(ni, nh);
+
+    // - basis functions evaluations (on reference element)
+    el1[3]->CalcDShape(eip1, shape_Da);
+    el1[2]->CalcShape(eip1,  shape_z);
+    Vector gAeval(dim);
+    shape_Da.MultTranspose( *(elfun[3]), gAeval ); // ∇A
+
+    //***********************************************************************
+    // z,A block
+    //***********************************************************************
+    // Neumann boundary term (eventually rescaled by dt) --------------------
+    // \int_\Gamma_N < ∇A·n,z >
+    double gAn = gAeval*nh;
+    elvecs[2]->Add( -gAn, shape_z );
+  }
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -581,6 +773,8 @@ const IntegrationRule& IncompressibleMHD2DIntegrator::GetRule(const Array<const 
   ords[0] = 2*ordU + ordGU;       // ( (u·∇)u, v )
   ords[1] = ordZ + ordGA + ordU;  // (   z ∇A, v )
   ords[2] = ordU + ordGA + ordA;  // ( (u·∇A), B )
+
+  // std::cout<<"Selecting integrator of order "<<ords.Max()<<std::endl;
 
   // TODO: this is overkill. I should prescribe different accuracies for each component of the integrator!
   return IntRules.Get( el[0]->GetGeomType(), ords.Max() );

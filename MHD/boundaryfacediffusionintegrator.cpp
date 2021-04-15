@@ -4,10 +4,8 @@
 namespace mfem{
 
 
-// YOU MUST MAKE THIS WORK!!!
 
-
-void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &trial_face_fe,
+void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &trial_fe,
   											  const FiniteElement &test_fe1, const FiniteElement &test_fe2,
   											  FaceElementTransformations &Trans, DenseMatrix &elmat){
 
@@ -18,9 +16,9 @@ void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &tr
   int dim, dof_a, dof_z;
   double w;
 
-  dof_z = trial_face_fe.GetDof();
-  dof_a = test_fe1.GetDof();
-  dim   = test_fe1.GetDim();
+  dof_a = trial_fe.GetDof();
+  dim   = trial_fe.GetDim();
+  dof_z = test_fe1.GetDof();
 
   nor.SetSize(dim);
   nh.SetSize(dim);
@@ -34,14 +32,14 @@ void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &tr
   shape_Da.SetSize(dof_a, dim);
   shape_Dan.SetSize(dof_a);
 
-  elmat.SetSize(dof_a,dof_z);
+  elmat.SetSize(dof_z,dof_a);
   elmat = 0.0;
 
 
   const IntegrationRule *ir = IntRule;
   if (ir == NULL){
     // a simple choice for the integration order; is this OK?
-    int order = trial_face_fe.GetOrder() + test_fe1.GetOrder();
+    int order = trial_fe.GetOrder() + test_fe1.GetOrder();
     // ir = &IntRules.Get(Trans.GetGeometryType(), order);
     ir = &IntRules.Get(Trans.FaceGeom, order);
   }
@@ -68,8 +66,8 @@ void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &tr
       CalcOrtho(Trans.Face->Jacobian(), nor);
     }
 
-    trial_face_fe.CalcShape(eip1, shape_z);
-    test_fe1.CalcDShape(eip1, shape_Da);
+    trial_fe.CalcDShape(eip1, shape_Da);
+    test_fe1.CalcShape(eip1,  shape_z);
 
     Trans.Elem1->SetIntPoint(&eip1);
     w = ip.weight/Trans.Elem1->Weight();
@@ -87,17 +85,7 @@ void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &tr
     adjJ.Mult(ni, nh);
 
     shape_Da.Mult(nh, shape_Dan);
-    AddMult_a_VWt( 1., shape_Dan, shape_z, elmat );
-
-
-    std::cout<<"Point "<< p <<std::endl;
-    std::cout<<"nor "; nor.Print(); std::cout<<std::endl;
-    std::cout<<"ni  "; ni.Print(); std::cout<<std::endl;
-    std::cout<<"nh  "; nh.Print(); std::cout<<std::endl;
-    std::cout<<"Da  "; shape_Da.Print(); std::cout<<std::endl;
-    std::cout<<"Dan "; shape_Dan.Print(); std::cout<<std::endl;
-    std::cout<<"z   "; shape_z.Print(); std::cout<<std::endl;
-
+    AddMult_a_VWt( 1., shape_z, shape_Dan, elmat );
 
     // for (int i = 0; i < ndof1; i++){
     //   for (int j = 0; j < ndof1; j++){
@@ -107,8 +95,6 @@ void BoundaryFaceDiffusionIntegrator::AssembleFaceMatrix(const FiniteElement &tr
 
 
   }
-
-  std::cout<<"elmat  "; elmat.Print(mfem::out,dof_a); std::cout<<std::endl;
 
 
 

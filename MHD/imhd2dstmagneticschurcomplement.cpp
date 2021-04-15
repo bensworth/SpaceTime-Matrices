@@ -103,10 +103,7 @@ void IMHD2DSTMagneticSchurComplement::SetMSolve(){
 
 // initialise solver for space-time wave equation
 void IMHD2DSTMagneticSchurComplement::SetCCinv( const Solver* CCinv ){
-  delete _CCinv;
-
   _CCinv = CCinv;
-  
 }
 
 
@@ -239,7 +236,7 @@ void IMHD2DSTMagneticSchurComplement::Mult( const Vector &x, Vector &y ) const{
   // // THIS IS A NEW ADDITION:
   // // - Ignore action of solver on Dirichlet BC
   // for ( int i = 0; i < _essTDOF.Size(); ++i ){
-  //   temp.GetData()[_essTDOF[i]] = lclData[i];
+  //   temp.GetData()[_essTDOF[i]] = lclData[_essTDOF[i]];
   // }
 
 

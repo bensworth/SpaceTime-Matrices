@@ -1,0 +1,32 @@
+# Config for outer solver (for global space-time matrix)
+-solver_ksp_type preonly
+-solver_pc_type lu
+
+# Solver for Velocity Block preconditioner
+-VSolver_ksp_type 	preonly
+-VSolver_pc_type lu
+
+
+# Solvers for Pressure Block preconditioner
+# - pressure 'laplacian'
+-PSolverLaplacian_ksp_type preonly
+-PSolverLaplacian_pc_type lu
+# -- to make sure that zero pivot are excluded
+# -PSolverLaplacian_pc_factor_shift_type NONZERO
+# -PSolverLaplacian_pc_factor_shift_amount 1e-10
+# - pressure mass matrix
+-PSolverMass_ksp_type preonly
+-PSolverMass_pc_type lu
+
+
+# Solvers for Magnetic Block preconditioner
+# - vector potential
+-ASolverMass_ksp_type preonly
+-ASolverMass_pc_type lu
+# -- wave equation for vector potential
+-AWaveSolver_ksp_type preonly
+-AWaveSolver_pc_type lu
+# - laplacian of vector potential
+-ZSolverMass_ksp_type preonly
+-ZSolverMass_pc_type lu
+

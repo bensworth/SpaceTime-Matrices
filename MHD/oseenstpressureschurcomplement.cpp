@@ -283,12 +283,13 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
     Vector temp = invAxMine;
     temp.SetSubVector( _essQhTDOF, 0.0 );
     _Wp.Mult( temp, lclx );
-    lclx.SetSubVector( _essQhTDOF, 0.0 );
 
   }else{
     // - otherwise, simply apply Mp^-1 to x, and then multiply by mu (or rather, the other way around)
     lclx *= _mu;
   }
+  // either case, kill dirichlet contributions there
+  lclx.SetSubVector( _essQhTDOF, 0.0 );
 
   if (_verbose>50 ){
     std::cout<<"Rank "<<_myRank<<" included contribution from pressure (convection)-diffusion operator"<<std::endl;
@@ -361,11 +362,12 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
   // TODO:
   // This shouldn't be necessary: the dirichlet nodes should already be equal to invAxMine
-  // // THIS IS A NEW ADDITION:
-  // // - only consider action of Ap^-1 on Dirichlet BC
-  // for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
-  //   y(_essQhTDOF[i]) = invAxMine(i);
-  // }
+  //  Actually, not true: I'm flipping the sign on the dirichlet nodes with y.Neg()!
+  // THIS IS A NEW ADDITION:
+  // - only consider action of Ap^-1 on Dirichlet BC
+  for ( int i = 0; i < _essQhTDOF.Size(); ++i ){
+    y(_essQhTDOF[i]) = invAxMine(_essQhTDOF[i]);
+  }
 
 
 

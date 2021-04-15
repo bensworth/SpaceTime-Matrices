@@ -9,8 +9,8 @@ using namespace mfem;
 
 SpaceTimeWaveSolver::SpaceTimeWaveSolver( const MPI_Comm& comm, const SparseMatrix* Cp, const SparseMatrix* C0, const SparseMatrix* Cm,
                                           const Array<int>& essTDOF, bool timeDep, bool symmetric, int verbose):
-  _comm(comm), _timeDep(timeDep), _symmetric(symmetric), _essTDOF(essTDOF),
-  _Cp(NULL), _C0(NULL), _Cm(NULL), _Cpsolve(NULL),
+  _comm(comm), _timeDep(timeDep), _symmetric(symmetric),
+  _Cp(NULL), _C0(NULL), _Cm(NULL), _Cpsolve(NULL), _essTDOF(essTDOF),
   _X(NULL), _Y(NULL), _verbose(verbose){
 
   // if ( timeDep || !symmetric ){

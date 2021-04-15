@@ -26,7 +26,7 @@ private:
 	// problem parameters
 	const double _dt; 	//time step (constant over time-steps for now)
 	const double _mu;		//viscosity
-	const double _eta;	//magnetic resistivity
+	const double _eta;	//electric resistivity
 	const double _mu0;	//magnetic permeability
   int _dim;						//domain dimension (R^d)
 	void(  *_fFunc)( const Vector &, double, Vector & );	// function returning forcing term for velocity (time-dep)
@@ -35,6 +35,7 @@ private:
 	void(  *_nFunc)( const Vector &, double, Vector & );  // function returning mu  * du/dn (time-dep, used to implement BC)
 	double(*_mFunc)( const Vector &, double );            // function returning eta * dA/dn (time-dep, used to implement BC)
 	GridFunction _wFuncCoeff;  			                      // coefficients of (linearised) velocity field
+	GridFunction _qFuncCoeff;  			                      // coefficients of pressure field (initial guess)
 	GridFunction _yFuncCoeff;  			                      // coefficients of (linearised) Laplacian of vector potential
 	GridFunction _cFuncCoeff;  			                      // coefficients of (linearised) vector potential
 	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
@@ -67,10 +68,10 @@ private:
   const int _ordZ;
   const int _ordA;
   // - info on Dirichlet BC
-  Array<int> _essTagsU;
-  Array<int> _essTagsV;
-  Array<int> _essTagsP;
-  Array<int> _essTagsA;
+	// -- for each bdr tag, identifies whether it's Dirichlet (1) or not (0)
+  Array<int> _isEssBdrU; // x component of velocity
+  Array<int> _isEssBdrV; // y component of velocity
+  Array<int> _isEssBdrA; // vector potential
 	Array<int> _essUhTDOF;
 	Array<int> _essPhTDOF;
 	Array<int> _essAhTDOF;
@@ -192,13 +193,15 @@ public:
 	                           void(  *n)(const Vector &, double, Vector &),
 	                           double(*m)(const Vector &, double ),
 	                           void(  *w)(const Vector &, double, Vector &),
+	                           double(*q)(const Vector &, double ),
 	                           double(*y)(const Vector &, double ),
 	                           double(*c)(const Vector &, double ),
 	                           void(  *u)(const Vector &, double, Vector &),
 	                           double(*p)(const Vector &, double ),
 	                           double(*z)(const Vector &, double ),
 	                           double(*a)(const Vector &, double ),
- 														 const Array<int>& essTagsU, const Array<int>& essTagsP, const Array<int>& essTagsA,
+ 														 const Array<int>& essTagsU, const Array<int>& essTagsV, 
+ 														 const Array<int>& essTagsP, const Array<int>& essTagsA,
                              int verbose=0 );
 
 	// // constructor (uses vector of node values to initialise linearised fields)
@@ -253,10 +256,14 @@ public:
 	void SaveExactSolution( const std::string& path, const std::string& filename ) const;
 	void PrintMatrices( const std::string& filename ) const;
 	// TODO:
-	void TimeStep( const BlockVector& rhs, BlockVector& sol, const std::string &fname1, const std::string &path2, int refLvl );
+	void TimeStep( const BlockVector& x, BlockVector& y, const std::string &innerConvpath, int output );
 
 
 private:
+	// get an integration rule for the various integrators
+	const IntegrationRule& GetRule();
+	const IntegrationRule& GetBdrRule();
+
 	// assemble blocks for single time-step 
 	// void AssembleFu();
 	void AssembleMu();

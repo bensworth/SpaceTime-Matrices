@@ -1,5 +1,5 @@
 function [] = spaceTimeSolve()
-Pb   = 4;
+Pb   = 3;
 Prec = 0;
 STsolveU = 0;
 STsolveA = 2;
@@ -10,7 +10,7 @@ oA = 2;
 
 petscOpt = 'rc_SpaceTimeIMHD2D';
 
-r  = 4;
+r  = 3;
 NT = 4;
 
 mu  = 1;
@@ -116,7 +116,37 @@ fclose(fileID);
 fileID = fopen( strcat( path, int2str(0), "_essA.dat" ),'r');
 essA = fscanf(fileID,'%d') + 1; % adjust zero-indexed values
 fclose(fileID);
-  
+
+% useful constants
+NU = size(Mu,1);
+NP = size(B,1);
+NZ = size(Mz,1);
+NA = size(Ma,1);
+
+
+NLrhsu = zeros(NU,NT);
+NLrhsp = zeros(NP,NT);
+NLrhsz = zeros(NZ,NT);
+NLrhsa = zeros(NA,NT);
+for pp=1:NT
+  fileID = fopen( strcat( path, int2str(0), "__NLrhsU_",      int2str(pp-1), ".dat" ),'r');
+  NLrhsu(:,pp) = fscanf(fileID,'%f');
+  fclose(fileID);
+  fileID = fopen( strcat( path, int2str(0), "__NLrhsP_",      int2str(pp-1), ".dat" ),'r');
+  NLrhsp(:,pp) = fscanf(fileID,'%f');
+  fclose(fileID);
+  fileID = fopen( strcat( path, int2str(0), "__NLrhsZ_",      int2str(pp-1), ".dat" ),'r');
+  NLrhsz(:,pp) = fscanf(fileID,'%f');
+  fclose(fileID);
+  fileID = fopen( strcat( path, int2str(0), "__NLrhsA_",      int2str(pp-1), ".dat" ),'r');
+  NLrhsa(:,pp) = fscanf(fileID,'%f');
+  fclose(fileID);
+end
+NLrhsu = NLrhsu(:);
+NLrhsp = NLrhsp(:);
+NLrhsz = NLrhsz(:);
+NLrhsa = NLrhsa(:);
+
 
 % initialise inverses of operators which remain constant throughout the Newton iterations
 % if isempty(essP) % if Ap is singular, fix the last node
@@ -128,12 +158,6 @@ Apinv = decomposition(Ap,   'chol');
 Mpinv = decomposition(Mp,   'chol');
 Mainv = decomposition(MaNZ, 'chol');
 Mzinv = decomposition(Mz,   'chol');
-
-% useful constants
-NU = size(Mu,1);
-NP = size(B,1);
-NZ = size(Mz,1);
-NA = size(Ma,1);
 
 
 
