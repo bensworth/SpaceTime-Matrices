@@ -4,8 +4,8 @@
 #-solver_ksp_monitor_true_residual
 -solver_ksp_converged_reason
 -solver_ksp_monitor_short
--solver_ksp_rtol   1e-3
-#-solver_ksp_atol   1e-10
+-solver_ksp_rtol   1e-2
+-solver_ksp_atol   1e-10
 -solver_ksp_max_it 100
 -solver_ksp_gmres_restart 100	
 -solver_ksp_pc_side RIGHT

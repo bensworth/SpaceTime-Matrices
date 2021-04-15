@@ -570,16 +570,16 @@ int main(int argc, char *argv[]){
   SparseMatrix Fp;
   AssembleAp( _PhFESpace, _essPhTDOF, ir, Ap );
   AssembleMp( _PhFESpace, _essPhTDOF, ir, Mp );
-  // - inverse of operators for p
-  PetscParMatrix ApPetsc( &Ap );
-  PetscLinearSolver Api( ApPetsc, "PSolverLaplacian_" );
-  PetscParMatrix MpPetsc( &Mp );
-  PetscLinearSolver Mpi( MpPetsc, "PSolverMass_" );
-  // // - using own Schur complement class
-  // OseenSTPressureSchurComplement pSi( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, verbose );
-  // SparseMatrix Wp;
-  // pSi.SetAp( &Ap );
-  // pSi.SetMp( &Mp );
+  // // - assembling each component explicitly (implemented later)
+  // PetscParMatrix ApPetsc( &Ap );
+  // PetscLinearSolver Api( ApPetsc, "PSolverLaplacian_" );
+  // PetscParMatrix MpPetsc( &Mp );
+  // PetscLinearSolver Mpi( MpPetsc, "PSolverMass_" );
+  // - using own Schur complement class
+  OseenSTPressureSchurComplement pSi( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, verbose );
+  SparseMatrix Wp;
+  pSi.SetAp( &Ap );
+  pSi.SetMp( &Mp );
 
 
   // Magnetic Schur complement operators
@@ -588,13 +588,13 @@ int main(int argc, char *argv[]){
   SparseMatrix Cp;
   AssembleAa( _AhFESpace, ir, Aa );
   AssembleMa( _AhFESpace, _essAhTDOF, ir, Ma );
-  // - inverse of mass matrix for A
-  PetscParMatrix MaPetsc( &Ma );
-  PetscLinearSolver Mai( MaPetsc, "ASolverMass_" );
-  // // - using own Schur complement class
-  // IMHD2DSTMagneticSchurComplement aSi( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, verbose );
-  // SparseMatrix Wa;
-  // aSi.SetM( &Ma );
+  // // - assembling each component explicitly (implemented later)
+  // PetscParMatrix MaPetsc( &Ma );
+  // PetscLinearSolver Mai( MaPetsc, "ASolverMass_" );
+  // - using own Schur complement class
+  IMHD2DSTMagneticSchurComplement aSi( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, verbose );
+  SparseMatrix Wa;
+  aSi.SetM( &Ma );
 
 
 
@@ -789,46 +789,50 @@ int main(int argc, char *argv[]){
       PetscParMatrix FuPetsc( &Fu );
       PetscLinearSolver Fui( FuPetsc, "VSolver_" );
 
-      // // - Approximate pressure Schur complement inverse
-      // bool isQuietState = true;
-      // for ( int i = 0; i < lclSol.GetBlock(0).Size(); ++i ){
-      //   if ( lclSol.GetBlock(0)[i] != 0. ){
-      //     isQuietState = false;
-      //     break;
-      //   }
-      // }
-      // if ( isQuietState ){
-      //   AssembleWp( _PhFESpace, _essPhTDOF, neuBdrP, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Wp );
-      //   pSi.SetWp( &Wp, isQuietState );
-      // }
-      AssembleFp( _PhFESpace, _essPhTDOF, neuBdrP, _dt, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Fp );
-      Array<const Operator*> pSiops(3);
-      Array<bool>            pSiown(3);
-      pSiops[0] = &Api;      pSiown[0] = false;
-      pSiops[1] = &Fp;       pSiown[1] = false;
-      pSiops[2] = &Mpi;      pSiown[2] = false;
-      OperatorsSequence pSi( pSiops, pSiown );
+      // - Approximate pressure Schur complement inverse
+      // -- Using own class
+      bool isQuietState = true;
+      for ( int i = 0; i < lclSol.GetBlock(0).Size(); ++i ){
+        if ( lclSol.GetBlock(0)[i] != 0. ){
+          isQuietState = false;
+          break;
+        }
+      }
+      if ( isQuietState ){
+        AssembleWp( _PhFESpace, _essPhTDOF, neuBdrP, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Wp );
+        pSi.SetWp( &Wp, isQuietState );
+      }
+      // // -- Assembling each component explicitly
+      // AssembleFp( _PhFESpace, _essPhTDOF, neuBdrP, _dt, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Fp );
+      // Array<const Operator*> pSiops(3);
+      // Array<bool>            pSiown(3);
+      // pSiops[0] = &Api;      pSiown[0] = false;
+      // pSiops[1] = &Fp;       pSiown[1] = false;
+      // pSiops[2] = &Mpi;      pSiown[2] = false;
+      // OperatorsSequence pSi( pSiops, pSiown );
       
 
 
 
-      // // - Approximate magnetic Schur complement inverse
-      // AssembleWa( _AhFESpace, _essAhTDOF, _eta, _mu0, _UhFESpace, lclSol.GetBlock(0), ir, Wa );
-      // AssembleCp( _AhFESpace, _essAhTDOF, _dt,  _mu0, lclSol.GetBlock(3), Fa, Ma, Aa, Cp );
-      // // -- Inverse of main diagonal of wave equation
-      // PetscParMatrix CpPetsc( &Cp );
-      // PetscLinearSolver CCi( CpPetsc, "AWaveSolver_" );
-      // aSi.SetW( &Wa );
-      // aSi.SetCCinv( &CCi );
+      // - Approximate magnetic Schur complement inverse
+      // -- Using own class
+      AssembleWa( _AhFESpace, _essAhTDOF, _eta, _mu0, _UhFESpace, lclSol.GetBlock(0), ir, Wa );
       AssembleCp( _AhFESpace, _essAhTDOF, _dt,  _mu0, lclSol.GetBlock(3), Fa, Ma, Aa, Cp );
+      // --- Inverse of main diagonal of wave equation
       PetscParMatrix CpPetsc( &Cp );
       PetscLinearSolver CCi( CpPetsc, "AWaveSolver_" );
-      Array<const Operator*> aSiops(3);
-      Array<bool>            aSiown(3);
-      aSiops[0] = &Mai;      aSiown[0] = false;
-      aSiops[1] = &Fa;       aSiown[1] = false;
-      aSiops[2] = &CCi;      aSiown[2] = false;
-      OperatorsSequence aSi( aSiops, aSiown );
+      aSi.SetW( &Wa );
+      aSi.SetCCinv( &CCi );
+      // // -- Assembling each component explicitly
+      // AssembleCp( _AhFESpace, _essAhTDOF, _dt,  _mu0, lclSol.GetBlock(3), Fa, Ma, Aa, Cp );
+      // PetscParMatrix CpPetsc( &Cp );
+      // PetscLinearSolver CCi( CpPetsc, "AWaveSolver_" );
+      // Array<const Operator*> aSiops(3);
+      // Array<bool>            aSiown(3);
+      // aSiops[0] = &Mai;      aSiown[0] = false;
+      // aSiops[1] = &Fa;       aSiown[1] = false;
+      // aSiops[2] = &CCi;      aSiown[2] = false;
+      // OperatorsSequence aSi( aSiops, aSiown );
 
 
 
