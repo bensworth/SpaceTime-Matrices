@@ -1,10 +1,9 @@
-// Test file to check correctness of implementation of the MHD integrator
-//  This is done by comparing my own implementation of the BlockNonlinearFormIntegrator
-//  VS the results I would get by using classic MFEM integrators: the results should be
-//  the same (up to machine precision)
+// Test file to check correctness of implementation of time-stepper and
+// preconditioner when using reduced system (without z)
 //---------------------------------------------------------------------------
 #include "mfem.hpp"
 #include "petsc.h"
+#include "testcases.hpp"
 #include "blockUpperTriangularPreconditioner.hpp"
 #include "operatorssequence.hpp"
 #include "operatorsseries.hpp"
@@ -23,80 +22,7 @@
 using namespace std;
 using namespace mfem;
 
-// Kelvin-Helmholtz instability
-void   uFun_ex_an4( const Vector & x, const double t, Vector & u );
-double pFun_ex_an4( const Vector & x, const double t             );
-double zFun_ex_an4( const Vector & x, const double t             );
-double aFun_ex_an4( const Vector & x, const double t             );
-void   fFun_an4(    const Vector & x, const double t, Vector & f );
-void   nFun_an4(    const Vector & x, const double t, Vector & f );
-double gFun_an4(    const Vector & x, const double t             );
-double hFun_an4(    const Vector & x, const double t             );
-double mFun_an4(    const Vector & x, const double t             );
-void   wFun_an4(    const Vector & x, const double t, Vector & w );
-double qFun_an4(    const Vector & x, const double t             );
-double cFun_an4(    const Vector & x, const double t             );
-double yFun_an4(    const Vector & x, const double t             );
-// Kelvin-Helmholtz instability
-void   uFun_ex_KHI( const Vector & x, const double t, Vector & u );
-double pFun_ex_KHI( const Vector & x, const double t             );
-double zFun_ex_KHI( const Vector & x, const double t             );
-double aFun_ex_KHI( const Vector & x, const double t             );
-void   fFun_KHI(    const Vector & x, const double t, Vector & f );
-void   nFun_KHI(    const Vector & x, const double t, Vector & f );
-double gFun_KHI(    const Vector & x, const double t             );
-double hFun_KHI(    const Vector & x, const double t             );
-double mFun_KHI(    const Vector & x, const double t             );
-void   wFun_KHI(    const Vector & x, const double t, Vector & w );
-double qFun_KHI(    const Vector & x, const double t             );
-double cFun_KHI(    const Vector & x, const double t             );
-double yFun_KHI(    const Vector & x, const double t             );
-// Island coalescing
-void   uFun_ex_island( const Vector & x, const double t, Vector & u );
-double pFun_ex_island( const Vector & x, const double t             );
-double zFun_ex_island( const Vector & x, const double t             );
-double aFun_ex_island( const Vector & x, const double t             );
-void   fFun_island(    const Vector & x, const double t, Vector & f );
-void   nFun_island(    const Vector & x, const double t, Vector & f );
-double gFun_island(    const Vector & x, const double t             );
-double hFun_island(    const Vector & x, const double t             );
-double mFun_island(    const Vector & x, const double t             );
-void   wFun_island(    const Vector & x, const double t, Vector & w );
-double qFun_island(    const Vector & x, const double t             );
-double cFun_island(    const Vector & x, const double t             );
-double yFun_island(    const Vector & x, const double t             );
-namespace IslandCoalescenceData{
-  const double delta = 1./(2.*M_PI);
-  const double P0 = 1.;
-  const double epsilon = 0.2;
-  const double mu  = 1e-2;
-  const double eta = 1e-2;
-  const double mu0 = 1.;
-};
-// Rayleigh flow
-void   uFun_ex_rayleigh( const Vector & x, const double t, Vector & u );
-double pFun_ex_rayleigh( const Vector & x, const double t             );
-double zFun_ex_rayleigh( const Vector & x, const double t             );
-double aFun_ex_rayleigh( const Vector & x, const double t             );
-void   fFun_rayleigh(    const Vector & x, const double t, Vector & f );
-void   nFun_rayleigh(    const Vector & x, const double t, Vector & f );
-double gFun_rayleigh(    const Vector & x, const double t             );
-double hFun_rayleigh(    const Vector & x, const double t             );
-double mFun_rayleigh(    const Vector & x, const double t             );
-void   wFun_rayleigh(    const Vector & x, const double t, Vector & w );
-double qFun_rayleigh(    const Vector & x, const double t             );
-double cFun_rayleigh(    const Vector & x, const double t             );
-double yFun_rayleigh(    const Vector & x, const double t             );
-namespace RayleighData{
-  const double U   = 1.;
-  const double B0  = 1.4494e-4;
-  const double rho = 0.4e-4;
-  const double mu0 = 1.256636e-6;
-  const double eta = 1.256636e-6;
-  const double mu  = 0.4e-4;
-  const double d   = 1.;
-  const double A0  = B0/sqrt(mu0*rho);
-};
+
 //---------------------------------------------------------------------------
 // Handy functions for assembling various operators
 void AssembleAp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
@@ -152,6 +78,8 @@ int main(int argc, char *argv[]){
   const int _dim = 2;
   const char *petscrc_file = "rc_SpaceTimeIMHD2D";
 
+  int output = 0;
+  int precType = 2;
 
   int ordU = 2;
   int ordP = 1;
@@ -161,6 +89,7 @@ int main(int argc, char *argv[]){
   int NT = 2;
   int pbType = 5;
   string pbName;
+  bool stab = false;
   int verbose = 0;
 
   double _mu  = 1.0;
@@ -212,6 +141,17 @@ int main(int argc, char *argv[]){
                 "              7-Modified Hartmann flow\n"
                 "             11-Driven cavity flow\n"
         );
+  args.AddOption(&precType, "-P", "--preconditioner",
+                "Type of preconditioner: 0-Cyr et al: Uupi*Lupi*Uubi*Lubi\n"
+                "                        1-Cyr et al simplified: Uupi*Lupi*Uubi\n"
+                "                        2-Cyr et al uber simplified: Uupi*Uubi (default)\n"
+        );
+  args.AddOption(&output, "-out", "--output",
+                "Print paraview solution\n"
+        );
+  args.AddOption(&stab, "-S", "--stab", "-noS", "-noStab",
+                "Stabilise via SUPG (default: false)\n"
+        );
   args.AddOption(&verbose, "-V", "--verbose",
                 "Control how much info to print to terminal:(=-1   print large block matrices, and trigger eigs analysis - bit of a hack)\n"
                 "                                            >0    basic info\n"
@@ -229,7 +169,8 @@ int main(int argc, char *argv[]){
   const double _dt = ( Tend-T0 )/ NT;
 
   const int   maxNewtonIt = 5;
-  const double  newtonTol = 1e-4;
+  const double  newtonRTol = 1e-4;
+  const double  newtonATol = 0.;
 
   MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
 
@@ -245,154 +186,174 @@ int main(int argc, char *argv[]){
   switch (pbType){
     // analytical test-case
     case 4:{
-      mesh_file = "./meshes/tri-square-testAn.mesh";
-      uFun = uFun_ex_an4;
-      pFun = pFun_ex_an4;
-      zFun = zFun_ex_an4;
-      aFun = aFun_ex_an4;
-      fFun = fFun_an4;
-      gFun = gFun_an4;
-      hFun = hFun_an4;
-      nFun = nFun_an4;
-      mFun = mFun_an4;
-      wFun = wFun_an4;
-      qFun = qFun_an4;
-      yFun = yFun_an4;
-      cFun = cFun_an4;
-      // Set BC:
-      // - Dirichlet on u everywhere but on E
-      // - Dirichlet on p on E (outflow, used only in precon)
-      // - Dirichlet on A on W
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2; // E
-      essTagsA.SetSize(1); essTagsA[0] = 4; // W
-      pbName = "An4";
+      mesh_file = Analytical4Data::_meshFile;
+      pbName    = Analytical4Data::_pbName;
+
+      uFun = Analytical4Data::uFun_ex;
+      pFun = Analytical4Data::pFun_ex;
+      zFun = Analytical4Data::zFun_ex;
+      aFun = Analytical4Data::aFun_ex;
+      fFun = Analytical4Data::fFun;
+      gFun = Analytical4Data::gFun;
+      hFun = Analytical4Data::hFun;
+      nFun = Analytical4Data::nFun;
+      mFun = Analytical4Data::mFun;
+      wFun = Analytical4Data::wFun;
+      qFun = Analytical4Data::qFun;
+      yFun = Analytical4Data::yFun;
+      cFun = Analytical4Data::cFun;
+
+      _mu  = Analytical4Data::_mu;
+      _eta = Analytical4Data::_eta;
+      _mu0 = Analytical4Data::_mu0;
+      
+      Analytical4Data::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
+
       break;
     }
     // Kelvin-Helmholtz instability
     case 5:{
-      mesh_file = "./meshes/tri-rect-KHI.mesh";
-      uFun = uFun_ex_KHI;
-      pFun = pFun_ex_KHI;
-      zFun = zFun_ex_KHI;
-      aFun = aFun_ex_KHI;
-      fFun = fFun_KHI;
-      gFun = gFun_KHI;
-      hFun = hFun_KHI;
-      nFun = nFun_KHI;
-      mFun = mFun_KHI;
-      wFun = wFun_KHI;
-      qFun = qFun_KHI;
-      yFun = yFun_KHI;
-      cFun = cFun_KHI;
-      // Set BC:
-      // Top+bottom=1 topLeft+botRight=2 botLeft+topRight=3
-      // - Dirichlet on u,v on top left and bottom right
-      // - Dirichlet on v   on top and bottom
-      // - Dirichlet on v   on top right and bottom left
-      // - No stress on normal component (u) on top right and bottom left
-      // - No stress on tangential component (u) top and bottom
-      // - Dirichlet on p on top right and bottom left (outflow, used only in precon)
-      // - Dirichlet on A on top and bottom
-      essTagsU.SetSize(1); essTagsU[0] = 2; //essTagsU[1] = 1;
-      essTagsV.SetSize(3); essTagsV[0] = 1; essTagsV[1] = 2; essTagsV[2] = 3;
-      essTagsP.SetSize(1); essTagsP[0] = 3;
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      // Set parameters: Re = Lu = ~ 1e3
-      //  - normal derivatives m and n are 0, so no need to rescale those
-      _mu  = 1.5 * 1e-2;
-      _eta = 1e-2;
+      mesh_file = KHIData::_meshFile;
+      pbName    = KHIData::_pbName;
 
-      pbName = "KHI";
+      uFun = KHIData::uFun_ex;
+      pFun = KHIData::pFun_ex;
+      zFun = KHIData::zFun_ex;
+      aFun = KHIData::aFun_ex;
+      fFun = KHIData::fFun;
+      gFun = KHIData::gFun;
+      hFun = KHIData::hFun;
+      nFun = KHIData::nFun;
+      mFun = KHIData::mFun;
+      wFun = KHIData::wFun;
+      qFun = KHIData::qFun;
+      yFun = KHIData::yFun;
+      cFun = KHIData::cFun;
+
+      _mu  = KHIData::_mu;
+      _eta = KHIData::_eta;
+      _mu0 = KHIData::_mu0;
+      
+      KHIData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
+
       break;
     }
     // Island coalescence
     case 6:{
-      mesh_file = "./meshes/tri-square-island.mesh";
-      uFun = uFun_ex_island;
-      pFun = pFun_ex_island;
-      zFun = zFun_ex_island;
-      aFun = aFun_ex_island;
-      fFun = fFun_island;
-      gFun = gFun_island;
-      hFun = hFun_island;
-      nFun = nFun_island;
-      mFun = mFun_island;
-      wFun = wFun_island;
-      qFun = qFun_island;
-      yFun = yFun_island;
-      cFun = cFun_island;
-      // // Set BC: [0,1]x[-1,1]
-      // // Top+bottom=1 Left+Right=2
-      // // - Dirichlet on u on left and right
-      // // - Dirichlet on v on top and bottom
-      // // - No stress on tangential component (u) top and bottom
-      // // - No stress on tangential component (v) left and right
-      // // - Dirichlet on p on top and bottom (outflow, used only in precon)
-      // // - Dirichlet on A on top and bottom
-      // mesh_file = "./meshes/tri-rect-island.mesh";
-      // essTagsU.SetSize(1); essTagsU[0] = 2;
-      // essTagsV.SetSize(1); essTagsV[0] = 1;
-      // essTagsP.SetSize(1); essTagsP[0] = 1;
-      // essTagsA.SetSize(1); essTagsA[0] = 1;
-      // Set BC: [0,1]x[0,1]
-      // Top=1 Left+Right=2 Bottom=3
-      // - Dirichlet on u on left and right
-      // - Dirichlet on v on top and bottom
-      // - No stress on tangential component (u) top and bottom
-      // - No stress on tangential component (v) left, right and bottom
-      // - Dirichlet on p on top (outflow?, used only in precon?)
-      // - Dirichlet on A on top
-      essTagsU.SetSize(1); essTagsU[0] = 2;
-      essTagsV.SetSize(2); essTagsV[0] = 1; essTagsV[1] = 3;
-      essTagsP.SetSize(1); essTagsP[0] = 1;
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      pbName = "IslandCoalescence";
-      _mu  = IslandCoalescenceData::mu;
-      _eta = IslandCoalescenceData::eta;
-      break;
-    }
-    // MHD rayleigh flow
-    case 8:{
-      mesh_file = "./meshes/tri-square-rayleigh.mesh";
-      uFun = uFun_ex_rayleigh;
-      pFun = pFun_ex_rayleigh;
-      zFun = zFun_ex_rayleigh;
-      aFun = aFun_ex_rayleigh;
-      fFun = fFun_rayleigh;
-      gFun = gFun_rayleigh;
-      hFun = hFun_rayleigh;
-      nFun = nFun_rayleigh;
-      mFun = mFun_rayleigh;
-      wFun = wFun_rayleigh;
-      qFun = qFun_rayleigh;
-      yFun = yFun_rayleigh;
-      cFun = cFun_rayleigh;
-      // Set BC:
-      // Dirichlet everywhere but east (outflow?) for u
-      // Dirichlet everywhere for A
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4;
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2;
-      essTagsA.SetSize(4); essTagsA[0] = 1; essTagsA[1] = 2; essTagsA[2] = 3; essTagsA[3] = 4;
-      pbName = "MHDRayleigh";
-      _mu  = RayleighData::mu  / RayleighData::rho;   // they consider rho separately, so I need to rescale everything...
-      _mu0 = RayleighData::rho * RayleighData::mu0;
-      _eta = RayleighData::rho * RayleighData::eta;
+      mesh_file = IslandCoalescenceData::_meshFile;
+      pbName    = IslandCoalescenceData::_pbName;
 
+      uFun = IslandCoalescenceData::uFun_ex;
+      pFun = IslandCoalescenceData::pFun_ex;
+      zFun = IslandCoalescenceData::zFun_ex;
+      aFun = IslandCoalescenceData::aFun_ex;
+      fFun = IslandCoalescenceData::fFun;
+      gFun = IslandCoalescenceData::gFun;
+      hFun = IslandCoalescenceData::hFun;
+      nFun = IslandCoalescenceData::nFun;
+      mFun = IslandCoalescenceData::mFun;
+      wFun = IslandCoalescenceData::wFun;
+      qFun = IslandCoalescenceData::qFun;
+      yFun = IslandCoalescenceData::yFun;
+      cFun = IslandCoalescenceData::cFun;
+
+      _mu  = IslandCoalescenceData::_mu;
+      _eta = IslandCoalescenceData::_eta;
+      _mu0 = IslandCoalescenceData::_mu0;
+      
+      IslandCoalescenceData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
       break;
     }
+    // Tearing mode
+    case 9:{
+      mesh_file = TearingModeData::_meshFile;
+      pbName    = TearingModeData::_pbName;
+
+      uFun = TearingModeData::uFun_ex;
+      pFun = TearingModeData::pFun_ex;
+      zFun = TearingModeData::zFun_ex;
+      aFun = TearingModeData::aFun_ex;
+      fFun = TearingModeData::fFun;
+      gFun = TearingModeData::gFun;
+      hFun = TearingModeData::hFun;
+      nFun = TearingModeData::nFun;
+      mFun = TearingModeData::mFun;
+      wFun = TearingModeData::wFun;
+      qFun = TearingModeData::qFun;
+      yFun = TearingModeData::yFun;
+      cFun = TearingModeData::cFun;
+
+      _mu  = TearingModeData::_mu;
+      _eta = TearingModeData::_eta;
+      _mu0 = TearingModeData::_mu0;
+      
+      TearingModeData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
+      break;
+    }
+    // Tearing mode flipped
+    case 10:{
+      mesh_file = TearingModeFlippedData::_meshFile;
+      pbName    = TearingModeFlippedData::_pbName;
+
+      uFun = TearingModeFlippedData::uFun_ex;
+      pFun = TearingModeFlippedData::pFun_ex;
+      zFun = TearingModeFlippedData::zFun_ex;
+      aFun = TearingModeFlippedData::aFun_ex;
+      fFun = TearingModeFlippedData::fFun;
+      gFun = TearingModeFlippedData::gFun;
+      hFun = TearingModeFlippedData::hFun;
+      nFun = TearingModeFlippedData::nFun;
+      mFun = TearingModeFlippedData::mFun;
+      wFun = TearingModeFlippedData::wFun;
+      qFun = TearingModeFlippedData::qFun;
+      yFun = TearingModeFlippedData::yFun;
+      cFun = TearingModeFlippedData::cFun;
+
+      _mu  = TearingModeFlippedData::_mu;
+      _eta = TearingModeFlippedData::_eta;
+      _mu0 = TearingModeFlippedData::_mu0;
+      
+      TearingModeFlippedData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
+      break;
+    }
+    // Driven cavity flow
+    case 11:{
+      mesh_file = CavityDrivenData::_meshFile;
+      pbName    = CavityDrivenData::_pbName;
+
+      uFun = CavityDrivenData::uFun_ex;
+      pFun = CavityDrivenData::pFun_ex;
+      zFun = CavityDrivenData::zFun_ex;
+      aFun = CavityDrivenData::aFun_ex;
+      fFun = CavityDrivenData::fFun;
+      gFun = CavityDrivenData::gFun;
+      hFun = CavityDrivenData::hFun;
+      nFun = CavityDrivenData::nFun;
+      mFun = CavityDrivenData::mFun;
+      wFun = CavityDrivenData::wFun;
+      qFun = CavityDrivenData::qFun;
+      yFun = CavityDrivenData::yFun;
+      cFun = CavityDrivenData::cFun;
+
+      _mu  = CavityDrivenData::_mu;
+      _eta = CavityDrivenData::_eta;
+      _mu0 = CavityDrivenData::_mu0;
+      
+      CavityDrivenData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
+      break;
+    }
+
     default:
       std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
   }
 
   args.PrintOptions(cout);
-  std::cout<<"   --dt  "<<Tend/numProcs<<std::endl;
-  std::cout<<"   --mu  "<<_mu<<std::endl;
-  std::cout<<"   --eta "<<_eta<<std::endl;
-  std::cout<<"   --mu0 "<<_mu0<<std::endl;
-  std::cout<<"   --Pb  "<<pbName<<std::endl;
+  std::cout<<"   --dt   "<<_dt<<std::endl;
+  std::cout<<"   --mu   "<<_mu<<std::endl;
+  std::cout<<"   --eta  "<<_eta<<std::endl;
+  std::cout<<"   --mu0  "<<_mu0<<std::endl;
+  std::cout<<"   --Pb   "<<pbName<<std::endl;
+  std::cout<<"   --mesh "<<mesh_file<<std::endl;
 
 
 
@@ -410,7 +371,6 @@ int main(int argc, char *argv[]){
   FunctionCoefficient       hFuncCoeff(       hFun );
   VectorFunctionCoefficient nFuncCoeff( _dim, nFun );
   FunctionCoefficient       mFuncCoeff(       mFun );
-
 
 
 
@@ -483,7 +443,30 @@ int main(int argc, char *argv[]){
   // std::cout << "Dir A      "; _essAhTDOF.Print(mfem::out, _essAhTDOF.Size() ); std::cout<< "\n";
   // std::cout << "***********************************************************\n";
 
-  
+  // - initialise paraview output
+  string outFilePath = "ParaView";
+  string outFileName = "STIMHD2D_" + pbName;
+  // -- GridFunction representing solution
+  GridFunction uGF( _UhFESpace );
+  GridFunction pGF( _PhFESpace );
+  GridFunction zGF( _ZhFESpace );
+  GridFunction aGF( _AhFESpace );
+  // -- set up paraview data file
+  ParaViewDataCollection paraviewDC( outFileName, _mesh );
+  paraviewDC.SetPrefixPath(outFilePath);
+  paraviewDC.SetLevelsOfDetail( 2 );
+  paraviewDC.SetDataFormat(VTKFormat::BINARY);
+  paraviewDC.SetHighOrderOutput(true);
+  // -- link wFun, pFun and vFun
+  paraviewDC.RegisterField( "u", &uGF );
+  paraviewDC.RegisterField( "p", &pGF );
+  paraviewDC.RegisterField( "z", &zGF );
+  paraviewDC.RegisterField( "A", &aGF );
+
+
+
+
+
   //*************************************************************************
   // Time-independent operators assembly
   //*************************************************************************
@@ -507,10 +490,10 @@ int main(int argc, char *argv[]){
     pFuncCoeff.SetTime( T0 + _dt*tt );
     zFuncCoeff.SetTime( T0 + _dt*tt );
     aFuncCoeff.SetTime( T0 + _dt*tt );
-    GridFunction uGF(_UhFESpace); uGF.ProjectCoefficient( uFuncCoeff );
-    GridFunction pGF(_PhFESpace); pGF.ProjectCoefficient( pFuncCoeff );
-    GridFunction zGF(_ZhFESpace); zGF.ProjectCoefficient( zFuncCoeff );
-    GridFunction aGF(_AhFESpace); aGF.ProjectCoefficient( aFuncCoeff );
+    uGF.ProjectCoefficient( uFuncCoeff );
+    pGF.ProjectCoefficient( pFuncCoeff );
+    zGF.ProjectCoefficient( zFuncCoeff );
+    aGF.ProjectCoefficient( aFuncCoeff );
     // this is used to evaluate Dirichlet nodes
     sol[tt].GetBlock(0) = uGF;
     sol[tt].GetBlock(1) = pGF;
@@ -520,9 +503,15 @@ int main(int argc, char *argv[]){
 
   // Define integration rule to be used throughout
   Array<int> ords(3);
-  ords[0] = 2*ordU + ordU-1;       // ( (u·∇)u, v )
-  ords[1] = ordZ + ordA-1 + ordU;  // (   z ∇A, v )
-  ords[2] = ordU + ordA-1 + ordA;  // ( (u·∇A), B )
+  if ( !_stab ){
+    ords[0] = 2*ordU + ordU-1;         // ( (u·∇)u, v )
+    ords[1] =   ordU + ordA-1 + ordZ;  // (   z ∇A, v )
+    ords[2] =   ordU + ordA-1 + ordA;  // ( (u·∇A), B )
+  }else{
+    ords[0] = 2*ordU + 2*(ordU-1);                 // ( (u·∇)u, (w·∇)v )
+    ords[1] =   ordU +    ordU-1 + ordA-1 + ordZ;  // (   z ∇A, (w·∇)v )
+    ords[2] = 2*ordU + 2*(ordA-1);                 // ( (u·∇A),  w·∇B )    
+  }
   const IntegrationRule *ir  = &IntRules.Get( Geometry::Type::TRIANGLE, ords.Max() ); // for domains
   const IntegrationRule *bir = &IntRules.Get( Geometry::Type::SEGMENT,  ords.Max() ); // for boundaries
   std::cout<<"Selecting integrator of order "<<ords.Max()<<std::endl;
@@ -554,11 +543,8 @@ int main(int argc, char *argv[]){
   _IMHD2DOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
   // - extract and keep some constant operators
   BlockOperator* dummyJ = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( sol[0] ) );
-  SparseMatrix B  = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(1,0) ) );
-  SparseMatrix Ip = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(1,1) ) );
   SparseMatrix Mz = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,2) ) );
   SparseMatrix K  = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,3) ) );
-  TransposeOperator Bt(&B);
   // - inverse of mass matrix for z
   PetscParMatrix MzPetsc( &Mz );
   PetscLinearSolver Mzi( MzPetsc, "ZSolverMass_" );
@@ -607,6 +593,21 @@ int main(int argc, char *argv[]){
   int newtNonConv      = 0;  
   double tottotGMRESIt = 0;  //leave it as double to avoid round-off when averaging
   double totNewtonIt   = 0;  
+
+  // print to paraview
+  if ( output ){
+    // -- assign to linked variables
+    uGF = sol[0].GetBlock(0);
+    pGF = sol[0].GetBlock(1);
+    zGF = sol[0].GetBlock(2);
+    aGF = sol[0].GetBlock(3);
+    // -- store
+    paraviewDC.SetCycle( 0 );
+    paraviewDC.SetTime( 0. );
+    paraviewDC.Save();
+  }
+
+
 
   for ( int tt = 1; tt < NT+1; ++tt ){
 
@@ -715,7 +716,7 @@ int main(int argc, char *argv[]){
     int newtonIt = 0;
     double newtonRes = lclRes.Norml2();
     double newtonRes0 = newtonRes;
-    double newtonErrWRTPrevIt = newtonTol;
+    double newtonErrWRTPrevIt = newtonATol;
     double totGMRESit = 0.; //leave it as double, so that when I'll average it, it won't round-off
     std::cout << "***********************************************************\n";
     std::cout << "Starting Newton for time-step "<<tt<<", initial residual "<< newtonRes
@@ -733,8 +734,8 @@ int main(int argc, char *argv[]){
     // NEWTON ITERATIONS
     //*************************************************************************
     for ( newtonIt = 0; newtonIt < maxNewtonIt
-                     // && newtonRes >= newtonTol
-                     && newtonRes/newtonRes0 >= newtonTol;
+                     && newtonRes >= newtonATol
+                     && newtonRes/newtonRes0 >= newtonRTol;
                      // && newtonErrWRTPrevIt >= newtonTol;
                      ++newtonIt ){      
 
@@ -744,6 +745,9 @@ int main(int argc, char *argv[]){
       SparseMatrix Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
       SparseMatrix Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
       SparseMatrix Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
+      SparseMatrix Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
+      SparseMatrix B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
+      SparseMatrix Cp = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
       SparseMatrix Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
       SparseMatrix Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
 
@@ -779,7 +783,7 @@ int main(int argc, char *argv[]){
       MHDOp.SetBlock( 0, 1, &Bt );
       MHDOp.SetBlock( 0, 2, &Z  );
       MHDOp.SetBlock( 1, 0, &B  );
-      MHDOp.SetBlock( 1, 1, &Ip );
+      MHDOp.SetBlock( 1, 1, &Cp );
       MHDOp.SetBlock( 2, 0, &Y  );
       MHDOp.SetBlock( 2, 2, &Fa );
 
@@ -845,14 +849,43 @@ int main(int argc, char *argv[]){
       AssembleUub( &Z,        &aSi, Uub );
       AssembleLup( &Fui, &B,        Lup );
       AssembleUup( &Fui, &Bt, &pSi, Uup );
+      
       // - combine them together
-      Array<const Operator*> precOps(4);
-      Array<bool>            precOwn(4);
-      precOps[0] = Lub;  precOwn[0] = true;
-      precOps[1] = Uub;  precOwn[1] = true;
-      precOps[2] = Lup;  precOwn[2] = true;
-      precOps[3] = Uup;  precOwn[3] = true;
+      Array<const Operator*> precOps;
+      Array<bool>            precOwn;
+      switch (precType){
+        // Full Preconditioner Uupi*Lupi*Uubi*Lubi
+        case 0:{
+          precOps.SetSize(4);
+          precOwn.SetSize(4);
+          precOps[0] = Lub;  precOwn[0] = true;
+          precOps[1] = Uub;  precOwn[1] = true;
+          precOps[2] = Lup;  precOwn[2] = true;
+          precOps[3] = Uup;  precOwn[3] = true;
+          break;
+        }
+        // simplified: Uupi*Lupi*Uubi
+        case 1:{
+          precOps.SetSize(3);
+          precOwn.SetSize(3);
+          precOps[0] = Uub;  precOwn[0] = true;
+          precOps[1] = Lup;  precOwn[1] = true;
+          precOps[2] = Uup;  precOwn[2] = true;
+          break;
+        }
+        // uber simplified: Uupi*Uubi
+        case 2:{
+          precOps.SetSize(2);
+          precOwn.SetSize(2);
+          precOps[0] = Uub;  precOwn[0] = true;
+          precOps[1] = Uup;  precOwn[1] = true;
+          break;
+        }
+        default:
+        std::cerr<<"ERROR: Preconditioner type "<<pbType<<" not recognised."<<std::endl;
+      }
       OperatorsSequence MHDPr( precOps, precOwn );
+
 
 
 
@@ -872,10 +905,10 @@ int main(int argc, char *argv[]){
       lclResReduced.GetBlock(2) = lclRes.GetBlock(3);
       solver.Mult( lclResReduced, lclDeltaSolReduced );
 
-      BlockVector tmp( offsetsReduced );
-      MHDOp.Mult( lclDeltaSolReduced, tmp );
-      tmp -= lclResReduced;
-      std::cout<<"Residual norm: "<<tmp.Norml2()<<std::endl;
+      // BlockVector tmp( offsetsReduced );
+      // MHDOp.Mult( lclDeltaSolReduced, tmp );
+      // tmp -= lclResReduced;
+      // std::cout<<"Residual norm: "<<tmp.Norml2()<<std::endl;
 
       BlockVector lclDeltaSol( offsets );
       lclDeltaSol.GetBlock(0) = lclDeltaSolReduced.GetBlock(0);
@@ -950,7 +983,20 @@ int main(int argc, char *argv[]){
 
     sol[tt] = lclSol;
 
- 
+
+    // print to paraview
+    if ( output ){
+      // -- assign to linked variables
+      uGF = sol[tt].GetBlock(0);
+      pGF = sol[tt].GetBlock(1);
+      zGF = sol[tt].GetBlock(2);
+      aGF = sol[tt].GetBlock(3);
+      // -- store
+      paraviewDC.SetCycle( tt );
+      paraviewDC.SetTime( _dt*tt );
+      paraviewDC.Save();
+    }
+
   }
 
   std::cout<<"***********************************************************\n";
@@ -963,11 +1009,8 @@ int main(int argc, char *argv[]){
   std::cout<<"***********************************************************\n";
 
 
-
-  string outFilePath = "ParaView";
-  string outFileName = "STIMHD2D_" + pbName;
  
-  SaveSolution( sol, feSpaces, _dt, _mesh, outFilePath, outFileName );
+  // SaveSolution( sol, feSpaces, _dt, _mesh, outFilePath, outFileName );
 
   if ( pbType == 4 ){
     SaveError( sol, feSpaces, uFun, pFun, zFun, aFun, _dt, _mesh, outFilePath, outFileName + "_err" );
@@ -1383,423 +1426,6 @@ void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, 
 
 
 
-//***************************************************************************
-//TEST CASES OF SOME ACTUAL RELEVANCE
-//***************************************************************************
-// Analytical test-case
-// - define a perturbation to dirty initial guess
-double perturbation(const Vector & x, const double t){
-  double epsilon = 1.;
-  double xx(x(0));
-  double yy(x(1));
-  return( t * epsilon * 0.25*( ( cos(2*M_PI*xx)-1 )*(cos(2*M_PI*yy)-1) ) );
-}
-// - Pick a div-free field
-void uFun_ex_an4(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) =   t * xx*xx*yy;
-  u(1) = - t * xx*yy*yy;
-}
-// - Pick a pressure which is null on boundaries
-double pFun_ex_an4(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( t * sin(M_PI*xx)*sin(M_PI*yy) );
-}
-// - laplacian of vector potential
-double zFun_ex_an4(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( -t * 2*M_PI*M_PI*cos(M_PI*xx)*cos(M_PI*yy) );
-}
-// - vector potential with null normal derivative
-double aFun_ex_an4(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( t * cos(M_PI*xx)*cos(M_PI*yy) );
-}
-// - rhs of velocity counteracts action of every term
-void fFun_an4(const Vector & x, const double t, Vector & f){
-  double xx(x(0));
-  double yy(x(1));
-  //      dt u     + u Grad(u)            - mu Lap(u) + Grad(p)                            + z grad(A) / mu0
-  f(0) =  xx*xx*yy + t*t * xx*xx*xx*yy*yy - t * 2*yy  + t * M_PI*cos(M_PI*xx)*sin(M_PI*yy) + zFun_ex_an4(x,t) * (-t*M_PI*sin(M_PI*xx)*cos(M_PI*yy));
-  f(1) = -xx*yy*yy + t*t * xx*xx*yy*yy*yy + t * 2*xx  + t * M_PI*sin(M_PI*xx)*cos(M_PI*yy) + zFun_ex_an4(x,t) * (-t*M_PI*cos(M_PI*xx)*sin(M_PI*yy));
-}
-// - normal derivative of velocity
-void nFun_an4(const Vector & x, const double t, Vector & n){
-  double xx(x(0));
-  double yy(x(1));
-  n = 0.;
-  if ( yy == 0. || yy == 1.){ //N/S
-    n(0) =    xx*xx;
-    n(1) = -2*xx*yy;
-    if ( yy == 0. ){
-      n*=-1.;
-    }
-  }
-  if ( xx == 0. || xx == 1. ){ //E/W
-    n(0) = 2*xx*yy;
-    n(1) = -yy*yy;
-    if ( xx == 0. ){
-      n*=-1.;
-    }
-  }
-
-  n *= t;
-}
-// - null rhs of pressure
-double gFun_an4(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential counteracts every term
-double hFun_an4( const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  Vector u(2);
-  uFun_ex_an4(x,t,u);
-  double ugradA = u(0)*(-t*M_PI*sin(M_PI*xx)*cos(M_PI*yy))
-                + u(1)*(-t*M_PI*cos(M_PI*xx)*sin(M_PI*yy));
-  //       dtA                       + u Grad(A) - eta/mu0 lap(A)
-  return ( cos(M_PI*xx)*cos(M_PI*yy) + ugradA    - zFun_ex_an4(x,t) );
-}
-// - null normal derivative of vector potential
-double mFun_an4( const Vector & x, const double t ){
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_an4(const Vector & x, const double t, Vector & w){
-  uFun_ex_an4(x,t,w);
-  double ds = perturbation(x,t);
-  w(0) = w(0) + ds;
-  w(1) = w(1) - ds;
-}
-double qFun_an4(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( pFun_ex_an4(x,t) + ds );
-}
-double yFun_an4(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( zFun_ex_an4(x,t) + ds );
-}
-double cFun_an4(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( aFun_ex_an4(x,t) + ds );
-}
-
-
-
-
-
-
-
-
-
-
-
-// Kelvin-Helmholtz instability
-namespace KHIData{
-  const double delta = 0.07957747154595;
-};
-
-// - top velocity of 1.5, bottom velocity of -1.5
-void uFun_ex_KHI(const Vector & x, const double t, Vector & u){
-  u(0) = 0.;
-  u(1) = 0.;
-
-  if ( x(1) >= 0.5 ){
-    u(0) =  1.5;
-  }else{
-    u(0) = -1.5;
-  }
-}
-// - pressure - unused
-double pFun_ex_KHI(const Vector & x, const double t ){
-  return 0.;
-}
-// - laplacian of vector potential - unused
-double zFun_ex_KHI(const Vector & x, const double t ){
-  const double delta = KHIData::delta;
-  double yy(x(1));
-  return ( 1./ ( delta * cosh( yy/delta ) * cosh( yy/delta ) ) );
-}
-// - vector potential
-double aFun_ex_KHI(const Vector & x, const double t ){
-  const double delta = KHIData::delta;
-  double yy(x(1));
-  return ( delta * log( cosh( yy/delta ) ) );
-}
-// - rhs of velocity - unused
-void fFun_KHI(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - normal derivative of velocity
-void nFun_KHI(const Vector & x, const double t, Vector & n){
-  n = 0.;
-}
-// - rhs of pressure - unused
-double gFun_KHI(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential - unused
-double hFun_KHI( const Vector & x, const double t ){
-  return 0.;
-}
-// - normal derivative of vector potential
-double mFun_KHI( const Vector & x, const double t ){
-  double yy(x(1));
-  const double delta = KHIData::delta;
-
-  if( yy ==  1.0 ){
-    return   sinh(yy/delta) / cosh(yy/delta);
-  }else if( yy ==  0.0 ){
-    return - sinh(yy/delta) / cosh(yy/delta);
-  }
-
-  return 0.;
-}
-// - define IG for every linearised variable -> set them to initial conditions
-void wFun_KHI(const Vector & x, const double t, Vector & w){
-  uFun_ex_KHI(x,t,w);
-}
-double qFun_KHI(  const Vector & x, const double t ){
-  return pFun_ex_KHI(x,t);
-}
-double yFun_KHI(  const Vector & x, const double t ){
-  return zFun_ex_KHI(x,t);
-}
-double cFun_KHI(  const Vector & x, const double t ){
-  return aFun_ex_KHI(x,t);
-}
-
-
-
-
-// Island coalescence
-void uFun_ex_island(const Vector & x, const double t, Vector & u){
-  u = 0.;
-}
-// - pressure
-double pFun_ex_island(const Vector & x, const double t ){
-  using namespace IslandCoalescenceData;
-  double xx(x(0));
-  double yy(x(1));
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
-
-  return ( P0 + ( 1. - epsilon*epsilon ) / ( 2.*temp*temp ) );
-}
-// - laplacian of vector potential
-double zFun_ex_island(const Vector & x, const double t ){
-  using namespace IslandCoalescenceData;
-  double xx(x(0));
-  double yy(x(1));
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
-
-  return ( ( 1. - epsilon*epsilon ) / ( delta * temp*temp ) );
-}
-// - vector potential
-double aFun_ex_island(const Vector & x, const double t ){
-  using namespace IslandCoalescenceData;
-  double xx(x(0));
-  double yy(x(1));
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
-
-  if ( t==0 ){
-    return ( delta * log( temp ) + 0.001*cos(M_PI*.5*yy)*cos(M_PI*xx) );  // perturb IC
-  }
-  return ( delta * log( temp ) );
-}
-// - rhs of velocity - unused
-void fFun_island(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - normal derivative of velocity
-void nFun_island(const Vector & x, const double t, Vector & n){
-  n = 0.;
-}
-// - rhs of pressure - unused
-double gFun_island(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential
-double hFun_island( const Vector & x, const double t ){
-  using namespace IslandCoalescenceData;
-  return - eta/mu0 * zFun_ex_island(x,t);
-}
-// - normal derivative of vector potential
-double mFun_island( const Vector & x, const double t ){
-  using namespace IslandCoalescenceData;
-  double xx(x(0));
-  double yy(x(1));
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);  
-
-  if(xx == 1.0){
-    return - epsilon*sin(xx/delta) / temp;
-  }else if( xx == 0.0 ){
-    return   epsilon*sin(xx/delta) / temp;
-  }else if( yy ==  1.0 ){
-    return   sinh(yy/delta) / temp;
-  }else if( yy == 0.0 ){    // this way I also cover the case of a domain [0,1]x[0,1]
-    return 0.;
-  }else if( yy == -1.0 ){
-    return - sinh(yy/delta) / temp;
-  }
-
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_island(const Vector & x, const double t, Vector & w){
-  uFun_ex_island(x,t,w);
-}
-double qFun_island(  const Vector & x, const double t ){
-  return pFun_ex_island(x,t);
-}
-double yFun_island(  const Vector & x, const double t ){
-  return zFun_ex_island(x,t);
-}
-double cFun_island(  const Vector & x, const double t ){
-  return aFun_ex_island(x,t);
-}
-
-
-
-
-// MHD Rayleigh flow
-void uFun_ex_rayleigh(const Vector & x, const double t, Vector & u){
-  using namespace RayleighData;
-  double yy(x(1));
-
-  u(0) = U/4. * (  exp(-A0*yy/d)*erfc( (yy-A0*t)/(2*sqrt(d*t)) )  -  erf( (yy-A0*t)/(2*sqrt(d*t)) ) 
-                 + exp( A0*yy/d)*erfc( (yy+A0*t)/(2*sqrt(d*t)) )  -  erf( (yy+A0*t)/(2*sqrt(d*t)) ) + 2. );
-  u(1) = 0.;
-
-}
-// - pressure - unused?
-double pFun_ex_rayleigh(const Vector & x, const double t ){
-  return 0.;
-}
-// - laplacian of vector potential
-double zFun_ex_rayleigh(const Vector & x, const double t ){
-  double dh = 1e-8;
-
-  // use centered differences
-  Vector xp=x, xm=x;
-  xp(1) += dh;
-  xm(1) -= dh;
-  return ( aFun_ex_rayleigh(xp,t) - 2*aFun_ex_rayleigh(x,t) + aFun_ex_rayleigh(xm,t) ) / (dh*dh);
-
-  // z = - U/4.*sqrt(mu*rho/(M_PI*d*t)) * (-exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t))*(yy-A0*t)/(2*d*t) * (yy-A0*t)          +  exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t))
-  //                                       +exp(-(yy+A0*t)*(yy+A0*t)/(4*d*t))*(yy+A0*t)/(2*d*t) * (yy+A0*t)          -  exp(-(yy+A0*t)*(yy+A0*t)/(4*d*t)) )
-  //     + U/2.*sqrt(mu*rho/M_PI)/A0 * (d+A0*A0*t) * ( exp(-(A0*t-yy)*(A0*t-yy)/(4*d*t)) *(A0*t-yy)/(2*d*t)
-  //                                                 - exp(-(A0*t+yy)*(A0*t+yy)/(4*d*t)) *(A0*t+yy)/(2*d*t) ) / (2*sqrt(d*t))
-  //     - U/4.*sqrt(mu*rho)/A0 *( -A0/d*exp(-A0*yy/d) * ( ( -(A0+A0*A0*exp(A0*yy/d)*yy/d) + (d+A0*( exp(A0*yy/d) + A0/d*exp(A0*yy/d)*yy ) ) )* erfc((yy-A0*t)/(2*sqrt(d*t)))
-  //                                                        + (d+A0*exp(A0*yy/d)*yy) * 2/sqrt(M_PI)*exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t)) * 1/(2*sqrt(d*t)) ) )
-  //     - U/4.*sqrt(mu*rho)/A0 * exp(-A0*yy/d) * ( ( -( A0*A0/d*( A0*exp(A0*yy/d)/d*yy + exp(A0*yy/d) ) ) 
-  //                                                 +  A0*( A0*exp(A0*yy/d)/d + A0/d*exp(A0*yy/d) + A0*A0/d*exp(A0*yy/d)/d*yy ) )* erfc((yy-A0*t)/(2*sqrt(d*t)))
-  //                      ( -(A0+A0*A0*exp(A0*yy/d)*yy/d)  + (d+A0*( exp(A0*yy/d) + A0/d*exp(A0*yy/d)*yy ) ) ) * 2/sqrt(M_PI)*exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t))/(2*sqrt(d*t)) 
-  //                                                   - (d+A0*exp(A0*yy/d)*yy) * exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t))  * (yy-A0*t)/(2*d*t)    /sqrt(d*t*M_PI) 
-  //                                                   + (A0*A0*exp(A0*yy/d)/d*yy + A0*exp(A0*yy/d)) * exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t))/sqrt(d*t*M_PI) 
-  //                                                   )
-  //     THIS IS DONE
-  //     - U/4.*sqrt(mu*rho)/A0 * (   (A0*exp(A0*yy/d)-A0)   * 2/sqrt(M_PI)*exp(-(A0*t+yy)*(A0*t+yy)/(4*d*t)) / (2*sqrt(d*t))
-  //                                + (A0*A0*exp(A0*yy/d)/d) * erfc((A0*t+yy)/(2*sqrt(d*t)))
-  //                                + (A0*exp(A0*yy/d)-A0)   * exp(-(A0*t+yy)*(A0*t+yy)/(4*d*t)) /(2*sqrt(d*t)) 
-  //                                - (d*exp(A0*yy/d)-A0*yy) * exp(-(A0*t+yy)*(A0*t+yy)/(4*d*t)) * 2*(A0*t+yy)/(4*d*t) /(2*sqrt(d*t)) );
-}
-// - vector potential
-double aFun_ex_rayleigh(const Vector & x, const double t ){
-  using namespace RayleighData;
-  double xx(x(0));
-  double yy(x(1));
-
-  double a = -B0*xx + U/2.*sqrt(d*t*mu*rho/M_PI) * ( exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t)) - exp(-(yy+A0*t)*(yy+A0*t)/(4*d*t)) )
-                    + U/4.*sqrt(mu*rho)/A0 * (d+A0*A0*t) * ( erf((A0*t-yy)/(2*sqrt(d*t))) - erf((A0*t+yy)/(2*sqrt(d*t))) )
-                    - U/4.*sqrt(mu*rho)/A0 * exp(-A0*yy/d) * (d+A0*exp(A0*yy/d)*yy) * erfc((yy-A0*t)/(2*sqrt(d*t)))
-                    - U/4.*sqrt(mu*rho)/A0 * (d*exp(A0*yy/d)-A0*yy) * erfc((A0*t+yy)/(2*sqrt(d*t)));
-  return a;
-}
-// - rhs of velocity - unused
-void fFun_rayleigh(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - normal derivative of velocity
-void nFun_rayleigh(const Vector & x, const double t, Vector & n){
-  // using namespace RayleighData;
-  // double xx(x(0));
-  // double yy(x(1));
-  n = 0.;
-
-  // if( yy==0 || yy==5 )
-  //   return;
-  
-  // if( xx==0 || xx==5 ){
-  //   n(0) = U/4. * (  -A0/d*exp(-A0*yy/d)*erfc( (yy-A0*t)/(2*sqrt(d*t)) ) + 1./sqrt(M_PI)*exp(-A0*yy/d)*exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t) )/(2*sqrt(d*t))
-  //                    -  1./sqrt(M_PI)*exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t) ) /(2*sqrt(d*t)) 
-  //                    +A0/d*exp( A0*yy/d)*erfc( (yy+A0*t)/(2*sqrt(d*t)) ) + 1./sqrt(M_PI)*exp( A0*yy/d)*exp(-(yy+A0*t)*(yy+A0*t)/(4*d*t) )/(2*sqrt(d*t))
-  //                    -  1./sqrt(M_PI)*exp(-(yy+A0*t)*(yy+A0*t)/(4*d*t) ) /(2*sqrt(d*t)) );
-  //   if (xx==0)
-  //     n *= -1.;
-  // }
-
-}
-// - rhs of pressure - unused
-double gFun_rayleigh(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential - unused
-double hFun_rayleigh( const Vector & x, const double t ){
-  using namespace RayleighData;
-  return B0*U/2.;
-}
-// - normal derivative of vector potential
-double mFun_rayleigh( const Vector & x, const double t ){
-  using namespace RayleighData;
-  double xx(x(0));
-  double yy(x(1));
-
-  double m = 0.;
-
-  if ( xx==0)
-    m = B0;
-  if ( xx==5)
-    m = -B0;
-  if ( yy==0 || yy==5 ){
-    m =   U/2.*sqrt(d*t*mu*rho/M_PI) * ( exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t)) * (-(yy-A0*t)/(2*d*t)) - exp(-(yy+A0*t)*(yy+A0*t)/(4*d*t)) * (-(yy+A0*t)/(2*d*t)) )
-        + U/2.*sqrt(mu*rho/M_PI)/A0 * (d+A0*A0*t) * ( exp(-(A0*t-yy)*(A0*t-yy)/(4*d*t)) + exp(-(A0*t+yy)*(A0*t+yy)/(4*d*t)) ) / (2*sqrt(d*t))
-        - U/4.*sqrt(mu*rho)/A0 * ( -A0/d * exp(-A0*yy/d) * (d+A0*exp(A0*yy/d)*yy) * erfc((yy-A0*t)/(2*sqrt(d*t)))
-                                  + exp(-A0*yy/d) * (d+A0*( exp(A0*yy/d) + A0/d*exp(A0*yy/d)*yy ) ) * erfc((yy-A0*t)/(2*sqrt(d*t)))
-                                  + exp(-A0*yy/d) * (d+A0*exp(A0*yy/d)*yy) * 2/sqrt(M_PI)*exp(-(yy-A0*t)*(yy-A0*t)/(4*d*t)) * 1/(2*sqrt(d*t)) )
-        - U/4.*sqrt(mu*rho)/A0 * ( (A0*exp(A0*yy/d)-A0) * erfc((A0*t+yy)/(2*sqrt(d*t)))
-                                  +(d*exp(A0*yy/d)-A0*yy) * exp(-(A0*t+yy)*(A0*t+yy)/(4*d*t)) /(2*sqrt(d*t)) );
-    if( yy==0 )
-      m *= -1.;
-  }
-
-  return m;
-}
-// - define perturbed IG for every linearised variable
-void wFun_rayleigh(const Vector & x, const double t, Vector & w){
-  uFun_ex_rayleigh(x,t,w);
-}
-double qFun_rayleigh(  const Vector & x, const double t ){
-  return pFun_ex_rayleigh(x,t);
-}
-double yFun_rayleigh(  const Vector & x, const double t ){
-  return zFun_ex_rayleigh(x,t);
-}
-double cFun_rayleigh(  const Vector & x, const double t ){
-  return aFun_ex_rayleigh(x,t);
-}
-
-
-
-
-
-
 
 
 
@@ -1854,6 +1480,7 @@ void SaveSolution( const Array<BlockVector>& sol,
   delete aFun;
 
 }
+
 
 
 

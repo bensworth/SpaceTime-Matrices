@@ -1,6 +1,7 @@
 #include "imhd2dstoperatorassembler.hpp"
 #include "vectorconvectionintegrator.hpp"
 #include "imhd2dintegrator.hpp"
+#include "imhd2dmassstabintegrator.hpp"
 #include "blockUpperTriangularPreconditioner.hpp"
 #include "spacetimesolver.hpp"
 #include "spacetimewavesolver.hpp"
@@ -50,21 +51,28 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
                                                       double(*a)(const Vector &, double ),
                                                       const Array<int>& essTagsU, const Array<int>& essTagsV,
                                                       const Array<int>& essTagsP, const Array<int>& essTagsA,
-                                                      int verbose ):
+                                                      bool stab, int verbose ):
   _comm(comm), _dt(dt),
   _mu(mu),     _eta(eta),                _mu0(mu0), 
   _fFunc(f),   _gFunc(g),                _hFunc(h), 
   _nFunc(n),                             _mFunc(m), 
+  _fFuncCoeff(2, f),                     _hFuncCoeff(h),
   _uFunc(u),   _pFunc(p),     _zFunc(z), _aFunc(a),
   _ordU(ordU), _ordP(ordP), _ordZ(ordZ), _ordA(ordA),
-  _FFu(comm), _MMz(comm), _FFa(comm), _BB(comm), _ZZ1(comm), _ZZ2(comm), _KK(comm), _YY(comm),
-  _verbose(verbose){
+  _FFu(comm), _MMz(comm), _FFa(comm), _BB(comm), _BBt(comm), _CCs(comm), _ZZ1(comm), _ZZ2(comm), _KK(comm), _YY(comm),
+  _stab(stab), _verbose(verbose){
 
 	MPI_Comm_size( comm, &_numProcs );
 	MPI_Comm_rank( comm, &_myRank );
 
   // this is useful otherwise valgrind complains that we didn't initialise variables...
   SetEverythingUnassembled();
+
+  if ( _stab && _myRank == 0 ){
+    std::cout<<"Warning: SUPG stabilisation requested but not yet implemented\n";
+  }
+
+
 
 	// For each processor:
 	//- generate mesh
@@ -153,8 +161,16 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   feSpaces[2] = _ZhFESpace;
   feSpaces[3] = _AhFESpace;
   _IMHD2DOperator.SetSpaces( feSpaces );
-  _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ) );              // for all bilinear forms
+  _fFuncCoeff.SetTime( _dt*(_myRank+1) ); // useful for stabilisation: never touch this again!
+  _hFuncCoeff.SetTime( _dt*(_myRank+1) );
+  _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta, _stab, &_fFuncCoeff, &_hFuncCoeff ) ); // for bilinforms
   _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ), _isEssBdrA );  // for flux in third equation
+
+  // - if stabilisation is required, I need to tweak the mass matrices definition in the time-stepping procedure, too
+  if ( _stab ){
+    _IMHD2DMassStabOperator.SetSpaces( feSpaces );
+    _IMHD2DMassStabOperator.AddDomainIntegrator(  new IncompressibleMHD2DMassStabIntegrator( _dt, _mu, _mu0, _eta, &_wFuncCoeff, &_cFuncCoeff ) );
+  }
 
   // -- impose Dirichlet BC on non-linear operator
   // --- check if the two velocity components have the same BC
@@ -176,12 +192,16 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     tmpEssTags[3] = &essBdrA;
     Array< Vector * > dummy(4); dummy = NULL;
     _IMHD2DOperator.SetEssentialBC( tmpEssTags, dummy );
+    if ( _stab ){
+       dummy = NULL;
+      _IMHD2DMassStabOperator.SetEssentialBC( tmpEssTags, dummy );
+    }
   }else{
   // --- otherwise I need to use an added feature to mfem (requires modification to the BlockNonlinearForm class)
-    if ( _myRank == 0 ){
-      std::cout<<"Warning! Function BlockNonlinearForm::SetEssentialTrueDofs() is not standard MFEM!"<<std::endl
-               <<"         I had to modify the class to impose different BC on different velocity components."<<std::endl;
-    }
+    // if ( _myRank == 0 ){
+    //   std::cout<<"Warning! Function BlockNonlinearForm::SetEssentialTrueDofs() is not standard MFEM!"<<std::endl
+    //            <<"         I had to modify the class to impose different BC on different velocity components."<<std::endl;
+    // }
     Array< Array<int> * > tmpEssDofs(4);
     Array<int> tempPhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on pressure: they are only used to assemble the pressure operators    
     Array<int> tempZhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on laplacian of vector potential    
@@ -191,35 +211,39 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     tmpEssDofs[3] = &_essAhTDOF;
     Array< Vector * > dummy(4); dummy = NULL;
     _IMHD2DOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
+    if ( _stab ){
+      dummy = NULL;
+      _IMHD2DMassStabOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
+    }
   }
 
 
 
   // - initialise guess on solution from provided analytical functions (if given)
-  _wFuncCoeff.SetSpace(_UhFESpace); _wFuncCoeff = 0.;
-  _qFuncCoeff.SetSpace(_PhFESpace); _qFuncCoeff = 0.;
-  _yFuncCoeff.SetSpace(_ZhFESpace); _yFuncCoeff = 0.;
-  _cFuncCoeff.SetSpace(_AhFESpace); _cFuncCoeff = 0.;
+  _wGridFunc.SetSpace(_UhFESpace); _wGridFunc = 0.;
+  _qGridFunc.SetSpace(_PhFESpace); _qGridFunc = 0.;
+  _yGridFunc.SetSpace(_ZhFESpace); _yGridFunc = 0.;
+  _cGridFunc.SetSpace(_AhFESpace); _cGridFunc = 0.;
   // -- set them to the provided linearised functions (if given)
   if ( w != NULL ){
     VectorFunctionCoefficient coeff( _dim, w );
     coeff.SetTime( _dt*(_myRank+1) );
-    _wFuncCoeff.ProjectCoefficient( coeff );
+    _wGridFunc.ProjectCoefficient( coeff );
   }
   if ( q != NULL ){
     FunctionCoefficient coeff( q );
     coeff.SetTime( _dt*(_myRank+1) );
-    _qFuncCoeff.ProjectCoefficient( coeff );
+    _qGridFunc.ProjectCoefficient( coeff );
   }
   if ( y != NULL ){
     FunctionCoefficient coeff( y );
     coeff.SetTime( _dt*(_myRank+1) );
-    _yFuncCoeff.ProjectCoefficient( coeff );
+    _yGridFunc.ProjectCoefficient( coeff );
   }
   if ( c != NULL ){
     FunctionCoefficient coeff( c );
     coeff.SetTime( _dt*(_myRank+1) );
-    _cFuncCoeff.ProjectCoefficient( coeff );
+    _cGridFunc.ProjectCoefficient( coeff );
   }
 
 
@@ -233,41 +257,19 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   uBC.ProjectCoefficient(uFuncCoeff);
   aBC.ProjectCoefficient(aFuncCoeff);
   for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
-    _wFuncCoeff(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
+    _wGridFunc(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
   }
   for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
-    _cFuncCoeff(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
+    _cGridFunc(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
   }
+
+  // -- finally set handy function coefficients pointing at the gridfunctions (used in _IMHD2DMassStabOperator)
+  _wFuncCoeff.SetGridFunction(&_wGridFunc);
+  _cFuncCoeff.SetGridFunction(&_cGridFunc);
+
 
 }
 
-
-
-
-
-// // constructor (uses vector of node values to initialise linearised fields)
-// IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName,
-//                                                       const int refLvl, const int ordU, const int ordP, const int ordZ, const int ordA,
-//                                                       const double dt, const double mu, const double eta, const double mu0,
-//                                                       void(  *f)(const Vector &, double, Vector &),
-//                                                       double(*g)(const Vector &, double ),
-//                                                       double(*h)(const Vector &, double ),
-//                                                       void(  *n)(const Vector &, double, Vector &),
-//                                                       double(*m)(const Vector &, double ),
-//                                                       const Vector& w,
-//                                                       const Vector& y,
-//                                                       const Vector& c,
-//                                                       void(  *u)(const Vector &, double, Vector &),
-//                                                       double(*p)(const Vector &, double ),
-//                                                       double(*z)(const Vector &, double ),
-//                                                       double(*a)(const Vector &, double ),
-//                                                       int verbose ):
-//   IMHD2DSTOperatorAssembler(  comm, meshName, refLvl, ordU, ordP, ordZ, ordA, dt, mu, eta, mu0,
-//                               f, g, h, n, m, NULL, NULL, NULL, u, p, z, a, verbose ) {
-//     _wFuncCoeff = w;
-//     _yFuncCoeff = y;
-//     _cFuncCoeff = c;
-//   }
 
 
 
@@ -298,9 +300,10 @@ void IMHD2DSTOperatorAssembler::AssembleFu( ){
 
   BilinearForm fuVarf(_UhFESpace);
 
-  VectorCoefficient* wCoeff = NULL;   // need to define them here otherwise they go out of scope for VectorConvectionIntegrator and VectorUDotGradQIntegrator
+  VectorCoefficient* wCoeff = NULL;   // need to define them here otherwise they go out of scope
+                                      //  for VectorConvectionIntegrator and VectorUDotGradQIntegrator
   GridFunction wGridFun( _UhFESpace );
-  wGridFun = _wFuncCoeff;
+  wGridFun = _wGridFunc;
   if ( _wFunc == NULL ){
     wCoeff = new VectorGridFunctionCoefficient( &wGridFun );
   }else{
@@ -315,7 +318,7 @@ void IMHD2DSTOperatorAssembler::AssembleFu( ){
   for ( int i = 0; i < _dim; ++i ){
     for ( int j = 0; j < _dim; ++j ){
       gradWGridFunc(i,j).SetSpace( _UhFESpace );
-      wGridFun.GetDerivative( i+1, j, gradWGridFunc(i,j) );   // pass i+1 here: seems like for GetDerivative the components are 1-idxed and not 0-idxed...
+      wGridFun.GetDerivative( i+1, j, gradWGridFunc(i,j) );   // pass i+1 here: seems like for GetDerivative the components are 1-(not 0)-idxed...
       gradWCoeff->Set( i, j, new GridFunctionCoefficient( &gradWGridFunc(i,j) ) );            //gradWCoeff should take ownership here
     }
   }
@@ -435,7 +438,7 @@ void IMHD2DSTOperatorAssembler::AssembleFa( ){
 
   VectorCoefficient* wCoeff = NULL;   // need to define them here otherwise they go out of scope for ConvectionIntegrator
   GridFunction wGridFun( _UhFESpace );
-  wGridFun = _wFuncCoeff;
+  wGridFun = _wGridFunc;
   if ( _wFunc == NULL ){
     wCoeff = new VectorGridFunctionCoefficient( &wGridFun );
   }else{
@@ -540,7 +543,7 @@ void StokesSTOperatorAssembler::AssembleZ1( ){
 
   GridFunction cGridFun( _AhFESpace );
   if ( _cFunc == NULL ){
-    cGridFun = _cFuncCoeff;
+    cGridFun = _cGridFunc;
   }else{
     FunctionCoefficient cCoeff( _cFunc );
     cCoeff.SetTime( _dt*(_myRank+1) );
@@ -601,7 +604,7 @@ void StokesSTOperatorAssembler::AssembleZ2( ){
 
   Coefficient* yCoeff = NULL;   // need to define them here otherwise they go out of scope
   GridFunction yGridFun( _ZhFESpace );
-  yGridFun = _yFuncCoeff;
+  yGridFun = _yGridFunc;
   if ( _yFunc == NULL ){
     yCoeff = new GridFunctionCoefficient( &yGridFun );
   }else{
@@ -657,7 +660,7 @@ void StokesSTOperatorAssembler::AssembleY( ){
 
   Coefficient* cCoeff = NULL;   // need to define them here otherwise they go out of scope
   GridFunction cGridFun( _AhFESpace );
-  cGridFun = _cFuncCoeff;
+  cGridFun = _cGridFunc;
   if ( _cFunc == NULL ){
     cCoeff = new GridFunctionCoefficient( &cGridFun );
   }else{
@@ -945,7 +948,8 @@ void IMHD2DSTOperatorAssembler::AssembleAp( ){
     aVarf.GetDBFI()->operator[](0)->SetIntRule(ir);
     aVarf.AddInteriorFaceIntegrator(new DGDiffusionIntegrator(one, sigma, kappa));   // contribution to jump across elements
     aVarf.GetFBFI()->operator[](0)->SetIntRule(bir);
-    // aVarf->AddBdrFaceIntegrator(     new DGDiffusionIntegrator(one, sigma, kappa));   // TODO: includes boundary contributions (otherwise you'd be imposing neumann?)
+    // aVarf->AddBdrFaceIntegrator(     new DGDiffusionIntegrator(one, sigma, kappa));   // TODO: includes boundary contributions
+                                                                                         // (otherwise you'd be imposing neumann?)
   }else{
     aVarf.AddDomainIntegrator(  new DiffusionIntegrator( one ));
     aVarf.GetDBFI()->operator[](0)->SetIntRule(ir);
@@ -1055,7 +1059,7 @@ void IMHD2DSTOperatorAssembler::AssembleWp( ){
   }
 
   // include convection
-  VectorGridFunctionCoefficient wCoeff( &_wFuncCoeff );
+  VectorGridFunctionCoefficient wCoeff( &_wGridFunc );
   wVarf.AddDomainIntegrator(new ConvectionIntegrator( wCoeff, 1.0 ));  // if used for NS, make sure both _mu*_Pe=1.0!!
   wVarf.GetDBFI()->operator[](1)->SetIntRule(ir);
 
@@ -1261,7 +1265,7 @@ void IMHD2DSTOperatorAssembler::AssembleWa(){
 
   // include convection
   // - NB: multiplication by dt is handled inside the Schur complement approximation
-  VectorGridFunctionCoefficient wCoeff( &_wFuncCoeff );
+  VectorGridFunctionCoefficient wCoeff( &_wGridFunc );
   wVarf.AddDomainIntegrator(new ConvectionIntegrator( wCoeff, 1.0 ));
   wVarf.GetDBFI()->operator[](1)->SetIntRule(ir);
 
@@ -1325,16 +1329,16 @@ void IMHD2DSTOperatorAssembler::AssembledtuWa(){
   // Assemble bilinear form
   // - define function containing dtw
   //    Use a central difference scheme for this: need to fetch w from previous and next procs
-  const int NU = _wFuncCoeff.Size();
+  const int NU = _wGridFunc.Size();
   GridFunction wCoeffPost(_UhFESpace), wCoeffPrev(_UhFESpace);
   if( _myRank < _numProcs-1 ){
-    MPI_Send( _wFuncCoeff.GetData(), NU, MPI_DOUBLE, _myRank+1, 2*(_myRank),     _comm );
+    MPI_Send( _wGridFunc.GetData(), NU, MPI_DOUBLE, _myRank+1, 2*(_myRank),     _comm );
   }
   if( _myRank > 0 ){
     MPI_Recv( wCoeffPrev.GetData(),  NU, MPI_DOUBLE, _myRank-1, 2*(_myRank-1),   _comm, MPI_STATUS_IGNORE );
   }
   if( _myRank > 0 ){
-    MPI_Send( _wFuncCoeff.GetData(), NU, MPI_DOUBLE, _myRank-1, 2*(_myRank)+1,   _comm );
+    MPI_Send( _wGridFunc.GetData(), NU, MPI_DOUBLE, _myRank-1, 2*(_myRank)+1,   _comm );
   }
   if( _myRank < _numProcs-1 ){
     MPI_Recv( wCoeffPost.GetData(),  NU, MPI_DOUBLE, _myRank+1, 2*(_myRank+1)+1, _comm, MPI_STATUS_IGNORE );
@@ -1349,7 +1353,7 @@ void IMHD2DSTOperatorAssembler::AssembledtuWa(){
   // --- use backward difference for _numProcs-1
   if ( _myRank == _numProcs-1 ){
     // I want to reuse the same formula below, so I just need to be a bit original in how I define wCoeffPost
-    wCoeffPost  = _wFuncCoeff;
+    wCoeffPost  = _wGridFunc;
     wCoeffPost *= 2.;
     wCoeffPost -= wCoeffPrev;
   }
@@ -1481,7 +1485,7 @@ void IMHD2DSTOperatorAssembler::ComputeAvgB( Vector& B0 ) const{
       const IntegrationPoint &ip = ir->IntPoint(j);
       Tr->SetIntPoint(&ip);
       Vector grad;
-      _cFuncCoeff.GetGradient(*Tr,grad);
+      _cGridFunc.GetGradient(*Tr,grad);
       // NB: this will contain \int_{\Omega}[Ax,Ay] dx ...
       grad *= ip.weight * Tr->Weight();
       B0 += grad;
@@ -1538,7 +1542,7 @@ void IMHD2DSTOperatorAssembler::ComputeDomainArea( ){
 //   -- Cm <->    Ma
 //  where B = ||B_0||_2, with B_0 being a space(-time) average of the magnetic field
 //  while Wa is the spatial part of the Fa = Ma + dt Wa operatr
-void IMHD2DSTOperatorAssembler::AssembleCs(){
+void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
 
   // I'm gonna need a mass matrix and a stiffness matrix regardless
   AssembleMaNoZero();
@@ -1687,10 +1691,10 @@ void IMHD2DSTOperatorAssembler::AssembleCs(){
       // ---- first send it its linearisation of u
       GridFunction wFuncCoeffNext( _UhFESpace );
       if ( _myRank > 0 ){
-        MPI_Send(    _wFuncCoeff.GetData(), _wFuncCoeff.Size(), MPI_DOUBLE, _myRank-1, _myRank,   _comm );        
+        MPI_Send(    _wGridFunc.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank-1, _myRank,   _comm );        
       }
       if ( _myRank < _numProcs-1 ){
-        MPI_Recv( wFuncCoeffNext.GetData(), _wFuncCoeff.Size(), MPI_DOUBLE, _myRank+1, _myRank+1, _comm, MPI_STATUS_IGNORE );        
+        MPI_Recv( wFuncCoeffNext.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank+1, _myRank+1, _comm, MPI_STATUS_IGNORE );        
         // ---- reassemble here operator Fa{t+1}      
         const IntegrationRule *ir = &( GetRule() );
         // ----- assemble bilinear form
@@ -1954,17 +1958,35 @@ void IMHD2DSTOperatorAssembler::AssembleSTBlockDiagonal( const SparseMatrix& D, 
 // Code duplication at its worst:
 // - assemble a bunch of block-bidiagonal space-time matrices (representing time-stepping operators)
 inline void IMHD2DSTOperatorAssembler::AssembleFFu( ){ 
-  AssembleSTBlockBiDiagonal( _Fu, _Mu, _FFu, "FFu", _FuAssembled && _MuAssembled, _FFuAssembled );
+  if ( _stab ){
+    AssembleSTBlockBiDiagonal( _Fu, _Mus, _FFu, "FFu", _FuAssembled && _MuAssembled, _FFuAssembled );
+  }else{
+    AssembleSTBlockBiDiagonal( _Fu, _Mu,  _FFu, "FFu", _FuAssembled && _MuAssembled, _FFuAssembled );
+  }
 }
 inline void IMHD2DSTOperatorAssembler::AssembleFFa( ){ 
-  AssembleSTBlockBiDiagonal( _Fa, _Ma, _FFa, "FFa", _FaAssembled && _MaAssembled, _FFaAssembled );
+  if ( _stab ){
+    AssembleSTBlockBiDiagonal( _Fa, _Mas, _FFa, "FFa", _FaAssembled && _MaAssembled, _FFaAssembled );
+  }else{
+    AssembleSTBlockBiDiagonal( _Fa, _Ma,  _FFa, "FFa", _FaAssembled && _MaAssembled, _FFaAssembled );
+  }
 }
 // - assemble a bunch of block-diagonal space-time matrices (representing couplings for all space-time operators)
 inline void IMHD2DSTOperatorAssembler::AssembleMMz( ){ 
   AssembleSTBlockDiagonal( _Mz, _MMz, "MMz", _MzAssembled, _MMzAssembled );
 }
 inline void IMHD2DSTOperatorAssembler::AssembleBB( ){ 
-  AssembleSTBlockDiagonal(  _B,  _BB,  "BB",  _BAssembled,  _BBAssembled );
+  if ( _stab ){
+    AssembleSTBlockBiDiagonal( _B, _Mps, _BB, "BB", _BAssembled, _BBAssembled );
+  }else{
+    AssembleSTBlockDiagonal(   _B,       _BB, "BB", _BAssembled, _BBAssembled );
+  }
+}
+inline void IMHD2DSTOperatorAssembler::AssembleBBt( ){ 
+  AssembleSTBlockDiagonal( _Bt, _BBt, "BBt", _BtAssembled,  _BBtAssembled );
+}
+inline void IMHD2DSTOperatorAssembler::AssembleCCs( ){ 
+  AssembleSTBlockDiagonal( _Cs, _CCs, "CCs", _CsAssembled,  _CCsAssembled );
 }
 inline void IMHD2DSTOperatorAssembler::AssembleZZ1( ){ 
   AssembleSTBlockDiagonal( _Z1, _ZZ1, "ZZ1", _Z1Assembled, _ZZ1Assembled );
@@ -2056,7 +2078,11 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
       SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essUhTDOF, true, _verbose );
 
       temp->SetF( &_Fu );
-      temp->SetM( &_Mu );
+      if ( !_stab ){
+        temp->SetM( &_Mu );
+      }else{
+        temp->SetM( &_Mus );
+      }
       _FFuinv = temp;
 
       _FFuinvAssembled = true;
@@ -2150,7 +2176,8 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
 
     //   if( _numProcs <= maxIt ){
     //     if( _myRank == 0 ){
-    //       std::cerr<<"ERROR: AssembleFFinv: Trying to set solver as "<<maxIt<<" iterations of Parareal, but the fine discretisation only has "<<_numProcs<<" nodes. "
+    //       std::cerr<<"ERROR: AssembleFFinv: Trying to set solver as "<<maxIt
+    //                <<" iterations of Parareal, but the fine discretisation only has "<<_numProcs<<" nodes. "
     //                <<"This is equivalent to time-stepping, so I'm picking that as a solver instead."<<std::endl;
     //     }
         
@@ -2249,8 +2276,8 @@ void IMHD2DSTOperatorAssembler::AssemblePS(){
   // Check if there is advection (if not, some simplifications can be made)
   bool isQuietState = true;
   // - check whether all node values of w are 0
-  for ( int i = 0; i < _wFuncCoeff.Size(); ++i ){
-    if ( _wFuncCoeff[i] != 0. ){
+  for ( int i = 0; i < _wGridFunc.Size(); ++i ){
+    if ( _wGridFunc[i] != 0. ){
       isQuietState = false;
       break;
     }
@@ -2285,7 +2312,7 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
     // Use sequential time-stepping on implicit / explicit leapfrog discretisation to solve for space-time block
     case 0:
     case 1:{
-      AssembleCs();
+      AssembleCCaBlocks();
 
       SpaceTimeWaveSolver *temp  = new SpaceTimeWaveSolver( _comm, NULL, NULL, NULL, _essAhTDOF, false, true, _verbose);
       temp->SetDiag( &_Cm, 2 );
@@ -2300,7 +2327,7 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
 
     // Use full operator assembly Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
     case 2:{
-      AssembleCs();
+      AssembleCCaBlocks();
 
       SpaceTimeWaveSolver *temp  = new SpaceTimeWaveSolver( _comm, NULL, NULL, NULL, _essAhTDOF, true, false, _verbose);
       temp->SetDiag( &_Cm, 2 );
@@ -2315,7 +2342,7 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
 
     // Assemble single time-step, using main diagonal of full operator Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
     case 9:{
-      AssembleCs();
+      AssembleCCaBlocks();
 
       SpaceTimeWaveSolver *temp  = new SpaceTimeWaveSolver( MPI_COMM_SELF, NULL, NULL, NULL, _essAhTDOF, true, false, _verbose);
       temp->SetDiag( &_Cp, 0 );
@@ -2496,7 +2523,8 @@ void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int m
   HYPRE_BoomerAMGSetCoarsenType( FFinv, coarsen_type );
   HYPRE_BoomerAMGSetAggNumLevels( FFinv, 0 );
   HYPRE_BoomerAMGSetStrongThreshold( FFinv, strength_tolC );
-  HYPRE_BoomerAMGSetGridRelaxPoints( FFinv, grid_relax_points );     // TODO: THIS FUNCTION IS DEPRECATED!! nobody knows whose responsibility it is to free grid_relax_points
+  HYPRE_BoomerAMGSetGridRelaxPoints( FFinv, grid_relax_points ); // TODO: THIS FUNCTION IS DEPRECATED!!
+                                                                 //nobody knows whose responsibility it is to free grid_relax_points
   if (relax_type > -1) {
     HYPRE_BoomerAMGSetRelaxType( FFinv, relax_type );
   }
@@ -2540,10 +2568,10 @@ void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int m
 //
 // At each iteration, we need to solve the system
 //  DN(xk) Δxk = b - N(xk), with
-//           ⌈ FFFu(uk) BBB ZZZ1(zk) ZZZ2(Ak) ⌉
-//  DN(xk) = | BBBt                           |.
-//           |              MMMz     KKK      |
-//           ⌊ YYY(uk)               FFFa(uk) ⌋
+//           ⌈ FFFu(uk)  BBBt  ZZZ1(zk) ZZZ2(Ak) ⌉
+//  DN(xk) = | BBB      (CCCs)                   |.
+//           |                 MMMz     KKK      |
+//           ⌊ YYY(uk)                  FFFa(uk) ⌋
 //      
 // This function is designed to be invoked before starting the Newton iterations, and it returns:
 //  - A suitable initial guess for the solution x0, starting from the provided w, y, and c functions,
@@ -2553,7 +2581,8 @@ void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int m
 // Furthermore, it initialises a series of useful auxiliary variables, and assembles the rhs of
 //  the non-linear system b once and for all, storing them internally for later use
 void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz, Operator*& FFFa,
-                                                Operator*& BBB,  Operator*& ZZZ1, Operator*& ZZZ2,
+                                                Operator*& BBB,  Operator*& BBBt, Operator*& CCCs,  
+                                                Operator*& ZZZ1, Operator*& ZZZ2,
                                                 Operator*& KKK,  Operator*& YYY,
                                                 Vector&  fres,   Vector&  gres,   Vector& zres,    Vector& hres,
                                                 Vector&  IGu,    Vector&  IGp,    Vector& IGz,     Vector& IGa  ){
@@ -2578,10 +2607,10 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   // igzLoc.SetSubVectorComplement( _essZhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
   // igaLoc.SetSubVectorComplement( _essAhTDOF, 0.0); // set to zero on interior (non-essential) nodes - TODO: initialise everything to IC?
 
-  // Vector iguLoc = _wFuncCoeff;
+  // Vector iguLoc = _wGridFunc;
   // Vector igpLoc(_PhFESpace->GetTrueVSize()); igpLoc = 0.;     // dirichlet BC are not actually imposed on p
-  // Vector igzLoc = _yFuncCoeff;
-  // Vector igaLoc = _cFuncCoeff;
+  // Vector igzLoc = _yGridFunc;
+  // Vector igaLoc = _cGridFunc;
 
   // - Use linearised state as IG:
   // -- Make sure the Dirichlet BC are already included in w, y, and c
@@ -2593,10 +2622,10 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   offsets[4] = _AhFESpace->GetTrueVSize();
   offsets.PartialSum();
   BlockVector x(offsets);
-  x.GetBlock(0) = _wFuncCoeff;
-  x.GetBlock(1) = _qFuncCoeff;           // IG on p is actually null
-  x.GetBlock(2) = _yFuncCoeff;
-  x.GetBlock(3) = _cFuncCoeff;
+  x.GetBlock(0) = _wGridFunc;
+  x.GetBlock(1) = _qGridFunc;           // IG on p is actually null
+  x.GetBlock(2) = _yGridFunc;
+  x.GetBlock(3) = _cGridFunc;
 
 
 
@@ -2616,20 +2645,23 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
   _Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
   _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
+  _Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
+  _Cs = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
   _Mz = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,2) ) );
   _K  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,3) ) );
   _Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
   _Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
+
   _FuAssembled = true;
   _Z1Assembled = true;
   _Z2Assembled = true;
   _BAssembled  = true; 
+  _BtAssembled  = true; 
+  _CsAssembled  = true; 
   _MzAssembled = true;
   _KAssembled  = true; 
   _YAssembled  = true; 
   _FaAssembled = true;
-
-
 
 
 
@@ -2766,8 +2798,6 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   // --- remember to reset function evaluation for u to the current time
   uFuncCoeff.SetTime( _dt*(_myRank+1) );
 
-  // --- flag that assembly of the velocity mass matrix is now complete
-  _MuAssembled = true;
 
 
 
@@ -2907,9 +2937,42 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   // --- remember to reset function evaluation for A to the current time
   aFuncCoeff.SetTime( _dt*(_myRank+1) );
 
-  // --- flag that assembly of the vector potential mass matrix is now complete
-  _MaAssembled = true;
 
+
+  // - Include modification due to the stabilisation term -------------------
+  if ( _stab ){
+    // - the "stabilised mass matrices" are given by Mu (resp Ma) plus the contribution from the stabilisation term
+    //    Now, Mu and Ma have (in general) the largest sparsity pattern, so I need to add the stabilisation term to them (and not viceversa)
+    //    however, they are stored with zeroes in the submatrices corresponding to Dirichlet nodes, so I first need to clean those entries
+    SparseMatrix tMus, tMas;
+
+    BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+    tMus = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(0,0) ) );
+    _Mps = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(1,0) ) ); // Mps instead is fine as is, as it's a whole new addition
+    tMas = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(3,3) ) );
+
+    // -- kill their dirichlet contribution
+    tMus.EliminateCols( colsU );
+    for (int i = 0; i < _essUhTDOF.Size(); ++i){
+      tMus.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
+    }
+    tMas.EliminateCols( colsA );
+    for (int i = 0; i < _essAhTDOF.Size(); ++i){
+      tMas.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
+    }
+
+    _Mus = _Mu;
+    _Mas = _Ma;
+
+    _Mus.Add( 1., tMus );
+    _Mas.Add( 1., tMas );
+
+  }
+
+
+  // --- flag that assembly of the mass matrices is now complete
+  _MuAssembled = true;
+  _MaAssembled = true;
 
 
 
@@ -3081,7 +3144,13 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   FFFa = &_FFa;
 
   AssembleBB();
-  BBB = &_BB;
+  BBB  = &_BB;
+
+  AssembleBBt();
+  BBBt = &_BBt;
+
+  AssembleCCs();
+  CCCs = &_CCs;
   
   AssembleZZ1();
   ZZZ1 = &_ZZ1;
@@ -3293,6 +3362,7 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
 
 
 
+
   // Include contribution from time derivative ------------------------------
   // - For u
   // -- Send lcl solution to next proc
@@ -3304,10 +3374,11 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
   }
   if ( _myRank > 0 ){
     MPI_Recv(           prevU.GetData(), sizeU, MPI_DOUBLE, _myRank-1, 2*(_myRank-1), _comm, MPI_STATUS_IGNORE );
+    
+    // -- Mu should already be stored with negative sign and scaling by dt
+    _Mu.Mult( prevU, tempU );
+    y.GetBlock(0) += tempU;
   }
-  // -- Mu should already be stored with negative sign and scaling by dt
-  _Mu.Mult( prevU, tempU );
-  y.GetBlock(0) += tempU;
 
 
   // - For A
@@ -3320,10 +3391,38 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
   }
   if ( _myRank > 0 ){
     MPI_Recv(           prevA.GetData(), sizeA, MPI_DOUBLE, _myRank-1, 2*(_myRank-1)+1, _comm, MPI_STATUS_IGNORE );
+    
+    // -- Ma should already be stored with negative sign and scaling by dt
+    _Ma.Mult( prevA, tempA );
+    y.GetBlock(3) += tempA;
   }
-  // -- Ma should already be stored with negative sign and scaling by dt
-  _Ma.Mult( prevA, tempA );
-  y.GetBlock(3) += tempA;
+
+
+  // - For stabilisation terms
+  if ( _stab ){
+    if ( _myRank == 0 ){
+      // for rank 0, this contribution stems from the IC
+      uFuncCoeff.SetTime( 0 );
+      aFuncCoeff.SetTime( 0 );
+      uBC.ProjectCoefficient(uFuncCoeff);
+      aBC.ProjectCoefficient(aFuncCoeff);
+      prevU = uBC;
+      prevA = aBC;
+    }
+    // this contribution from stabilisation depends only on u and A
+    BlockVector stabY(y);
+    BlockVector prevX(myX);
+    prevX = 0.;
+    prevX.GetBlock(0) = prevU;
+    prevX.GetBlock(3) = prevA;
+
+    _IMHD2DMassStabOperator.Mult( prevX, stabY );
+    
+    // -- MassStabOperator should already compute mass matrices with negative sign and scaling by dt
+    y.GetBlock(0) += stabY.GetBlock(0);
+    y.GetBlock(1) += stabY.GetBlock(1);
+    y.GetBlock(3) += stabY.GetBlock(3);
+  }
 
 
   // Compute residual b-N(x) ------------------------------------------------
@@ -3363,13 +3462,13 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   
   // Update internal variables
   for ( int i = 0; i < x.GetBlock(0).Size(); ++i ){
-    _wFuncCoeff(i) = x.GetBlock(0)(i);
+    _wGridFunc(i) = x.GetBlock(0)(i);
   }
   for ( int i = 0; i < x.GetBlock(2).Size(); ++i ){
-    _yFuncCoeff(i) = x.GetBlock(2)(i);
+    _yGridFunc(i) = x.GetBlock(2)(i);
   }
   for ( int i = 0; i < x.GetBlock(3).Size(); ++i ){
-    _cFuncCoeff(i) = x.GetBlock(3)(i);
+    _cGridFunc(i) = x.GetBlock(3)(i);
   }
   // - populate the state vector with Dirichlet nodes, as they have an impact on the non-linear part of the operator
   VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
@@ -3381,10 +3480,10 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   uBC.ProjectCoefficient(uFuncCoeff);
   aBC.ProjectCoefficient(aFuncCoeff);
   for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
-    _wFuncCoeff(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
+    _wGridFunc(_essUhTDOF[i]) = uBC(_essUhTDOF[i]);
   }
   for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
-    _cFuncCoeff(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
+    _cGridFunc(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
   }
 
 
@@ -3411,6 +3510,67 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   _YY.SetBlockDiag(  &_Y,  0, false );
 
 
+  // Include stabilisation contributions
+  if ( _stab ){
+    // - to diagonals in main space-time operator blocks
+    _B.Clear();
+    _Bt.Clear();
+
+    _Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
+    _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
+    _BB.SetBlockDiag(  &_B,  0, false );
+    _BBt.SetBlockDiag( &_Bt, 0, false );
+
+
+    // - to subdiagonals in main space-time operator blocks
+    _Mus.Clear();
+    _Mps.Clear();
+    _Mas.Clear();
+
+    // -- the "stabilised mass matrices" are given by Mu (resp Ma) plus the contribution from the stabilisation term
+    //     Now, Mu and Ma have (in general) the largest sparsity pattern, so I need to add the stabilisation term to them (and not viceversa)
+    //     however, they are stored with zeroes in the submatrices corresponding to Dirichlet nodes, so I first need to clean those entries
+    SparseMatrix tMus, tMas;
+    BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+    tMus = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(0,0) ) );
+    _Mps = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(1,0) ) ); // Mps instead is fine as is, as it's a whole new addition
+    tMas = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(3,3) ) );
+
+    // -- kill their dirichlet contribution
+    Array<int> colsU( x.GetBlock(0).Size() );
+    colsU = 0;
+    for (int i = 0; i < _essUhTDOF.Size(); ++i){
+      colsU[_essUhTDOF[i]] = 1;
+    }
+    tMus.EliminateCols( colsU );
+    for (int i = 0; i < _essUhTDOF.Size(); ++i){
+      tMus.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
+    }
+
+    Array<int> colsA( x.GetBlock(3).Size() );
+    colsA = 0;
+    for (int i = 0; i < _essAhTDOF.Size(); ++i){
+      colsA[_essAhTDOF[i]] = 1;
+    }
+    tMas.EliminateCols( colsA );
+    for (int i = 0; i < _essAhTDOF.Size(); ++i){
+      tMas.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
+    }
+
+    _Mus = _Mu;
+    _Mas = _Ma;
+    _Mus.Add( 1., tMus );
+    _Mas.Add( 1., tMas );
+
+
+
+    // -- finally include them in their respectively space-time matrices
+    _FFu.SetBlockDiag( &_Mus, 1, false );
+    _FFa.SetBlockDiag( &_Mas, 1, false );
+    _BB.SetBlockDiag(  &_Mps, 1, false );
+
+  }
+
 
   // - whole space-time operators for preconditioners
   // -- update pSchur
@@ -3419,8 +3579,8 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   AssembleWp();
   // --- check if there is advection (if not, some simplifications can be made)
   bool isQuietState = true;
-  for ( int i = 0; i < _wFuncCoeff.Size(); ++i ){
-    if ( _wFuncCoeff[i] != 0 ){
+  for ( int i = 0; i < _wGridFunc.Size(); ++i ){
+    if ( _wGridFunc[i] != 0 ){
       isQuietState = false;
       break;
     }
@@ -3447,7 +3607,13 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   // update FFuinv
   switch (_USTSolveType){
     // Use sequential time-stepping to solve for space-time block
-    case 0:
+    case 0:{
+      ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
+      if ( _stab ){
+        ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetM( &_Mus );
+      }
+      break;
+    }
     case 9:{
       ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
 
@@ -3479,7 +3645,7 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
       _Cp.Clear();
       _C0.Clear();
       _Cm.Clear(); 
-      AssembleCs();
+      AssembleCCaBlocks();
       ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
       ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
       ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
@@ -3494,7 +3660,7 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
       _Cp.Clear();
       _C0.Clear();
       _Cm.Clear(); 
-      AssembleCs();
+      AssembleCCaBlocks();
       ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
       
       break;
@@ -3807,7 +3973,8 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
       // mctx.comm = MPI_COMM_WORLD;
       // mctx.vf   = vf;
       // UPErrorMonitorCtx* mctxptr = &mctx;
-      KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
+      KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf,
+                          (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
     }
 
     // Set adjusted tolerances
@@ -3882,7 +4049,8 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
     std::string filename = innerConvpath + "Newton_convergence_results.txt";
     std::ofstream myfile;
     myfile.open( filename, std::ios::app );
-    myfile << _myRank << "\t" << newtonRes << "\t" << newtonRes/newtonRes0 << "\t" << totGMRESit << "\t" << newtonIt << "\t" << (newtonIt < maxNewtonIt) <<std::endl;
+    myfile << _myRank << "\t" << newtonRes << "\t" << newtonRes/newtonRes0 << "\t" 
+           << totGMRESit << "\t" << newtonIt << "\t" << (newtonIt < maxNewtonIt) <<std::endl;
     myfile.close();
   }    
 
@@ -3963,8 +4131,8 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 //   // -- check if there is advection (if not, some simplifications can be made)
 //   bool isQuietState = true;
 //   // --- check whether all node values of w are 0
-//   for ( int i = 0; i < _wFuncCoeff.Size(); ++i ){
-//     if ( _wFuncCoeff[i] != 0. ){
+//   for ( int i = 0; i < _wGridFunc.Size(); ++i ){
+//     if ( _wGridFunc[i] != 0. ){
 //       isQuietState = false;
 //       break;
 //     }
@@ -4079,7 +4247,8 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 
 
 //   // Main "time-stepping" routine *******************************************
-//   std::cerr<<"CHECK TIME-STEPPING! We are solving for gradient, so initial guess should be 0? And what about the temporal contribution to rhs?"<<std::endl;
+//   std::cerr<<"CHECK TIME-STEPPING! We are solving for gradient, so initial guess should be 0?"
+//            <<" And what about the temporal contribution to rhs?"<<std::endl;
 
 //   const int totDofs = x.Size();
 //   // - for each time-step, this will contain rhs
@@ -4188,12 +4357,17 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 // Utils functions
 //-----------------------------------------------------------------------------
 const IntegrationRule& IMHD2DSTOperatorAssembler::GetRule(){
-
   // ----- make sure the integrator used is the same by mimicking imhd2dintegrator
   Array<int> ords(3);
-  ords[0] = 2*_ordU + _ordU-1;          // ( (u·∇)u, v )
-  ords[1] =   _ordU + _ordA-1 + _ordZ;  // (   z ∇A, v )
-  ords[2] =   _ordU + _ordA-1 + _ordA;  // ( (u·∇A), B )
+  if ( !_stab ){
+    ords[0] = 2*_ordU + _ordU-1;          // ( (u·∇)u, v )
+    ords[1] =   _ordU + _ordA-1 + _ordZ;  // (   z ∇A, v )
+    ords[2] =   _ordU + _ordA-1 + _ordA;  // ( (u·∇A), B )
+  }else{
+    ords[0] = 2*_ordU + 2*(_ordU-1);                // ( (u·∇)u, (w·∇)v )
+    ords[1] =   _ordU + _ordU-1 + _ordA-1 + _ordZ;  // (   z ∇A, (w·∇)v )
+    ords[2] = 2*_ordU + 2*(_ordA-1);                // ( (u·∇A),  w·∇B )    
+  }
 
   // TODO: this is overkill. I should prescribe different accuracies for each component of the integrator!
   return IntRules.Get( Geometry::Type::TRIANGLE, ords.Max() );
@@ -4201,12 +4375,17 @@ const IntegrationRule& IMHD2DSTOperatorAssembler::GetRule(){
 }
 
 const IntegrationRule& IMHD2DSTOperatorAssembler::GetBdrRule(){
-
   // ----- make sure the integrator used is the same by mimicking imhd2dintegrator
   Array<int> ords(3);
-  ords[0] = 2*_ordU + _ordU-1;          // ( (u·∇)u, v )
-  ords[1] =   _ordU + _ordA-1 + _ordZ;  // (   z ∇A, v )
-  ords[2] =   _ordU + _ordA-1 + _ordA;  // ( (u·∇A), B )
+  if ( !_stab ){
+    ords[0] = 2*_ordU + _ordU-1;          // ( (u·∇)u, v )
+    ords[1] =   _ordU + _ordA-1 + _ordZ;  // (   z ∇A, v )
+    ords[2] =   _ordU + _ordA-1 + _ordA;  // ( (u·∇A), B )
+  }else{
+    ords[0] = 2*_ordU + 2*(_ordU-1);                // ( (u·∇)u, (w·∇)v )
+    ords[1] =   _ordU + _ordU-1 + _ordA-1 + _ordZ;  // (   z ∇A, (w·∇)v )
+    ords[2] = 2*_ordU + 2*(_ordA-1);                // ( (u·∇A),  w·∇B )    
+  }
 
   // TODO: this is overkill. I should prescribe different accuracies for each component of the integrator!
   return IntRules.Get( Geometry::Type::SEGMENT, ords.Max() );
@@ -4905,6 +5084,8 @@ inline void IMHD2DSTOperatorAssembler::SetEverythingUnassembled(){
   _MaAssembled = false;
   _FaAssembled = false;
   _BAssembled = false;
+  _BtAssembled = false;
+  _CsAssembled = false;
   _Z1Assembled = false;
   _Z2Assembled = false;
   _KAssembled = false;
@@ -4924,6 +5105,8 @@ inline void IMHD2DSTOperatorAssembler::SetEverythingUnassembled(){
   _MMzAssembled = false;
   _FFaAssembled = false;
   _BBAssembled = false;
+  _BBtAssembled = false;
+  _CCsAssembled = false;
   _ZZ1Assembled = false;
   _ZZ2Assembled = false;
   _YYAssembled = false;

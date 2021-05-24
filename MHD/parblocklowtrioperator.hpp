@@ -20,14 +20,22 @@ namespace mfem
 class ParBlockLowTriOperator : public Operator
 {
 public:
+
+   //! Parallel "view" of the operator.
+   enum ParBlockView{ 
+    ROW_VIEW, ///< Each processor holds blocks in the same *row*
+    COL_VIEW  ///< Each processor holds blocks in the same *column*
+   };
+
    //! Constructor for ParBlockLowTriOperator.
    /**
     *  @param comm  The communicator over which the operator is shared. It's used to 
     *                define the block size of the matrix (=number of processors)
-    *
+    *  @param view  Defines the "view" each processor has of the whole operators
+    *                (ie, whether it holds its row -default- or column blocks)
     *
     */
-   ParBlockLowTriOperator( const MPI_Comm& comm );
+   ParBlockLowTriOperator( const MPI_Comm& comm, const ParBlockView& view=ROW_VIEW );
 
 
    //! Constructor for ParBlockLowTriOperator.
@@ -65,6 +73,8 @@ public:
 private:
 
   const MPI_Comm _comm;
+  const ParBlockView _view;
+
   int _numProcs;
   int _myRank;
 

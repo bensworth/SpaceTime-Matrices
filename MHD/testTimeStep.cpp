@@ -7,6 +7,7 @@
 #include "petsc.h"
 #include "blockUpperTriangularPreconditioner.hpp"
 #include "operatorssequence.hpp"
+#include "operatorsseries.hpp"
 #include "imhd2dintegrator.hpp"
 #include "imhd2dstmagneticschurcomplement.hpp"
 #include "oseenstpressureschurcomplement.hpp"
@@ -68,8 +69,8 @@ namespace IslandCoalescenceData{
   const double delta = 1./(2.*M_PI);
   const double P0 = 1.;
   const double epsilon = 0.2;
-  const double mu  = 1e-1;
-  const double eta = 1e-1;
+  const double mu  = 1e-2;
+  const double eta = 1e-2;
   const double mu0 = 1.;
 };
 // Rayleigh flow
@@ -104,6 +105,9 @@ void AssembleMp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
                  const IntegrationRule *ir, SparseMatrix& _Mp );
 void AssembleWp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF, const Array<int>& neuBdrP,
                  double _mu, FiniteElementSpace *_UhFESpace, const Vector& w,
+                 const IntegrationRule *ir, const IntegrationRule *bir, SparseMatrix& _Wp );
+void AssembleFp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF, const Array<int>& neuBdrP,
+                 double _dt, double _mu, FiniteElementSpace *_UhFESpace, const Vector& w,
                  const IntegrationRule *ir, const IntegrationRule *bir, SparseMatrix& _Wp );
 void AssembleAa( FiniteElementSpace *_AhFESpace, const IntegrationRule *ir, SparseMatrix& Aa );
 void AssembleMa( FiniteElementSpace *_AhFESpace, const Array<int>& _essAhTDOF, const IntegrationRule *ir, SparseMatrix& Ma );
@@ -225,8 +229,8 @@ int main(int argc, char *argv[]){
 
   const double _dt = ( Tend-T0 )/ NT;
 
-  const int   maxNewtonIt = 10;
-  const double  newtonTol = 1e-9;
+  const int   maxNewtonIt = 5;
+  const double  newtonTol = 1e-4;
 
   MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
 
@@ -237,11 +241,6 @@ int main(int argc, char *argv[]){
   Array<int> essTagsV(0);
   Array<int> essTagsP(0);
   Array<int> essTagsA(0);
-
-  essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-  essTagsV = essTagsU;
-  essTagsP.SetSize(1); essTagsP[0] = 2; // E
-  essTagsA.SetSize(1); essTagsA[0] = 1;
 
 
   switch (pbType){
@@ -303,15 +302,15 @@ int main(int argc, char *argv[]){
       essTagsA.SetSize(1); essTagsA[0] = 1;
       // Set parameters: Re = Lu = ~ 1e3
       //  - normal derivatives m and n are 0, so no need to rescale those
-      _mu  = 1.5 * 1e-3;
-      _eta = 1e-3;
+      _mu  = 1.5 * 1e-2;
+      _eta = 1e-2;
 
       pbName = "KHI";
       break;
     }
     // Island coalescence
     case 6:{
-      mesh_file = "./meshes/tri-rect-island.mesh";
+      mesh_file = "./meshes/tri-square-island.mesh";
       uFun = uFun_ex_island;
       pFun = pFun_ex_island;
       zFun = zFun_ex_island;
@@ -325,16 +324,29 @@ int main(int argc, char *argv[]){
       qFun = qFun_island;
       yFun = yFun_island;
       cFun = cFun_island;
-      // Set BC:
-      // Top+bottom=1 Left+Right=2
+      // // Set BC: [0,1]x[-1,1]
+      // // Top+bottom=1 Left+Right=2
+      // // - Dirichlet on u on left and right
+      // // - Dirichlet on v on top and bottom
+      // // - No stress on tangential component (u) top and bottom
+      // // - No stress on tangential component (v) left and right
+      // // - Dirichlet on p on top and bottom (outflow, used only in precon)
+      // // - Dirichlet on A on top and bottom
+      // mesh_file = "./meshes/tri-rect-island.mesh";
+      // essTagsU.SetSize(1); essTagsU[0] = 2;
+      // essTagsV.SetSize(1); essTagsV[0] = 1;
+      // essTagsP.SetSize(1); essTagsP[0] = 1;
+      // essTagsA.SetSize(1); essTagsA[0] = 1;
+      // Set BC: [0,1]x[0,1]
+      // Top=1 Left+Right=2 Bottom=3
       // - Dirichlet on u on left and right
       // - Dirichlet on v on top and bottom
       // - No stress on tangential component (u) top and bottom
-      // - No stress on tangential component (v) left and right
-      // - Dirichlet on p on top and bottom (outflow, used only in precon)
-      // - Dirichlet on A on top and bottom
+      // - No stress on tangential component (v) left, right and bottom
+      // - Dirichlet on p on top (outflow?, used only in precon?)
+      // - Dirichlet on A on top
       essTagsU.SetSize(1); essTagsU[0] = 2;
-      essTagsV.SetSize(1); essTagsV[0] = 1;
+      essTagsV.SetSize(2); essTagsV[0] = 1; essTagsV[1] = 3;
       essTagsP.SetSize(1); essTagsP[0] = 1;
       essTagsA.SetSize(1); essTagsA[0] = 1;
       pbName = "IslandCoalescence";
@@ -472,19 +484,25 @@ int main(int argc, char *argv[]){
   // std::cout << "Dir A      "; _essAhTDOF.Print(mfem::out, _essAhTDOF.Size() ); std::cout<< "\n";
   // std::cout << "***********************************************************\n";
 
+
   
   //*************************************************************************
   // Time-independent operators assembly
   //*************************************************************************
   // Initialise solution
   Array< BlockVector > sol( NT + 1 );
-  Array<int> offsets(5);
+  Array<int> offsets(5), offsetsReduced(4);
   offsets[0] = 0;
   offsets[1] = _UhFESpace->GetTrueVSize();
   offsets[2] = _PhFESpace->GetTrueVSize();
   offsets[3] = _ZhFESpace->GetTrueVSize();
   offsets[4] = _AhFESpace->GetTrueVSize();
   offsets.PartialSum();
+  offsetsReduced[0] = 0;
+  offsetsReduced[1] = _UhFESpace->GetTrueVSize();
+  offsetsReduced[2] = _PhFESpace->GetTrueVSize();
+  offsetsReduced[3] = _AhFESpace->GetTrueVSize();
+  offsetsReduced.PartialSum();
   for ( int tt = 0; tt < NT+1; ++tt ){
     sol[tt].Update( offsets );
     uFuncCoeff.SetTime( T0 + _dt*tt );
@@ -522,12 +540,16 @@ int main(int argc, char *argv[]){
   _IMHD2DOperator.SetSpaces( feSpaces );
   _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ) );
   _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ), essBdrA );
+  // _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ) );
+  // std::cout<<"Warning: excluding bdr contribution from integrator"<<std::endl;
 
+  std::cout<<"Warning: I'm messing up BC for pressure! Also on operators and rhs for f!"<<std::endl;
   Array< Array<int> * > tmpEssDofs(4);
-  Array<int> tempPhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on pressure: they are only used to assemble the pressure operators    
+  // Array<int> tempPhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on pressure: they are only used to assemble the pressure operators    
   Array<int> tempZhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on laplacian of vector potential    
   tmpEssDofs[0] = &_essUhTDOF;
-  tmpEssDofs[1] = &tempPhTDOF;
+  // tmpEssDofs[1] = &tempPhTDOF;
+  tmpEssDofs[1] = &_essPhTDOF;
   tmpEssDofs[2] = &tempZhTDOF;
   tmpEssDofs[3] = &_essAhTDOF;
   Array< Vector * > dummy(4); dummy = NULL;
@@ -535,34 +557,45 @@ int main(int argc, char *argv[]){
   // - extract and keep some constant operators
   BlockOperator* dummyJ = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( sol[0] ) );
   SparseMatrix B  = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(1,0) ) );
-  SparseMatrix Bt = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(0,1) ) );
+  SparseMatrix Ip = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(1,1) ) );
   SparseMatrix Mz = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,2) ) );
   SparseMatrix K  = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,3) ) );
+  TransposeOperator Bt(&B);
   // - inverse of mass matrix for z
   PetscParMatrix MzPetsc( &Mz );
   PetscLinearSolver Mzi( MzPetsc, "ZSolverMass_" );
 
 
-
   // Pressure Schur complement operators
-  OseenSTPressureSchurComplement pSi( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, verbose );
   SparseMatrix Ap;
   SparseMatrix Mp;
-  SparseMatrix Wp;
+  SparseMatrix Fp;
   AssembleAp( _PhFESpace, _essPhTDOF, ir, Ap );
   AssembleMp( _PhFESpace, _essPhTDOF, ir, Mp );
+  // // - assembling each component explicitly (implemented later)
+  // PetscParMatrix ApPetsc( &Ap );
+  // PetscLinearSolver Api( ApPetsc, "PSolverLaplacian_" );
+  // PetscParMatrix MpPetsc( &Mp );
+  // PetscLinearSolver Mpi( MpPetsc, "PSolverMass_" );
+  // - using own Schur complement class
+  OseenSTPressureSchurComplement pSi( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, verbose );
+  SparseMatrix Wp;
   pSi.SetAp( &Ap );
   pSi.SetMp( &Mp );
 
 
   // Magnetic Schur complement operators
-  IMHD2DSTMagneticSchurComplement aSi( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, verbose );
   SparseMatrix Aa;
   SparseMatrix Ma;
-  SparseMatrix Wa;
   SparseMatrix Cp;
   AssembleAa( _AhFESpace, ir, Aa );
   AssembleMa( _AhFESpace, _essAhTDOF, ir, Ma );
+  // // - assembling each component explicitly (implemented later)
+  // PetscParMatrix MaPetsc( &Ma );
+  // PetscLinearSolver Mai( MaPetsc, "ASolverMass_" );
+  // - using own Schur complement class
+  IMHD2DSTMagneticSchurComplement aSi( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, verbose );
+  SparseMatrix Wa;
   aSi.SetM( &Ma );
 
 
@@ -571,6 +604,12 @@ int main(int argc, char *argv[]){
   //*************************************************************************
   // TIME-STEPPING ROUTINE
   //*************************************************************************
+
+  int GMRESNonConv     = 0;  
+  int newtNonConv      = 0;  
+  double tottotGMRESIt = 0;  //leave it as double to avoid round-off when averaging
+  double totNewtonIt   = 0;  
+
   for ( int tt = 1; tt < NT+1; ++tt ){
 
     // Set data functions
@@ -586,11 +625,11 @@ int main(int argc, char *argv[]){
     LinearForm frhs( _UhFESpace );
     ScalarVectorProductCoefficient muNFuncCoeff(_mu, nFuncCoeff);
     frhs.AddDomainIntegrator(   new VectorDomainLFIntegrator(         fFuncCoeff       )          );  //int_\Omega f*v
-    frhs.AddBoundaryIntegrator( new VectorBoundaryLFIntegrator(     muNFuncCoeff       ), neuBdrU );  //int_d\Omega \mu * du/dn *v
-    frhs.AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator(   pFuncCoeff, -1.0 ), neuBdrU );  //int_d\Omega -p*v*n
+    // frhs.AddBoundaryIntegrator( new VectorBoundaryLFIntegrator(     muNFuncCoeff       ), neuBdrU );  //int_d\Omega \mu * du/dn *v
+    // frhs.AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator(   pFuncCoeff, -1.0 ), neuBdrU );  //int_d\Omega -p*v*n
     frhs.GetDLFI()->operator[](0)->SetIntRule(ir);
-    frhs.GetBLFI()->operator[](0)->SetIntRule(bir);
-    frhs.GetBLFI()->operator[](1)->SetIntRule(bir);
+    // frhs.GetBLFI()->operator[](0)->SetIntRule(bir);
+    // frhs.GetBLFI()->operator[](1)->SetIntRule(bir);
     frhs.Assemble();
     frhs.operator*=( _dt );
     // - effect from solution at previous iteration
@@ -615,6 +654,9 @@ int main(int argc, char *argv[]){
     zrhs.AddBoundaryIntegrator( new BoundaryLFIntegrator( mFuncCoeff ), neuBdrA );  //int_d\Omega dA/dn *zeta
     zrhs.GetBLFI()->operator[](0)->SetIntRule(bir);
     zrhs.Assemble();
+    // zrhs = 0.;
+    // std::cout<<"Warning: setting rhs for z to 0"<<std::endl;
+
 
     // for A
     // - actual rhs
@@ -638,6 +680,7 @@ int main(int argc, char *argv[]){
 
     // clean Dirichlet nodes from rhs (they are already solved for, and they shouldn't dirty the solution)
     frhs.SetSubVector( _essUhTDOF, 0. );
+    grhs.SetSubVector( _essPhTDOF, 0. );
     hrhs.SetSubVector( _essAhTDOF, 0. );
 
 
@@ -646,9 +689,10 @@ int main(int argc, char *argv[]){
     // - however, remember to preserve Dirichlet nodes
     for ( int i = 0; i < _essUhTDOF.Size(); ++i )
       lclSol.GetBlock(0)(_essUhTDOF[i]) = sol[tt].GetBlock(0)(_essUhTDOF[i]);
+    for ( int i = 0; i < _essPhTDOF.Size(); ++i )
+      lclSol.GetBlock(1)(_essPhTDOF[i]) = sol[tt].GetBlock(1)(_essPhTDOF[i]);
     for ( int i = 0; i < _essAhTDOF.Size(); ++i )
       lclSol.GetBlock(3)(_essAhTDOF[i]) = sol[tt].GetBlock(3)(_essAhTDOF[i]);
-
 
 
     // - compute residual
@@ -682,9 +726,10 @@ int main(int argc, char *argv[]){
     // NEWTON ITERATIONS
     //*************************************************************************
     for ( newtonIt = 0; newtonIt < maxNewtonIt
-                     && newtonRes >= newtonTol
-                     && newtonRes/newtonRes0 >= newtonTol
-                     && newtonErrWRTPrevIt >= newtonTol; ++newtonIt ){      
+                     // && newtonRes >= newtonTol
+                     && newtonRes/newtonRes0 >= newtonTol;
+                     // && newtonErrWRTPrevIt >= newtonTol;
+                     ++newtonIt ){      
 
       // Define internal (GMRES) solver
       // - Get gradient and define relevant operators
@@ -735,13 +780,18 @@ int main(int argc, char *argv[]){
       AssembleUub( &Z1,  &Z2,  &Mzi, &K,   &aSi, Uub );
       AssembleLup( &Fui, &B,                     Lup );
       AssembleUup( &Fui, &Bt,  &pSi,             Uup );
+      // // - combine them together
+      // Array<const Operator*> precOps(4);
+      // Array<bool>            precOwn(4);
+      // precOps[0] = Lub;  precOwn[0] = true;
+      // precOps[1] = Uub;  precOwn[1] = true;
+      // precOps[2] = Lup;  precOwn[2] = true;
+      // precOps[3] = Uup;  precOwn[3] = true;
       // - combine them together
-      Array<const Operator*> precOps(4);
-      Array<bool>            precOwn(4);
-      precOps[0] = Lub;  precOwn[0] = true;
-      precOps[1] = Uub;  precOwn[1] = true;
-      precOps[2] = Lup;  precOwn[2] = true;
-      precOps[3] = Uup;  precOwn[3] = true;
+      Array<const Operator*> precOps(2);
+      Array<bool>            precOwn(2);
+      precOps[0] = Uub;  precOwn[0] = true;
+      precOps[1] = Uup;  precOwn[1] = true;
       OperatorsSequence MHDPr( precOps, precOwn );
 
 
@@ -781,6 +831,7 @@ int main(int argc, char *argv[]){
         std::cout << "Inner solver converged in ";
       }else{
         std::cout << "Inner solver *DID NOT* converge in ";
+        GMRESNonConv++;
       }
       std::cout<< GMRESits << " iterations. Residual "<< solver.GetFinalNorm() <<std::endl;
       std::cout << "***********************************************************\n";
@@ -805,17 +856,29 @@ int main(int argc, char *argv[]){
       std::cout << " converged in "                     << newtonIt;
     }else{
       std::cout << " *DID NOT* converge in "            << maxNewtonIt;
+      newtNonConv++;
     }
     std::cout   << " iterations. Residual norm is "     << newtonRes;
     std::cout   << ", avg internal GMRES it are "       << totGMRESit/newtonIt  << ".\n";
     std::cout   << "***********************************************************\n";
 
-
+    tottotGMRESIt += totGMRESit;
+    totNewtonIt   += newtonIt;
 
     sol[tt] = lclSol;
-
  
   }
+
+  std::cout<<"***********************************************************\n";
+  std::cout<<"***********************************************************\n";
+  std::cout<<"\nALL DONE!\n\n";
+  std::cout<<"***********************************************************\n";
+  std::cout<<"Total # of Newton iterations: "<< totNewtonIt   <<". Non-converged: "<< newtNonConv  <<". Avg per time-step: "<< totNewtonIt/NT   <<"\n";
+  std::cout<<"Total # of GMRES  iterations: "<< tottotGMRESIt <<". Non-converged: "<< GMRESNonConv <<". Avg per time-step: "<< tottotGMRESIt/NT
+                                                                                                   <<". Avg per Newton it: "<< tottotGMRESIt/totNewtonIt <<"\n";
+  std::cout<<"***********************************************************\n";
+
+
 
   string outFilePath = "ParaView";
   string outFileName = "STIMHD2D_" + pbName;
@@ -965,6 +1028,50 @@ void AssembleWp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF, c
   for (int i = 0; i < _essPhTDOF.Size(); ++i){
     _Wp.EliminateRow( _essPhTDOF[i], mfem::Matrix::DIAG_ZERO );
   }
+
+}
+
+
+// Complete PCD operator: Fp(w) <-> (p,q) + dt*mu*( ∇p, ∇q ) + dt*( w·∇p, q )
+void AssembleFp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF, const Array<int>& neuBdrP,
+                 double _dt, double _mu, FiniteElementSpace *_UhFESpace, const Vector& w,
+                 const IntegrationRule *ir, const IntegrationRule *bir, SparseMatrix& _Fp ){
+
+  BilinearForm pVarf( _PhFESpace );
+  ConstantCoefficient dtmu( _dt*_mu );
+  ConstantCoefficient one( 1. );
+  GridFunction wFuncCoeff(_UhFESpace);
+  wFuncCoeff = w;
+  VectorGridFunctionCoefficient wCoeff( &wFuncCoeff );
+  pVarf.AddDomainIntegrator(new MassIntegrator( one ));
+  pVarf.AddDomainIntegrator(new DiffusionIntegrator( dtmu ));
+  pVarf.AddDomainIntegrator(new ConvectionIntegrator( wCoeff, _dt ));
+  // wVarf.AddBdrFaceIntegrator( new BoundaryFaceFluxIntegrator( wCoeff ) );
+  pVarf.GetDBFI()->operator[](0)->SetIntRule(ir);
+  pVarf.GetDBFI()->operator[](1)->SetIntRule(ir);
+  pVarf.GetDBFI()->operator[](2)->SetIntRule(ir);
+  // wVarf.GetBFBFI()->operator[](0)->SetIntRule(bir);
+  
+  pVarf.Assemble();
+  pVarf.Finalize();
+  
+  _Fp.MakeRef( pVarf.SpMat() );
+  _Fp.SetGraphOwner(true);
+  _Fp.SetDataOwner(true);
+  pVarf.LoseMat();
+
+  // Impose homogeneous dirichlet BC by simply removing corresponding equations
+  mfem::Array<int> colsP(_Fp.Height());
+  colsP = 0.;
+  for (int i = 0; i < _essPhTDOF.Size(); ++i){
+    colsP[_essPhTDOF[i]] = 1;
+  }
+  _Fp.EliminateCols( colsP );
+  for (int i = 0; i < _essPhTDOF.Size(); ++i){
+    _Fp.EliminateRow( _essPhTDOF[i], mfem::Matrix::DIAG_ONE );
+  }
+
+
 
 }
 
@@ -1206,7 +1313,6 @@ void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, 
 
 
 
-
 //***************************************************************************
 //TEST CASES OF SOME ACTUAL RELEVANCE
 //***************************************************************************
@@ -1422,6 +1528,10 @@ double zFun_ex_island(const Vector & x, const double t ){
 
   double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
 
+  if ( t==0 ){
+    return ( ( 1. - epsilon*epsilon ) / ( delta * temp*temp ) - 0.001* 5./4.*M_PI*M_PI*cos(M_PI*.5*yy)*cos(M_PI*xx) );  // perturb IC
+  }
+
   return ( ( 1. - epsilon*epsilon ) / ( delta * temp*temp ) );
 }
 // - vector potential
@@ -1429,9 +1539,11 @@ double aFun_ex_island(const Vector & x, const double t ){
   using namespace IslandCoalescenceData;
   double xx(x(0));
   double yy(x(1));
-
   double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
 
+  if ( t==0 ){
+    return ( delta * log( temp ) + 0.001*cos(M_PI*.5*yy)*cos(M_PI*xx) );  // perturb IC
+  }
   return ( delta * log( temp ) );
 }
 // - rhs of velocity - unused
@@ -1465,6 +1577,8 @@ double mFun_island( const Vector & x, const double t ){
     return   epsilon*sin(xx/delta) / temp;
   }else if( yy ==  1.0 ){
     return   sinh(yy/delta) / temp;
+  }else if( yy == 0.0 ){    // this way I also cover the case of a domain [0,1]x[0,1]
+    return 0.;
   }else if( yy == -1.0 ){
     return - sinh(yy/delta) / temp;
   }

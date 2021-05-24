@@ -12,7 +12,7 @@ namespace mfem{
    ⎩                    dt(A) + u·∇A - eta ∇·∇A = h
 
   Notice this integrator should be added BOTH as a domain integrator
-  (to compute the main bilinear forms) and as a boundary face integrator
+  (to compute the main bilinear forms) AND as a boundary face integrator
   (to compute the Neumann boundary term stemming from the third equation)
 
 	NB: This integrator assumes that the FE spaces are polynomial
@@ -28,15 +28,27 @@ private:
 	const double _mu0;
 	const double _eta;
 
+  // to include stabilisation terms
+  const bool   _stab;
+  VectorCoefficient *_f;
+  Coefficient       *_h;
+
+
+  // for stabilisation parameters
+  const double C1 = 1.;
+  const double C2 = 10.;
+
+
 	Vector shape_u, shape_p, shape_z, shape_a, shape_Dan, nor, ni, nh;
-  DenseMatrix shape_Du, shape_Dz, shape_Da,
-  						gshape_u, gshape_z, gshape_a;
+  DenseMatrix shape_Du, shape_Dp, shape_Dz, shape_Da,
+  						gshape_u, gshape_p, gshape_z, gshape_a;
 
   DenseMatrix uCoeff;
 
+
 public:
-  IncompressibleMHD2DIntegrator( double dt, double mu, double mu0, double eta):
-                                    _dt(dt),   _mu(mu),  _mu0(mu0),  _eta(eta){}
+  IncompressibleMHD2DIntegrator( double dt, double mu, double mu0, double eta, bool stab=false, VectorCoefficient* f=NULL, Coefficient* h=NULL ):
+                                    _dt(dt),   _mu(mu),  _mu0(mu0),  _eta(eta), _stab(stab), _f(f), _h(h){};//std::cout<<"Warning: setting tau to 1 for SUPG\n";};
 
   // virtual double GetElementEnergy(const Array<const FiniteElement *>&el,
   //                                 ElementTransformation &Tr,
@@ -68,7 +80,12 @@ public:
 
 
   /// Get adequate GLL rule for element integration
-  static const IntegrationRule& GetRule(const Array<const FiniteElement *> &fe, ElementTransformation &T);
+  const IntegrationRule& GetRule(const Array<const FiniteElement *> &fe, ElementTransformation &T);
+
+  void GetTaus(const Vector& u, const Vector& gA, const DenseMatrix& Jinv, double& tauU, double& tauA) const; // stabilisation coefficients
+  
+  /// Assembles the contravariant metric tensor of the transformation from local to physical coordinates
+  void GetGC( const DenseMatrix& Jinv, DenseMatrix& GC ) const;
 
 
 };

@@ -34,10 +34,14 @@ private:
 	double(*_hFunc)( const Vector &, double )          ;  // function returning forcing term for vector potential (time-dep)
 	void(  *_nFunc)( const Vector &, double, Vector & );  // function returning mu  * du/dn (time-dep, used to implement BC)
 	double(*_mFunc)( const Vector &, double );            // function returning eta * dA/dn (time-dep, used to implement BC)
-	GridFunction _wFuncCoeff;  			                      // coefficients of (linearised) velocity field
-	GridFunction _qFuncCoeff;  			                      // coefficients of pressure field (initial guess)
-	GridFunction _yFuncCoeff;  			                      // coefficients of (linearised) Laplacian of vector potential
-	GridFunction _cFuncCoeff;  			                      // coefficients of (linearised) vector potential
+	GridFunction                  _wGridFunc;   	        // coefficients of (linearised) velocity field
+	GridFunction                  _qGridFunc;   	        // coefficients of pressure field (initial guess)
+	GridFunction                  _yGridFunc;   	        // coefficients of (linearised) Laplacian of vector potential
+	GridFunction                  _cGridFunc;   	        // coefficients of (linearised) vector potential
+	VectorGridFunctionCoefficient _wFuncCoeff;	          // (linearised) velocity field (cast as a function coefficient)
+	GridFunctionCoefficient       _cFuncCoeff;	          // coefficients of (linearised) vector potential (cast as a function coefficient)
+	VectorFunctionCoefficient     _fFuncCoeff;	          // coefficients of rhs for velocity
+	FunctionCoefficient           _hFuncCoeff;            // coefficients of rhs for vector potential
 	void(  *_uFunc)( const Vector &, double, Vector & );	// function returning velocity solution (time-dep, used to implement IC, and compute error)
 	double(*_pFunc)( const Vector &, double )          ;  // function returning pressure solution (time-dep, used to implement IC and BC, and compute error)
 	double(*_zFunc)( const Vector &, double )          ;  // function returning Laplacian of vector potential solution (time-dep, used to BC, and compute error)
@@ -88,10 +92,17 @@ private:
   SparseMatrix _Ma;
   SparseMatrix _Fa;
   SparseMatrix _B;
+  SparseMatrix _Bt;
   SparseMatrix _Z1;
   SparseMatrix _Z2;
   SparseMatrix _K;
   SparseMatrix _Y;
+  // - for stabilisation
+  BlockNonlinearForm _IMHD2DMassStabOperator;
+  SparseMatrix _Cs;
+  SparseMatrix _Mus;
+  SparseMatrix _Mps;
+  SparseMatrix _Mas;
 	// -- for pressure Schur comp
   SparseMatrix _Mp;
   SparseMatrix _Ap;
@@ -115,6 +126,8 @@ private:
   bool _MaAssembled;
   bool _FaAssembled;
   bool _BAssembled;
+  bool _BtAssembled;
+	bool _CsAssembled;
   bool _Z1Assembled;
   bool _Z2Assembled;
   bool _KAssembled;
@@ -139,6 +152,8 @@ private:
   ParBlockLowTriOperator _MMz;             // Space-time Laplacian of vector potential block
   ParBlockLowTriOperator _FFa;             // Space-time vector potential block
   ParBlockLowTriOperator _BB;              // space-time -div block
+  ParBlockLowTriOperator _BBt;             // space-time -div block (transpose)
+  ParBlockLowTriOperator _CCs;             // space-time pressure stabilisation
   ParBlockLowTriOperator _ZZ1;             // space-time Lorentz block 1
   ParBlockLowTriOperator _ZZ2;             // space-time Lorentz block 2
   ParBlockLowTriOperator _KK;              // space-time mixed Laplacian block
@@ -165,6 +180,8 @@ private:
   bool _MMzAssembled;
   bool _FFaAssembled;
   bool _BBAssembled;
+  bool _BBtAssembled;
+  bool _CCsAssembled;
   bool _ZZ1Assembled;
 	bool _ZZ2Assembled;
   bool _YYAssembled;
@@ -176,6 +193,8 @@ private:
 	bool _CCainvAssembled;
 
 
+	// whether to use stabilisation
+	const bool _stab;
 
 	const int _verbose;
 
@@ -202,7 +221,7 @@ public:
 	                           double(*a)(const Vector &, double ),
  														 const Array<int>& essTagsU, const Array<int>& essTagsV, 
  														 const Array<int>& essTagsP, const Array<int>& essTagsA,
-                             int verbose=0 );
+                             bool stab=false, int verbose=0 );
 
 	// // constructor (uses vector of node values to initialise linearised fields)
 	// IMHD2DSTOperatorAssembler( const MPI_Comm& comm, const std::string& meshName,
@@ -227,10 +246,11 @@ public:
 
 
 	void AssembleSystem( Operator*& FFFu, Operator*& MMMz, Operator*& FFFa,
-                       Operator*& BBB,  Operator*& ZZZ1, Operator*& ZZZ2,
-                       Operator*& KKK,  Operator*& YYY,
-                       Vector&  frhs,   Vector&  grhs,   Vector&  zrhs,   Vector& hrhs,
-                       Vector&  IGu,    Vector&  IGp,    Vector&  IGz,    Vector& IGa );
+	                     Operator*& BBB,  Operator*& BBBt, Operator*& CCCs,  
+	                     Operator*& ZZZ1, Operator*& ZZZ2,
+	                     Operator*& KKK,  Operator*& YYY,
+	                     Vector&  fres,   Vector&  gres,   Vector& zres,    Vector& hres,
+	                     Vector&  IGu,    Vector&  IGp,    Vector& IGz,     Vector& IGa  );
 
 
 	void ApplyOperator( const BlockVector& x, BlockVector& y );
@@ -278,7 +298,7 @@ private:
 	void AssembleAp();
 	void AssembleMp();
 	void AssembleWp();
-	void AssembleCs();
+	void AssembleCCaBlocks();
 	void AssembleMaNoZero();
 	void AssembleMaNoZeroLumped();
 	void AssembleAa();
@@ -295,6 +315,8 @@ private:
 	void AssembleMMz();
 	void AssembleFFa();
 	void AssembleBB();
+	void AssembleBBt();
+	void AssembleCCs();
 	void AssembleZZ1();
 	void AssembleZZ2();
 	void AssembleKK();

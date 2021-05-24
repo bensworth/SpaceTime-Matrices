@@ -47,8 +47,8 @@ double mFun_constant( const Vector & x, const double t ){
 
 
 namespace LinearData{
-  const double eta = 1e-3;
-  const double mu0 = 1e-3;
+  const double eta = 1.;
+  const double mu0 = 1.;
   const double mu  = 1.;
 }
 
@@ -135,9 +135,9 @@ double mFun_linear( const Vector & x, const double t ){
 
 
 namespace QuadraticData{
-  const double eta = 1e-3;
-  const double mu0 = 1e-3;
-  const double mu  = 1;
+  const double eta = 1.;
+  const double mu0 = 1.;
+  const double mu  = 1.;
 }
 
 void uFun_ex_quadratic(const Vector & x, const double t, Vector & u){
@@ -221,9 +221,9 @@ double mFun_quadratic( const Vector & x, const double t ){
 
 
 namespace CubicData{
-  const double eta = 1e-1;
-  const double mu0 = 1e-2;
-  const double mu  = 1e-3;
+  const double eta = 1.;
+  const double mu0 = 1.;
+  const double mu  = 1.;
 }
 
 void uFun_ex_cubic(const Vector & x, const double t, Vector & u){
@@ -309,9 +309,9 @@ double mFun_cubic( const Vector & x, const double t ){
 
 
 namespace CubicTData{
-  const double eta = 1e-1;
-  const double mu0 = 1e-2;
-  const double mu  = 1e-3;
+  const double eta = 1.;
+  const double mu0 = 1.;
+  const double mu  = 1.;
 }
 
 void uFun_ex_cubicT(const Vector & x, const double t, Vector & u){
@@ -569,6 +569,8 @@ int main(int argc, char *argv[]){
   int ordZ = 1;
   int ordA = 2;
   int refLvl = 4;
+  int maxRefLvl = 8;
+  bool stab = false;
   int verbose = 0;
   // these tag each boundary to identify dirichlet BC for u, p and A
   Array<int> essTagsU(0);
@@ -581,6 +583,8 @@ int main(int argc, char *argv[]){
   OptionsParser args(argc, argv);
   args.AddOption(&refLvl, "-r", "--rlevel",
                 "Refinement level (default: 4)");
+  args.AddOption(&maxRefLvl, "-maxr", "--maxrlevel",
+                "Max refinement level (default: 8)");
   args.AddOption(&ordU, "-oU", "--ordU",
                 "Velocity space polynomial order (default: 2)");
   args.AddOption(&ordP, "-oP", "--ordP",
@@ -589,6 +593,8 @@ int main(int argc, char *argv[]){
                 "Laplacian of vector potential space polynomial order (default: 1)");
   args.AddOption(&ordA, "-oA", "--ordA",
                 "Vector potential space polynomial order (default: 2)");
+  args.AddOption(&stab, "-S", "--stab", "-noS", "--noStab",
+                "Stabilise via SUPG (default: false)");
   args.AddOption(&verbose, "-V", "--verbose",
                 "Verbosity");
   args.Parse();
@@ -623,24 +629,25 @@ int main(int argc, char *argv[]){
   // double mu0 = 1.;
 
 
+
   std::string mesh_file = "./meshes/tri-square-testAn.mesh";
-  uFun = uFun_ex_cubicT;
-  pFun = pFun_ex_cubicT;
-  zFun = zFun_ex_cubicT;
-  aFun = aFun_ex_cubicT;
-  fFun = fFun_cubicT;
-  gFun = gFun_cubicT;
-  hFun = hFun_cubicT;
-  nFun = nFun_cubicT;
-  mFun = mFun_cubicT;
+  uFun = uFun_ex_cubic;
+  pFun = pFun_ex_cubic;
+  zFun = zFun_ex_cubic;
+  aFun = aFun_ex_cubic;
+  fFun = fFun_cubic;
+  gFun = gFun_cubic;
+  hFun = hFun_cubic;
+  nFun = nFun_cubic;
+  mFun = mFun_cubic;
   essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
   essTagsV.SetSize(2); essTagsV[0] = 1; essTagsV[1] = 3; // N, S
   essTagsP.SetSize(1); essTagsP[0] = 2; // E
   essTagsA.SetSize(1); essTagsA[0] = 1;
   double dt  = Tend / numProcs;
-  double mu  = CubicTData::mu;
-  double eta = CubicTData::eta;
-  double mu0 = CubicTData::mu0;
+  double mu  = CubicData::mu;
+  double eta = CubicData::eta;
+  double mu0 = CubicData::mu0;
 
 
 
@@ -661,24 +668,27 @@ int main(int argc, char *argv[]){
   }
 
 
-  for ( ; refLvl < 8; ++refLvl ){
+  for ( ; refLvl < maxRefLvl; ++refLvl ){
     // ASSEMBLE OPERATORS -----------------------------------------------------
     IMHD2DSTOperatorAssembler *mhdAssembler = new IMHD2DSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, refLvl, ordU, ordP, ordZ, ordA,
                                                                              dt, mu, eta, mu0, fFun, gFun, hFun, nFun, mFun,
                                                                              uFun, pFun, zFun, aFun,
                                                                              uFun, pFun, zFun, aFun, 
-                                                                             essTagsU, essTagsV, essTagsP, essTagsA, verbose );
+                                                                             essTagsU, essTagsV, essTagsP, essTagsA, stab, verbose );
 
 
-    Operator *FFFu, *MMMz, *FFFa, *BBB, *ZZZ1, *ZZZ2, *KKK, *YYY;
+    Operator *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *CCCs, *ZZZ1, *ZZZ2, *KKK, *YYY;
     Vector   fres,   gres,  zres,  hres,  U0,  P0,  Z0,  A0;
+
 
     // Assemble the system
     mhdAssembler->AssembleSystem( FFFu, MMMz, FFFa,
-                                  BBB,  ZZZ1, ZZZ2,
+                                  BBB,  BBBt, CCCs,  
+                                  ZZZ1, ZZZ2,
                                   KKK,  YYY,
                                   fres, gres, zres, hres,
                                   U0,   P0,   Z0,   A0  );
+
 
     Array<int> offsets(5);
     offsets[0] = 0;
@@ -687,6 +697,8 @@ int main(int argc, char *argv[]){
     offsets[3] = MMMz->NumRows();
     offsets[4] = FFFa->NumRows();
     offsets.PartialSum();
+
+
 
     BlockVector res(offsets);
     res.GetBlock(0) = fres;

@@ -1,0 +1,43 @@
+MFEM mesh v1.0
+
+#
+# MFEM Geometry Types (see mesh/geom.hpp):
+#
+# POINT       = 0
+# SEGMENT     = 1
+# TRIANGLE    = 2
+# SQUARE      = 3
+# TETRAHEDRON = 4
+# CUBE        = 5
+#
+# Boundary tags: north+south=1 east+west=2
+# I'm following the tilt test case in
+# [Implicit adaptive mesh refinement for 2D reduced resistive magnetohydrodynamics]
+# Their domain is [-2pi,2pi]x[-5,5], but I might want to impose Neumann along x, so I'd need
+# to check for an exact x==2pi condition. Rather, rescale and change the domain to [-1,1]. However,
+# I also need to compute analytically the laplacian of A, and A is defined in cylindrical coordinates.
+# To make the map simple (so that I can reuse the formulas for the laplacian in cyl coords), I then
+# need to rescale also the y domain. That's why you find the values of 5/(2pi) ~ 0.79577471545
+
+dimension
+2
+
+elements
+2
+1 2 3 0 1
+1 2 0 3 2
+
+boundary
+4
+1 1 3 2
+2 1 2 0
+1 1 0 1
+2 1 1 3
+
+vertices
+4
+2
+-1 -0.79577471545
+1 -0.79577471545
+-1 0.79577471545
+1 0.79577471545
