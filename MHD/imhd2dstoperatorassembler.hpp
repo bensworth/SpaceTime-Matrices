@@ -86,6 +86,7 @@ private:
   // relevant matrices
   // - blocks for single time-steps
   BlockNonlinearForm _IMHD2DOperator;
+  BlockNonlinearForm _IMHD2DMassStabOperator;
   SparseMatrix _Mu;
   SparseMatrix _Fu;
   SparseMatrix _Mz;
@@ -93,16 +94,15 @@ private:
   SparseMatrix _Fa;
   SparseMatrix _B;
   SparseMatrix _Bt;
+  SparseMatrix _Cs;
   SparseMatrix _Z1;
   SparseMatrix _Z2;
   SparseMatrix _K;
   SparseMatrix _Y;
   // - for stabilisation
-  BlockNonlinearForm _IMHD2DMassStabOperator;
-  SparseMatrix _Cs;
-  SparseMatrix _Mus;
   SparseMatrix _Mps;
-  SparseMatrix _Mas;
+  SparseMatrix _X1;
+  SparseMatrix _X2;
 	// -- for pressure Schur comp
   SparseMatrix _Mp;
   SparseMatrix _Ap;
@@ -130,6 +130,8 @@ private:
 	bool _CsAssembled;
   bool _Z1Assembled;
   bool _Z2Assembled;
+  bool _X1Assembled;
+  bool _X2Assembled;
   bool _KAssembled;
   bool _YAssembled;
   bool _MpAssembled;
@@ -156,6 +158,8 @@ private:
   ParBlockLowTriOperator _CCs;             // space-time pressure stabilisation
   ParBlockLowTriOperator _ZZ1;             // space-time Lorentz block 1
   ParBlockLowTriOperator _ZZ2;             // space-time Lorentz block 2
+  ParBlockLowTriOperator _XX1;             // space-time Lorentz block for stabilisation in pressure 1
+  ParBlockLowTriOperator _XX2;             // space-time Lorentz block for stabilisation in pressure 2
   ParBlockLowTriOperator _KK;              // space-time mixed Laplacian block
   ParBlockLowTriOperator _YY;              // space-time magnetic convection block
   // HYPRE_IJMatrix _FFu;                     // Space-time velocity block
@@ -184,6 +188,8 @@ private:
   bool _CCsAssembled;
   bool _ZZ1Assembled;
 	bool _ZZ2Assembled;
+  bool _XX1Assembled;
+	bool _XX2Assembled;
   bool _YYAssembled;
   bool _KKAssembled;
 	bool _pSAssembled;
@@ -245,12 +251,12 @@ public:
 
 
 
-	void AssembleSystem( Operator*& FFFu, Operator*& MMMz, Operator*& FFFa,
-	                     Operator*& BBB,  Operator*& BBBt, Operator*& CCCs,  
-	                     Operator*& ZZZ1, Operator*& ZZZ2,
-	                     Operator*& KKK,  Operator*& YYY,
-	                     Vector&  fres,   Vector&  gres,   Vector& zres,    Vector& hres,
-	                     Vector&  IGu,    Vector&  IGp,    Vector& IGz,     Vector& IGa  );
+	void AssembleSystem( ParBlockLowTriOperator*& FFFu, ParBlockLowTriOperator*& MMMz, ParBlockLowTriOperator*& FFFa,
+	                     ParBlockLowTriOperator*& BBB,  ParBlockLowTriOperator*& BBBt, ParBlockLowTriOperator*& CCCs,  
+	                     ParBlockLowTriOperator*& ZZZ1, ParBlockLowTriOperator*& ZZZ2, ParBlockLowTriOperator*& XXX1, ParBlockLowTriOperator*& XXX2, 
+	                     ParBlockLowTriOperator*& KKK,  ParBlockLowTriOperator*& YYY,
+	                     Vector&  fres,                 Vector&  gres,                 Vector& zres,                  Vector& hres,
+	                     Vector&  IGu,                  Vector&  IGp,                  Vector& IGz,                   Vector& IGa  );
 
 
 	void ApplyOperator( const BlockVector& x, BlockVector& y );
@@ -275,6 +281,7 @@ public:
 	void SaveError(            const Vector& uh,        const Vector& ph,        const Vector& zh,        const Vector& ah,const std::string& pth,const std::string& fnnm ) const;
 	void SaveExactSolution( const std::string& path, const std::string& filename ) const;
 	void PrintMatrices( const std::string& filename ) const;
+	void GetDirichletIdx( Array<int>& essUhTDOF, Array<int>& essPhTDOF,	Array<int>& essAhTDOF ) const;
 	// TODO:
 	void TimeStep( const BlockVector& x, BlockVector& y, const std::string &innerConvpath, int output );
 
@@ -319,6 +326,8 @@ private:
 	void AssembleCCs();
 	void AssembleZZ1();
 	void AssembleZZ2();
+	void AssembleXX1();
+	void AssembleXX2();
 	void AssembleKK();
 	void AssembleYY();
 	void AssemblePS();

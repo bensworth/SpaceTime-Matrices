@@ -146,6 +146,15 @@ void ParBlockLowTriOperator::SetBlockDiag( const SparseMatrix * op, int i, bool 
 }
 
 
+const Operator* ParBlockLowTriOperator::GetBlockDiag( int i ){
+  if ( i>=_numProcs ){
+    return NULL;
+  }else{
+    return _ops[i];
+  }
+
+}
+
 
 
 

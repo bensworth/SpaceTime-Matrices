@@ -1,8 +1,11 @@
 #include "imhd2dstoperatorassembler.hpp"
 #include "vectorconvectionintegrator.hpp"
-#include "imhd2dintegrator.hpp"
-#include "imhd2dmassstabintegrator.hpp"
+// #include "imhd2dintegrator.hpp"
+// #include "imhd2dmassstabintegrator.hpp"
+#include "imhd2dspaceintegrator.hpp"
+#include "imhd2dtimeintegrator.hpp"
 #include "blockUpperTriangularPreconditioner.hpp"
+#include "parblocklowtrioperator.hpp"
 #include "spacetimesolver.hpp"
 #include "spacetimewavesolver.hpp"
 #include "myboundarylfintegrator.hpp"
@@ -59,7 +62,8 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   _fFuncCoeff(2, f),                     _hFuncCoeff(h),
   _uFunc(u),   _pFunc(p),     _zFunc(z), _aFunc(a),
   _ordU(ordU), _ordP(ordP), _ordZ(ordZ), _ordA(ordA),
-  _FFu(comm), _MMz(comm), _FFa(comm), _BB(comm), _BBt(comm), _CCs(comm), _ZZ1(comm), _ZZ2(comm), _KK(comm), _YY(comm),
+  _FFu(comm), _MMz(comm), _FFa(comm), _BB(comm), _BBt(comm), _CCs(comm),
+  _ZZ1(comm), _ZZ2(comm), _XX1(comm), _XX2(comm), _KK(comm),  _YY(comm),
   _stab(stab), _verbose(verbose){
 
 	MPI_Comm_size( comm, &_numProcs );
@@ -163,14 +167,12 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   _IMHD2DOperator.SetSpaces( feSpaces );
   _fFuncCoeff.SetTime( _dt*(_myRank+1) ); // useful for stabilisation: never touch this again!
   _hFuncCoeff.SetTime( _dt*(_myRank+1) );
-  _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta, _stab, &_fFuncCoeff, &_hFuncCoeff ) ); // for bilinforms
-  _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ), _isEssBdrA );  // for flux in third equation
+  _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DSpaceIntegrator( _dt, _mu, _mu0, _eta, _stab,
+                                                                               &_fFuncCoeff, &_hFuncCoeff, &_wFuncCoeff, &_cFuncCoeff ) ); // for bilinforms
+  _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DSpaceIntegrator( _dt, _mu, _mu0, _eta ), _isEssBdrA );  // for flux in third equation
 
-  // - if stabilisation is required, I need to tweak the mass matrices definition in the time-stepping procedure, too
-  if ( _stab ){
-    _IMHD2DMassStabOperator.SetSpaces( feSpaces );
-    _IMHD2DMassStabOperator.AddDomainIntegrator(  new IncompressibleMHD2DMassStabIntegrator( _dt, _mu, _mu0, _eta, &_wFuncCoeff, &_cFuncCoeff ) );
-  }
+  _IMHD2DMassStabOperator.SetSpaces( feSpaces );
+  _IMHD2DMassStabOperator.AddDomainIntegrator(  new IncompressibleMHD2DTimeIntegrator( _dt, _mu, _mu0, _eta, _stab, &_wFuncCoeff, &_cFuncCoeff ) );
 
   // -- impose Dirichlet BC on non-linear operator
   // --- check if the two velocity components have the same BC
@@ -191,11 +193,8 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     tmpEssTags[2] = &essBdrZ;
     tmpEssTags[3] = &essBdrA;
     Array< Vector * > dummy(4); dummy = NULL;
-    _IMHD2DOperator.SetEssentialBC( tmpEssTags, dummy );
-    if ( _stab ){
-       dummy = NULL;
-      _IMHD2DMassStabOperator.SetEssentialBC( tmpEssTags, dummy );
-    }
+    _IMHD2DOperator.SetEssentialBC( tmpEssTags, dummy ); dummy = NULL;
+    _IMHD2DMassStabOperator.SetEssentialBC( tmpEssTags, dummy );
   }else{
   // --- otherwise I need to use an added feature to mfem (requires modification to the BlockNonlinearForm class)
     // if ( _myRank == 0 ){
@@ -210,11 +209,8 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     tmpEssDofs[2] = &tempZhTDOF;
     tmpEssDofs[3] = &_essAhTDOF;
     Array< Vector * > dummy(4); dummy = NULL;
-    _IMHD2DOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
-    if ( _stab ){
-      dummy = NULL;
-      _IMHD2DMassStabOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
-    }
+    _IMHD2DOperator.SetEssentialTrueDofs( tmpEssDofs, dummy ); dummy = NULL;
+    _IMHD2DMassStabOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
   }
 
 
@@ -1958,18 +1954,10 @@ void IMHD2DSTOperatorAssembler::AssembleSTBlockDiagonal( const SparseMatrix& D, 
 // Code duplication at its worst:
 // - assemble a bunch of block-bidiagonal space-time matrices (representing time-stepping operators)
 inline void IMHD2DSTOperatorAssembler::AssembleFFu( ){ 
-  if ( _stab ){
-    AssembleSTBlockBiDiagonal( _Fu, _Mus, _FFu, "FFu", _FuAssembled && _MuAssembled, _FFuAssembled );
-  }else{
-    AssembleSTBlockBiDiagonal( _Fu, _Mu,  _FFu, "FFu", _FuAssembled && _MuAssembled, _FFuAssembled );
-  }
+  AssembleSTBlockBiDiagonal( _Fu, _Mu,  _FFu, "FFu", _FuAssembled && _MuAssembled, _FFuAssembled );
 }
 inline void IMHD2DSTOperatorAssembler::AssembleFFa( ){ 
-  if ( _stab ){
-    AssembleSTBlockBiDiagonal( _Fa, _Mas, _FFa, "FFa", _FaAssembled && _MaAssembled, _FFaAssembled );
-  }else{
-    AssembleSTBlockBiDiagonal( _Fa, _Ma,  _FFa, "FFa", _FaAssembled && _MaAssembled, _FFaAssembled );
-  }
+  AssembleSTBlockBiDiagonal( _Fa, _Ma,  _FFa, "FFa", _FaAssembled && _MaAssembled, _FFaAssembled );
 }
 // - assemble a bunch of block-diagonal space-time matrices (representing couplings for all space-time operators)
 inline void IMHD2DSTOperatorAssembler::AssembleMMz( ){ 
@@ -1993,6 +1981,12 @@ inline void IMHD2DSTOperatorAssembler::AssembleZZ1( ){
 }
 inline void IMHD2DSTOperatorAssembler::AssembleZZ2( ){ 
   AssembleSTBlockDiagonal( _Z2, _ZZ2, "ZZ2", _Z2Assembled, _ZZ2Assembled );
+}
+inline void IMHD2DSTOperatorAssembler::AssembleXX1( ){ 
+  AssembleSTBlockDiagonal( _X1, _XX1, "XX1", _X1Assembled, _XX1Assembled );
+}
+inline void IMHD2DSTOperatorAssembler::AssembleXX2( ){ 
+  AssembleSTBlockDiagonal( _X2, _XX2, "XX2", _X2Assembled, _XX2Assembled );
 }
 inline void IMHD2DSTOperatorAssembler::AssembleKK( ){ 
   AssembleSTBlockDiagonal(  _K,  _KK,  "KK",  _KAssembled,  _KKAssembled );
@@ -2078,11 +2072,8 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
       SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essUhTDOF, true, _verbose );
 
       temp->SetF( &_Fu );
-      if ( !_stab ){
-        temp->SetM( &_Mu );
-      }else{
-        temp->SetM( &_Mus );
-      }
+      temp->SetM( &_Mu );
+
       _FFuinv = temp;
 
       _FFuinvAssembled = true;
@@ -2580,12 +2571,13 @@ void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int m
 //  - The various blocks composing the operator gradient at the initial state
 // Furthermore, it initialises a series of useful auxiliary variables, and assembles the rhs of
 //  the non-linear system b once and for all, storing them internally for later use
-void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz, Operator*& FFFa,
-                                                Operator*& BBB,  Operator*& BBBt, Operator*& CCCs,  
-                                                Operator*& ZZZ1, Operator*& ZZZ2,
-                                                Operator*& KKK,  Operator*& YYY,
-                                                Vector&  fres,   Vector&  gres,   Vector& zres,    Vector& hres,
-                                                Vector&  IGu,    Vector&  IGp,    Vector& IGz,     Vector& IGa  ){
+void IMHD2DSTOperatorAssembler::AssembleSystem( ParBlockLowTriOperator*& FFFu, ParBlockLowTriOperator*& MMMz, ParBlockLowTriOperator*& FFFa,
+                                                ParBlockLowTriOperator*& BBB,  ParBlockLowTriOperator*& BBBt, ParBlockLowTriOperator*& CCCs,  
+                                                ParBlockLowTriOperator*& ZZZ1, ParBlockLowTriOperator*& ZZZ2,
+                                                ParBlockLowTriOperator*& XXX1, ParBlockLowTriOperator*& XXX2, 
+                                                ParBlockLowTriOperator*& KKK,  ParBlockLowTriOperator*& YYY,
+                                                Vector&  fres,                 Vector&  gres,                 Vector& zres,                  Vector& hres,
+                                                Vector&  IGu,                  Vector&  IGp,                  Vector& IGz,                   Vector& IGa  ){
 
 
   //*************************************************************************
@@ -2640,6 +2632,20 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   // - Compute local operator gradient at IG
   // -- since we already flagged the relevant esential BC to the local operator,
   //     the matrices are already constrained
+  BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+  _Mu = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
+  _Ma = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
+
+  // -- still, for the mass matrix we need to kill the Dirichlet nodes, otherwise
+  //     we risk dirtying the diagonal (should already be 1)
+  for (int i = 0; i < _essUhTDOF.Size(); ++i){
+    _Mu( _essUhTDOF[i], _essUhTDOF[i] ) = 0.;
+  }
+  for (int i = 0; i < _essAhTDOF.Size(); ++i){
+    _Ma( _essAhTDOF[i], _essAhTDOF[i] ) = 0.;
+  }
+
+
   BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( x ) );
   _Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
   _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
@@ -2647,22 +2653,37 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
   _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
   _Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
   _Cs = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
+  _X1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) );
+  _X2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) );
   _Mz = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,2) ) );
   _K  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,3) ) );
   _Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
   _Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
 
+  _Fu.Add( -1., _Mu ); // remember mass matrices are assembled with negative sign!
+  _Fa.Add( -1., _Ma );
+
+  if ( _stab ){
+    _Mps = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(1,0) ) );
+    _B.Add( -1., _Mps );
+  }
+
+
+  _MuAssembled = true;
+  _MaAssembled = true;
+
   _FuAssembled = true;
   _Z1Assembled = true;
   _Z2Assembled = true;
+  _X1Assembled = true;
+  _X2Assembled = true;
   _BAssembled  = true; 
-  _BtAssembled  = true; 
-  _CsAssembled  = true; 
+  _BtAssembled = true; 
+  _CsAssembled = true; 
   _MzAssembled = true;
   _KAssembled  = true; 
   _YAssembled  = true; 
   _FaAssembled = true;
-
 
 
 
@@ -2735,68 +2756,68 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
     MPI_Barrier(_comm);
   }  
 
-  // -- include initial conditions
-  if( _myRank == 0 ){
-    uFuncCoeff.SetTime( 0.0 );
-    LinearForm *u0form( new LinearForm );
-    u0form->Update( _UhFESpace );
-    u0form->AddDomainIntegrator( new VectorDomainLFIntegrator( uFuncCoeff ) );  //int_\Omega u0*v
-    u0form->GetDLFI()->operator[](0)->SetIntRule(ir);
-    u0form->Assemble();
+//   // -- include initial conditions
+//   if( _myRank == 0 ){
+//     uFuncCoeff.SetTime( 0.0 );
+//     LinearForm *u0form( new LinearForm );
+//     u0form->Update( _UhFESpace );
+//     u0form->AddDomainIntegrator( new VectorDomainLFIntegrator( uFuncCoeff ) );  //int_\Omega u0*v
+//     u0form->GetDLFI()->operator[](0)->SetIntRule(ir);
+//     u0form->Assemble();
 
-// #ifndef MULT_BY_DT
-//     u0form->operator*=(1./_dt);
-// #endif
-    fform->operator+=( *u0form );
-
-
-    if ( _verbose>100 ){
-      std::cout<<"Contribution from IC on u: "; u0form->Print(std::cout, u0form->Size());
-    }
-
-    // remember to reset function evaluation for w to the current time
-    uFuncCoeff.SetTime( _dt*(_myRank+1) );
+// // #ifndef MULT_BY_DT
+// //     u0form->operator*=(1./_dt);
+// // #endif
+//     fform->operator+=( *u0form );
 
 
-    delete u0form;
+//     if ( _verbose>100 ){
+//       std::cout<<"Contribution from IC on u: "; u0form->Print(std::cout, u0form->Size());
+//     }
 
-    if(_verbose>10){
-      std::cout<<"Contribution from initial condition on u included\n"<<std::endl;
-    }
-  }
+//     // remember to reset function evaluation for w to the current time
+//     uFuncCoeff.SetTime( _dt*(_myRank+1) );
 
 
-  // -- include effect of Dirichlet nodes stemming from time-stepping
-  // --- identify Dirichlet nodes
-  Array<int> colsU( fform->Size() );
-  colsU = 0;
-  for (int i = 0; i < _essUhTDOF.Size(); ++i){
-    colsU[_essUhTDOF[i]] = 1;
-  }
-  // --- assemble _Mu (and modify rhs to take dirichlet on u into account within space-time structure)
-  AssembleMu();
-  uFuncCoeff.SetTime( _dt*_myRank );                // set uFunc to previous time-step
-  GridFunction um1BC(_UhFESpace);
-  um1BC.ProjectCoefficient(uFuncCoeff);
-  um1BC.SetSubVectorComplement( _essUhTDOF, 0.0 );  // just to be on the safe side, kill non-Dirichlet nodes
+//     delete u0form;
 
-  Vector um1Rel( fform->Size() );
-  um1Rel = 0.0;
-  _Mu.EliminateCols( colsU, &um1BC, &um1Rel );
-  for (int i = 0; i < _essUhTDOF.Size(); ++i){
-    _Mu.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    // um1Rel(_essUhTDOF[i]) = 0.0;  // rhs will be killed later at dirichlet BC
-  }
+//     if(_verbose>10){
+//       std::cout<<"Contribution from initial condition on u included\n"<<std::endl;
+//     }
+//   }
 
-  if( _myRank > 0 ){
-    // add to rhs (um1Rel should already take minus sign on _Mu into account)
-    // NB: - no need to rescale by dt, as _Mu will be already scaled accordingly.
-    //     - no need to flip sign, as _Mu carries with it already
-    fform->operator+=( um1Rel );
-  }
 
-  // --- remember to reset function evaluation for u to the current time
-  uFuncCoeff.SetTime( _dt*(_myRank+1) );
+  // // -- include effect of Dirichlet nodes stemming from time-stepping
+  // // --- identify Dirichlet nodes
+  // Array<int> colsU( fform->Size() );
+  // colsU = 0;
+  // for (int i = 0; i < _essUhTDOF.Size(); ++i){
+  //   colsU[_essUhTDOF[i]] = 1;
+  // }
+  // // --- assemble _Mu (and modify rhs to take dirichlet on u into account within space-time structure)
+  // AssembleMu();
+  // uFuncCoeff.SetTime( _dt*_myRank );                // set uFunc to previous time-step
+  // GridFunction um1BC(_UhFESpace);
+  // um1BC.ProjectCoefficient(uFuncCoeff);
+  // um1BC.SetSubVectorComplement( _essUhTDOF, 0.0 );  // just to be on the safe side, kill non-Dirichlet nodes
+
+  // Vector um1Rel( fform->Size() );
+  // um1Rel = 0.0;
+  // _Mu.EliminateCols( colsU, &um1BC, &um1Rel );
+  // for (int i = 0; i < _essUhTDOF.Size(); ++i){
+  //   _Mu.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
+  //   // um1Rel(_essUhTDOF[i]) = 0.0;  // rhs will be killed later at dirichlet BC
+  // }
+
+  // if( _myRank > 0 ){
+  //   // add to rhs (um1Rel should already take minus sign on _Mu into account)
+  //   // NB: - no need to rescale by dt, as _Mu will be already scaled accordingly.
+  //   //     - no need to flip sign, as _Mu carries with it already
+  //   fform->operator+=( um1Rel );
+  // }
+
+  // // --- remember to reset function evaluation for u to the current time
+  // uFuncCoeff.SetTime( _dt*(_myRank+1) );
 
 
 
@@ -2877,102 +2898,102 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
     MPI_Barrier(_comm);
   }  
 
-  // -- include initial conditions
-  if( _myRank == 0 ){
-    aFuncCoeff.SetTime( 0.0 );
-    LinearForm *a0form( new LinearForm );
-    a0form->Update( _AhFESpace );
-    a0form->AddDomainIntegrator( new DomainLFIntegrator( aFuncCoeff ) );  //int_\Omega A0*B
-    a0form->GetDLFI()->operator[](0)->SetIntRule(ir);
-    a0form->Assemble();
+//   // -- include initial conditions
+//   if( _myRank == 0 ){
+//     aFuncCoeff.SetTime( 0.0 );
+//     LinearForm *a0form( new LinearForm );
+//     a0form->Update( _AhFESpace );
+//     a0form->AddDomainIntegrator( new DomainLFIntegrator( aFuncCoeff ) );  //int_\Omega A0*B
+//     a0form->GetDLFI()->operator[](0)->SetIntRule(ir);
+//     a0form->Assemble();
 
-// #ifndef MULT_BY_DT
-//     a0form->operator*=(1./_dt);
-// #endif
-    hform->operator+=( *a0form );
+// // #ifndef MULT_BY_DT
+// //     a0form->operator*=(1./_dt);
+// // #endif
+//     hform->operator+=( *a0form );
 
-    if ( _verbose>100 ){
-      std::cout<<"Contribution from IC on A: "; a0form->Print(std::cout, a0form->Size());
-    }
-    // remember to reset function evaluation for A to the current time
-    aFuncCoeff.SetTime( _dt*(_myRank+1) );
+//     if ( _verbose>100 ){
+//       std::cout<<"Contribution from IC on A: "; a0form->Print(std::cout, a0form->Size());
+//     }
+//     // remember to reset function evaluation for A to the current time
+//     aFuncCoeff.SetTime( _dt*(_myRank+1) );
 
-    delete a0form;
+//     delete a0form;
 
-    if(_verbose>10){
-      std::cout<<"Contribution from initial condition on A included\n"<<std::endl;
-    }
-  }
+//     if(_verbose>10){
+//       std::cout<<"Contribution from initial condition on A included\n"<<std::endl;
+//     }
+//   }
 
-  // -- include effect of Dirichlet nodes stemming from time-stepping
-  // --- identify Dirichlet nodes
-  Array<int> colsA( hform->Size() );
-  colsA = 0;
-  for (int i = 0; i < _essAhTDOF.Size(); ++i){
-    colsA[_essAhTDOF[i]] = 1;
-  }
+  // // -- include effect of Dirichlet nodes stemming from time-stepping
+  // // --- identify Dirichlet nodes
+  // Array<int> colsA( hform->Size() );
+  // colsA = 0;
+  // for (int i = 0; i < _essAhTDOF.Size(); ++i){
+  //   colsA[_essAhTDOF[i]] = 1;
+  // }
 
-  // --- assemble _Ma (and modify rhs to take dirichlet on u into account within space-time structure)
-  AssembleMa();
-  aFuncCoeff.SetTime( _dt*_myRank );                // set aFunc to previous time-step
-  GridFunction am1BC(_AhFESpace);
-  am1BC.ProjectCoefficient(aFuncCoeff);
-  am1BC.SetSubVectorComplement( _essAhTDOF, 0.0 );  // just to be on the safe side, kill non-Dirichlet nodes
+  // // --- assemble _Ma (and modify rhs to take dirichlet on u into account within space-time structure)
+  // AssembleMa();
+  // aFuncCoeff.SetTime( _dt*_myRank );                // set aFunc to previous time-step
+  // GridFunction am1BC(_AhFESpace);
+  // am1BC.ProjectCoefficient(aFuncCoeff);
+  // am1BC.SetSubVectorComplement( _essAhTDOF, 0.0 );  // just to be on the safe side, kill non-Dirichlet nodes
 
-  Vector am1Rel( hform->Size() );
-  am1Rel = 0.0;
-  _Ma.EliminateCols( colsA, &am1BC, &am1Rel );
-  for (int i = 0; i < _essAhTDOF.Size(); ++i){
-    _Ma.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    // am1Rel(_essAhTDOF[i]) = 0.0;  // rhs will be killed later at dirichlet BC
-  }
+  // Vector am1Rel( hform->Size() );
+  // am1Rel = 0.0;
+  // _Ma.EliminateCols( colsA, &am1BC, &am1Rel );
+  // for (int i = 0; i < _essAhTDOF.Size(); ++i){
+  //   _Ma.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
+  //   // am1Rel(_essAhTDOF[i]) = 0.0;  // rhs will be killed later at dirichlet BC
+  // }
 
-  if( _myRank > 0 ){
-    // add to rhs (am1Rel should already take minus sign on _Ma into account)
-    // NB: - no need to rescale by dt, as _Ma will be already scaled accordingly.
-    //     - no need to flip sign, as _Ma carries with it already
-    hform->operator+=( am1Rel );
-  }
+  // if( _myRank > 0 ){
+  //   // add to rhs (am1Rel should already take minus sign on _Ma into account)
+  //   // NB: - no need to rescale by dt, as _Ma will be already scaled accordingly.
+  //   //     - no need to flip sign, as _Ma carries with it already
+  //   hform->operator+=( am1Rel );
+  // }
 
-  // --- remember to reset function evaluation for A to the current time
-  aFuncCoeff.SetTime( _dt*(_myRank+1) );
-
-
-
-  // - Include modification due to the stabilisation term -------------------
-  if ( _stab ){
-    // - the "stabilised mass matrices" are given by Mu (resp Ma) plus the contribution from the stabilisation term
-    //    Now, Mu and Ma have (in general) the largest sparsity pattern, so I need to add the stabilisation term to them (and not viceversa)
-    //    however, they are stored with zeroes in the submatrices corresponding to Dirichlet nodes, so I first need to clean those entries
-    SparseMatrix tMus, tMas;
-
-    BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
-    tMus = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(0,0) ) );
-    _Mps = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(1,0) ) ); // Mps instead is fine as is, as it's a whole new addition
-    tMas = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(3,3) ) );
-
-    // -- kill their dirichlet contribution
-    tMus.EliminateCols( colsU );
-    for (int i = 0; i < _essUhTDOF.Size(); ++i){
-      tMus.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    }
-    tMas.EliminateCols( colsA );
-    for (int i = 0; i < _essAhTDOF.Size(); ++i){
-      tMas.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    }
-
-    _Mus = _Mu;
-    _Mas = _Ma;
-
-    _Mus.Add( 1., tMus );
-    _Mas.Add( 1., tMas );
-
-  }
+  // // --- remember to reset function evaluation for A to the current time
+  // aFuncCoeff.SetTime( _dt*(_myRank+1) );
 
 
-  // --- flag that assembly of the mass matrices is now complete
-  _MuAssembled = true;
-  _MaAssembled = true;
+
+  // // - Include modification due to the stabilisation term -------------------
+  // if ( _stab ){
+  //   // - the "stabilised mass matrices" are given by Mu (resp Ma) plus the contribution from the stabilisation term
+  //   //    Now, Mu and Ma have (in general) the largest sparsity pattern, so I need to add the stabilisation term to them (and not viceversa)
+  //   //    however, they are stored with zeroes in the submatrices corresponding to Dirichlet nodes, so I first need to clean those entries
+  //   SparseMatrix tMus, tMas;
+
+  //   BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+  //   tMus = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(0,0) ) );
+  //   _Mps = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(1,0) ) ); // Mps instead is fine as is, as it's a whole new addition
+  //   tMas = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(3,3) ) );
+
+  //   // -- kill their dirichlet contribution
+  //   tMus.EliminateCols( colsU );
+  //   for (int i = 0; i < _essUhTDOF.Size(); ++i){
+  //     tMus.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
+  //   }
+  //   tMas.EliminateCols( colsA );
+  //   for (int i = 0; i < _essAhTDOF.Size(); ++i){
+  //     tMas.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
+  //   }
+
+  //   _Mus = _Mu;
+  //   _Mas = _Ma;
+
+  //   _Mus.Add( 1., tMus );
+  //   _Mas.Add( 1., tMas );
+
+  // }
+
+
+  // // --- flag that assembly of the mass matrices is now complete
+  // _MuAssembled = true;
+  // _MaAssembled = true;
 
 
 
@@ -3151,6 +3172,12 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 
   AssembleCCs();
   CCCs = &_CCs;
+
+  AssembleXX1();
+  XXX1 = &_XX1;
+  
+  AssembleXX2();
+  XXX2 = &_XX2;
   
   AssembleZZ1();
   ZZZ1 = &_ZZ1;
@@ -3335,12 +3362,12 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( Operator*& FFFu, Operator*& MMMz
 //    the mass matrices as square operators surrounded by zeroes (corresponding to the dir nodes), and I don't
 //    risk dirtying the dirichlet nodes when I reuse them in some preconditioner. Maybe a bit of a mess, but oh, well...
 void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector& y ){
-  if ( !( _MuAssembled && _MaAssembled ) ){ 
-    std::cerr<<"ERROR: ApplyOperator: need to assemble Mu and Ma in order to apply the operator\n";
-    return;
-  }
+  // if ( !( _MuAssembled && _MaAssembled ) ){ 
+  //   std::cerr<<"ERROR: ApplyOperator: need to assemble Mu and Ma in order to apply the operator\n";
+  //   return;
+  // }
 
-  // Assemble local part of operator evaluation N(x) ------------------------
+  // Assemble spatial (local) part of operator evaluation N(x) --------------
   BlockVector myX(x);
   // - populate the state vector with Dirichlet nodes, as they have an impact on the non-linear part of the operator
   VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
@@ -3357,72 +3384,40 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
   for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
     myX.GetBlock(3)(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
   }
-  // - compute N(x)
+  // - compute spatial part of N(x)
   _IMHD2DOperator.Mult(myX,y);
 
 
 
-
   // Include contribution from time derivative ------------------------------
-  // - For u
+  // - From current time step
+  BlockVector dty(myX), tempy(myX);
+  _IMHD2DMassStabOperator.Mult(myX,dty);
+  // - From previous time step
+  BlockVector prevX(myX); prevX = 0.;
   // -- Send lcl solution to next proc
-  const int sizeU = myX.GetBlock(0).Size();
-  Vector prevU( sizeU ), tempU( sizeU );
-  prevU = 0.;
   if ( _myRank < _numProcs-1 ){
-    MPI_Send( myX.GetBlock(0).GetData(), sizeU, MPI_DOUBLE, _myRank+1, 2*_myRank,     _comm );
+    MPI_Send(   myX.GetBlock(0).GetData(), myX.GetBlock(0).Size(), MPI_DOUBLE, _myRank+1, 2* _myRank,      _comm );
+    MPI_Send(   myX.GetBlock(3).GetData(), myX.GetBlock(3).Size(), MPI_DOUBLE, _myRank+1, 2* _myRank+1,    _comm );
   }
   if ( _myRank > 0 ){
-    MPI_Recv(           prevU.GetData(), sizeU, MPI_DOUBLE, _myRank-1, 2*(_myRank-1), _comm, MPI_STATUS_IGNORE );
-    
-    // -- Mu should already be stored with negative sign and scaling by dt
-    _Mu.Mult( prevU, tempU );
-    y.GetBlock(0) += tempU;
+    MPI_Recv( prevX.GetBlock(0).GetData(), myX.GetBlock(0).Size(), MPI_DOUBLE, _myRank-1, 2*(_myRank-1),   _comm, MPI_STATUS_IGNORE );
+    MPI_Recv( prevX.GetBlock(3).GetData(), myX.GetBlock(3).Size(), MPI_DOUBLE, _myRank-1, 2*(_myRank-1)+1, _comm, MPI_STATUS_IGNORE );
+  }else{
+    // for rank 0, this contribution stems from the IC
+    uFuncCoeff.SetTime( 0 );
+    aFuncCoeff.SetTime( 0 );
+    uBC.ProjectCoefficient(uFuncCoeff);
+    aBC.ProjectCoefficient(aFuncCoeff);
+    prevX.GetBlock(0) = uBC;
+    prevX.GetBlock(3) = aBC;
   }
+  _IMHD2DMassStabOperator.Mult(prevX,tempy);
+  dty -= tempy;
 
+  // -- Include contribution into y
+  y -= dty;  // NB: remember _IMHD2DMassStabOperator computes NEGATIVE mass matrix, hence -= !
 
-  // - For A
-  // -- Send lcl solution to next proc
-  const int sizeA = myX.GetBlock(3).Size();
-  Vector prevA( sizeA ), tempA( sizeA );
-  prevA = 0.;
-  if ( _myRank < _numProcs-1 ){
-    MPI_Send( myX.GetBlock(3).GetData(), sizeA, MPI_DOUBLE, _myRank+1, 2*_myRank+1,     _comm );
-  }
-  if ( _myRank > 0 ){
-    MPI_Recv(           prevA.GetData(), sizeA, MPI_DOUBLE, _myRank-1, 2*(_myRank-1)+1, _comm, MPI_STATUS_IGNORE );
-    
-    // -- Ma should already be stored with negative sign and scaling by dt
-    _Ma.Mult( prevA, tempA );
-    y.GetBlock(3) += tempA;
-  }
-
-
-  // - For stabilisation terms
-  if ( _stab ){
-    if ( _myRank == 0 ){
-      // for rank 0, this contribution stems from the IC
-      uFuncCoeff.SetTime( 0 );
-      aFuncCoeff.SetTime( 0 );
-      uBC.ProjectCoefficient(uFuncCoeff);
-      aBC.ProjectCoefficient(aFuncCoeff);
-      prevU = uBC;
-      prevA = aBC;
-    }
-    // this contribution from stabilisation depends only on u and A
-    BlockVector stabY(y);
-    BlockVector prevX(myX);
-    prevX = 0.;
-    prevX.GetBlock(0) = prevU;
-    prevX.GetBlock(3) = prevA;
-
-    _IMHD2DMassStabOperator.Mult( prevX, stabY );
-    
-    // -- MassStabOperator should already compute mass matrices with negative sign and scaling by dt
-    y.GetBlock(0) += stabY.GetBlock(0);
-    y.GetBlock(1) += stabY.GetBlock(1);
-    y.GetBlock(3) += stabY.GetBlock(3);
-  }
 
 
   // Compute residual b-N(x) ------------------------------------------------
@@ -3436,14 +3431,11 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
 
 
   // Kill all Dirichlet contributions ---------------------------------------
-  // This might be superfluous (rhs-N(x) should already have zeroes on Dirichlet nodes),
-  //  but just to make sure
   //  (NB: this is in line with what the Mult() method of NonLinearForm does)
   for (int i = 0; i < _essUhTDOF.Size(); ++i)
     y.GetBlock(0)(_essUhTDOF[i]) = 0.;
   for (int i = 0; i < _essAhTDOF.Size(); ++i)
     y.GetBlock(3)(_essAhTDOF[i]) = 0.;
-
 
 }
 
@@ -3494,6 +3486,7 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   _Y.Clear();
   _Fa.Clear();
 
+
   BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( x ) );
   _Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
   _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
@@ -3502,7 +3495,58 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   _Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
 
 
-  // Re-assemble relevant operators
+  // - If stabilisation was included, a bunch more matrices become state-dependent:
+  if ( _stab ){
+    _Cs.Clear();
+    _Mu.Clear();
+    _Mps.Clear();
+    _Ma.Clear();
+
+    BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+    _Mu  = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
+    _Mps = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(1,0) ) );
+    _Ma  = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
+
+    // -- for the mass matrix we need to kill the Dirichlet nodes, otherwise
+    //     we risk dirtying the diagonal (should already be 1)
+    //    NB: (Mps is fine, since it should be set to 0 already)
+    for (int i = 0; i < _essUhTDOF.Size(); ++i){
+      _Mu( _essUhTDOF[i], _essUhTDOF[i] ) = 0.;
+    }
+    for (int i = 0; i < _essAhTDOF.Size(); ++i){
+      _Ma( _essAhTDOF[i], _essAhTDOF[i] ) = 0.;
+    }
+
+
+    // -- the pressure/velocity coupling also need adjustment (B in particular is a space-time matrix)
+    _Bt.Clear();
+    _B.Clear();
+
+    _Cs = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
+    _Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
+    _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
+
+    _B.Add( -1., _Mps );
+
+    _CCs.SetBlockDiag( &_Cs,  0, false );
+    _BBt.SetBlockDiag( &_Bt,  0, false );
+    _BB.SetBlockDiag(  &_B,   0, false );
+    _BB.SetBlockDiag(  &_Mps, 1, false );
+
+    _X1.Clear();
+    _X2.Clear();
+    _X1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) );
+    _X2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) );
+    _XX1.SetBlockDiag( &_X1, 0, false );
+    _XX2.SetBlockDiag( &_X2, 0, false );
+
+  }
+
+  // - either case, mass matrices must be included in the block diagonal of the space-time operator
+  _Fu.Add( -1., _Mu );
+  _Fa.Add( -1., _Ma );
+
+  // - and the space-time operators must be updated accordingly
   _FFu.SetBlockDiag( &_Fu, 0, false );
   _FFa.SetBlockDiag( &_Fa, 0, false );
   _ZZ1.SetBlockDiag( &_Z1, 0, false );
@@ -3510,82 +3554,57 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
   _YY.SetBlockDiag(  &_Y,  0, false );
 
 
-  // Include stabilisation contributions
-  if ( _stab ){
-    // - to diagonals in main space-time operator blocks
-    _B.Clear();
-    _Bt.Clear();
-
-    _Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
-    _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
-    _BB.SetBlockDiag(  &_B,  0, false );
-    _BBt.SetBlockDiag( &_Bt, 0, false );
-
-
-    // - to subdiagonals in main space-time operator blocks
-    _Mus.Clear();
-    _Mps.Clear();
-    _Mas.Clear();
-
-    // -- the "stabilised mass matrices" are given by Mu (resp Ma) plus the contribution from the stabilisation term
-    //     Now, Mu and Ma have (in general) the largest sparsity pattern, so I need to add the stabilisation term to them (and not viceversa)
-    //     however, they are stored with zeroes in the submatrices corresponding to Dirichlet nodes, so I first need to clean those entries
-    SparseMatrix tMus, tMas;
-    BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
-    tMus = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(0,0) ) );
-    _Mps = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(1,0) ) ); // Mps instead is fine as is, as it's a whole new addition
-    tMas = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(3,3) ) );
-
-    // -- kill their dirichlet contribution
-    Array<int> colsU( x.GetBlock(0).Size() );
-    colsU = 0;
-    for (int i = 0; i < _essUhTDOF.Size(); ++i){
-      colsU[_essUhTDOF[i]] = 1;
-    }
-    tMus.EliminateCols( colsU );
-    for (int i = 0; i < _essUhTDOF.Size(); ++i){
-      tMus.EliminateRow( _essUhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    }
-
-    Array<int> colsA( x.GetBlock(3).Size() );
-    colsA = 0;
-    for (int i = 0; i < _essAhTDOF.Size(); ++i){
-      colsA[_essAhTDOF[i]] = 1;
-    }
-    tMas.EliminateCols( colsA );
-    for (int i = 0; i < _essAhTDOF.Size(); ++i){
-      tMas.EliminateRow( _essAhTDOF[i], mfem::Matrix::DIAG_ZERO );
-    }
-
-    _Mus = _Mu;
-    _Mas = _Ma;
-    _Mus.Add( 1., tMus );
-    _Mas.Add( 1., tMas );
 
 
 
-    // -- finally include them in their respectively space-time matrices
-    _FFu.SetBlockDiag( &_Mus, 1, false );
-    _FFa.SetBlockDiag( &_Mas, 1, false );
-    _BB.SetBlockDiag(  &_Mps, 1, false );
 
-  }
 
 
   // - whole space-time operators for preconditioners
   // -- update pSchur
-  _WpAssembled = false;
-  _Wp.Clear();
-  AssembleWp();
-  // --- check if there is advection (if not, some simplifications can be made)
-  bool isQuietState = true;
-  for ( int i = 0; i < _wGridFunc.Size(); ++i ){
-    if ( _wGridFunc[i] != 0 ){
-      isQuietState = false;
-      break;
+  if ( _pSAssembled ){
+    _WpAssembled = false;
+    _Wp.Clear();
+    AssembleWp();
+    // --- check if there is advection (if not, some simplifications can be made)
+    bool isQuietState = true;
+    for ( int i = 0; i < _wGridFunc.Size(); ++i ){
+      if ( _wGridFunc[i] != 0 ){
+        isQuietState = false;
+        break;
+      }
+    }
+    _pSinv->SetWp( &_Wp, isQuietState );
+  
+
+    // update FFuinv
+    switch (_USTSolveType){
+      // Use sequential time-stepping to solve for space-time block
+      case 0:{
+        ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
+        if ( _stab ){
+          ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetM( &_Mu );
+        }
+        break;
+      }
+      case 9:{
+        ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
+
+        break;
+      }
+      default:{
+        if ( _myRank == 0 ){
+          std::cerr<<"Space-time solver type "<<_USTSolveType<<" not recognised."<<std::endl;
+        }
+      }
+    }
+
+  }else{
+    if ( _myRank == 0 ){
+      std::cerr<<"Warning: attempting to update uninitialised pressure Schur complement\n";
     }
   }
-  _pSinv->SetWp( &_Wp, isQuietState );
+
 
   // if( !isQuietState ){
   //   _pSinv->SetWp( &_Wp, false );    // if there is advection, then clearly Wp differs from Ap (must include pressure convection)
@@ -3604,72 +3623,55 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
 
 
 
-  // update FFuinv
-  switch (_USTSolveType){
-    // Use sequential time-stepping to solve for space-time block
-    case 0:{
-      ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
-      if ( _stab ){
-        ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetM( &_Mus );
-      }
-      break;
-    }
-    case 9:{
-      ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
-
-      break;
-    }
-    default:{
-      if ( _myRank == 0 ){
-        std::cerr<<"Space-time solver type "<<_USTSolveType<<" not recognised."<<std::endl;
-      }
-    }
-  }
-
-
 
   // update aSchur
-  _WaAssembled = false;
-  _Wa.Clear();
-  AssembleWa();
-  _aSinv->SetW( &_Wa );
+  if ( _aSAssembled ){
+    _WaAssembled = false;
+    _Wa.Clear();
+    AssembleWa();
+    _aSinv->SetW( &_Wa );
 
-  switch ( _ASTSolveType ){
-    // Update matrices in CCainv
-    case 0:
-    case 1:
-    case 2:{
-      _CpAssembled = false;
-      _C0Assembled = false;
-      _CmAssembled = false;
-      _Cp.Clear();
-      _C0.Clear();
-      _Cm.Clear(); 
-      AssembleCCaBlocks();
-      ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
-      ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
-      ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
-      
-      break;
-    }
-
-    case 9:{
-      _CpAssembled = false;
-      _C0Assembled = false;
-      _CmAssembled = false;
-      _Cp.Clear();
-      _C0.Clear();
-      _Cm.Clear(); 
-      AssembleCCaBlocks();
-      ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
-      
-      break;
-    }
-
-    default:{
-      if ( _myRank == 0 ){
-        std::cerr<<"Space-time solver type "<<_ASTSolveType<<" not recognised."<<std::endl;
+    switch ( _ASTSolveType ){
+      // Update matrices in CCainv
+      case 0:
+      case 1:
+      case 2:{
+        _CpAssembled = false;
+        _C0Assembled = false;
+        _CmAssembled = false;
+        _Cp.Clear();
+        _C0.Clear();
+        _Cm.Clear(); 
+        AssembleCCaBlocks();
+        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
+        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
+        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
+        
+        break;
       }
+
+      case 9:{
+        _CpAssembled = false;
+        _C0Assembled = false;
+        _CmAssembled = false;
+        _Cp.Clear();
+        _C0.Clear();
+        _Cm.Clear(); 
+        AssembleCCaBlocks();
+        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
+        
+        break;
+      }
+
+      default:{
+        if ( _myRank == 0 ){
+          std::cerr<<"Space-time solver type "<<_ASTSolveType<<" not recognised."<<std::endl;
+        }
+      }
+    }
+  }else{
+    if ( _myRank == 0 ){
+      std::cerr<<"Warning: attempting to update uninitialised magnetic Schur complement\n";
     }
   }
 
@@ -4393,6 +4395,14 @@ const IntegrationRule& IMHD2DSTOperatorAssembler::GetBdrRule(){
 }
 
 
+// Returns vectors containing the nodes corresponding to dirichlet
+void IMHD2DSTOperatorAssembler::GetDirichletIdx( Array<int>& essUhTDOF, Array<int>& essPhTDOF, Array<int>& essAhTDOF ) const{
+  essUhTDOF = _essUhTDOF;
+  essPhTDOF = _essPhTDOF;
+  essAhTDOF = _essAhTDOF;
+}
+
+
 
 // Returns vector containing the space-time exact solution (if available)
 void IMHD2DSTOperatorAssembler::ExactSolution( HypreParVector*& u, HypreParVector*& p, HypreParVector*& z, HypreParVector*& a ) const{
@@ -4910,24 +4920,10 @@ void IMHD2DSTOperatorAssembler::PrintMatrices( const std::string& filename ) con
   myfile.precision(std::numeric_limits< double >::max_digits10);
 
   if ( _myRank == 0 ){
-    myfilename = filename + "_Mu.dat";
-    myfile.open( myfilename );
-    _Mu.PrintMatlab(myfile);
-    myfile.close( );
 
     myfilename = filename + "_Mz.dat";
     myfile.open( myfilename );
     _Mz.PrintMatlab(myfile);
-    myfile.close( );
-
-    myfilename = filename + "_Ma.dat";
-    myfile.open( myfilename );
-    _Ma.PrintMatlab(myfile);
-    myfile.close( );
-
-    myfilename = filename + "_B.dat";
-    myfile.open( myfilename );
-    _B.PrintMatlab(myfile);
     myfile.close( );
 
     myfilename = filename + "_K.dat";
@@ -4983,6 +4979,37 @@ void IMHD2DSTOperatorAssembler::PrintMatrices( const std::string& filename ) con
     myfile.close( );
 
   }
+
+  myfilename = filename + "_Mu_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  _Mu.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Ma_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  _Ma.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_B_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  _B.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Bt_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  _Bt.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_X1_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  _X1.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_X2_" + std::to_string(_myRank) +".dat";
+  myfile.open( myfilename );
+  _X2.PrintMatlab(myfile);
+  myfile.close( );
+
 
   myfilename = filename + "_Fu_" + std::to_string(_myRank) +".dat";
   myfile.open( myfilename );
@@ -5049,7 +5076,7 @@ void IMHD2DSTOperatorAssembler::PrintMatrices( const std::string& filename ) con
   myfile.close( );
 
 
-  // rhs on non-linear operator
+  // rhs of non-linear operator
   myfilename = filename + "_NLrhsU_" + std::to_string(_myRank) +".dat";
   myfile.open( myfilename );
   _frhs.Print(myfile,1);
@@ -5088,6 +5115,8 @@ inline void IMHD2DSTOperatorAssembler::SetEverythingUnassembled(){
   _CsAssembled = false;
   _Z1Assembled = false;
   _Z2Assembled = false;
+  _X1Assembled = false;
+  _X2Assembled = false;
   _KAssembled = false;
   _YAssembled = false;
   _MpAssembled = false;
@@ -5109,6 +5138,8 @@ inline void IMHD2DSTOperatorAssembler::SetEverythingUnassembled(){
   _CCsAssembled = false;
   _ZZ1Assembled = false;
   _ZZ2Assembled = false;
+  _XX1Assembled = false;
+  _XX2Assembled = false;
   _YYAssembled = false;
   _KKAssembled = false;
   _pSAssembled = false;

@@ -62,6 +62,14 @@ void SaveError( const Array<BlockVector>& sol,
                 double(*aFun_ex)( const Vector & x, const double t             ),
                 double _dt, Mesh* _mesh,
                 const std::string& path, const std::string& filename );
+void PrintMatrices( const std::string& filename,
+       const SparseMatrix& _Fu,  const SparseMatrix& _Bt,  const SparseMatrix& _Z1, const SparseMatrix& _Z2,
+       const SparseMatrix& _B ,  const SparseMatrix& _Cs,  const SparseMatrix& _X1, const SparseMatrix& _X2,
+       const SparseMatrix& _Mz,  const SparseMatrix& _K,
+       const SparseMatrix& _Y ,  const SparseMatrix& _Fa,  const SparseMatrix& _Ma,
+       const SparseMatrix& _Mp,  const SparseMatrix& _Ap,  const SparseMatrix& _Wp,
+       const SparseMatrix& _Aa,  const SparseMatrix& _Cp,  const SparseMatrix& _Wa,
+       const Array<int>& _essUhTDOF, const Array<int>& _essPhTDOF, const Array<int>& _essAhTDOF  );
 //---------------------------------------------------------------------------
 int main(int argc, char *argv[]){
 
@@ -78,7 +86,7 @@ int main(int argc, char *argv[]){
   const int _dim = 2;
   const char *petscrc_file = "rc_SpaceTimeIMHD2D";
 
-  int output = 0;
+  bool output = false;
   int precType = 2;
 
   int ordU = 2;
@@ -89,7 +97,6 @@ int main(int argc, char *argv[]){
   int NT = 2;
   int pbType = 5;
   string pbName;
-  bool stab = false;
   int verbose = 0;
 
   double _mu  = 1.0;
@@ -146,11 +153,8 @@ int main(int argc, char *argv[]){
                 "                        1-Cyr et al simplified: Uupi*Lupi*Uubi\n"
                 "                        2-Cyr et al uber simplified: Uupi*Uubi (default)\n"
         );
-  args.AddOption(&output, "-out", "--output",
+  args.AddOption(&output, "-out", "--output", "-noOut", "--noOutput",
                 "Print paraview solution\n"
-        );
-  args.AddOption(&stab, "-S", "--stab", "-noS", "-noStab",
-                "Stabilise via SUPG (default: false)\n"
         );
   args.AddOption(&verbose, "-V", "--verbose",
                 "Control how much info to print to terminal:(=-1   print large block matrices, and trigger eigs analysis - bit of a hack)\n"
@@ -438,6 +442,11 @@ int main(int argc, char *argv[]){
   std::cout << "dim(Zh) = " << _ZhFESpace->GetTrueVSize() << "\n";
   std::cout << "dim(Ah) = " << _AhFESpace->GetTrueVSize() << "\n";
   std::cout << "***********************************************************\n";
+  std::cout << "Tags dir u      "; essBdrU.Print(mfem::out, essBdrU.Size() );
+  std::cout << "Tags dir v      "; essBdrV.Print(mfem::out, essBdrV.Size() );
+  std::cout << "Tags dir p      "; essBdrP.Print(mfem::out, essBdrP.Size() );
+  std::cout << "Tags dir A      "; essBdrA.Print(mfem::out, essBdrA.Size() );
+  std::cout << "***********************************************************\n";
   // std::cout << "Dir u      "; _essUhTDOF.Print(mfem::out, _essUhTDOF.Size() ); std::cout<< "\n";
   // std::cout << "Dir p      "; _essPhTDOF.Print(mfem::out, _essPhTDOF.Size() ); std::cout<< "\n";
   // std::cout << "Dir A      "; _essAhTDOF.Print(mfem::out, _essAhTDOF.Size() ); std::cout<< "\n";
@@ -445,7 +454,7 @@ int main(int argc, char *argv[]){
 
   // - initialise paraview output
   string outFilePath = "ParaView";
-  string outFileName = "STIMHD2D_" + pbName;
+  string outFileName = "STIMHD2D_Orig_" + pbName;
   // -- GridFunction representing solution
   GridFunction uGF( _UhFESpace );
   GridFunction pGF( _PhFESpace );
@@ -503,15 +512,9 @@ int main(int argc, char *argv[]){
 
   // Define integration rule to be used throughout
   Array<int> ords(3);
-  if ( !_stab ){
-    ords[0] = 2*ordU + ordU-1;         // ( (u·∇)u, v )
-    ords[1] =   ordU + ordA-1 + ordZ;  // (   z ∇A, v )
-    ords[2] =   ordU + ordA-1 + ordA;  // ( (u·∇A), B )
-  }else{
-    ords[0] = 2*ordU + 2*(ordU-1);                 // ( (u·∇)u, (w·∇)v )
-    ords[1] =   ordU +    ordU-1 + ordA-1 + ordZ;  // (   z ∇A, (w·∇)v )
-    ords[2] = 2*ordU + 2*(ordA-1);                 // ( (u·∇A),  w·∇B )    
-  }
+  ords[0] = 2*ordU + ordU-1;         // ( (u·∇)u, v )
+  ords[1] =   ordU + ordA-1 + ordZ;  // (   z ∇A, v )
+  ords[2] =   ordU + ordA-1 + ordA;  // ( (u·∇A), B )
   const IntegrationRule *ir  = &IntRules.Get( Geometry::Type::TRIANGLE, ords.Max() ); // for domains
   const IntegrationRule *bir = &IntRules.Get( Geometry::Type::SEGMENT,  ords.Max() ); // for boundaries
   std::cout<<"Selecting integrator of order "<<ords.Max()<<std::endl;
@@ -701,6 +704,12 @@ int main(int argc, char *argv[]){
     tempZ.Neg();
     Mzi.Mult( tempZ, lclSol.GetBlock(2) );  // solve for z
 
+    // print solution:
+    mfem::out.precision(std::numeric_limits< double >::max_digits10);
+    std::cout<<"u: "; lclSol.GetBlock(0).Print(mfem::out, lclSol.GetBlock(0).Size());std::cout<<std::endl;
+    std::cout<<"p: "; lclSol.GetBlock(1).Print(mfem::out, lclSol.GetBlock(1).Size());std::cout<<std::endl;
+    std::cout<<"z: "; lclSol.GetBlock(2).Print(mfem::out, lclSol.GetBlock(2).Size());std::cout<<std::endl;
+    std::cout<<"A: "; lclSol.GetBlock(3).Print(mfem::out, lclSol.GetBlock(3).Size());std::cout<<std::endl;
 
 
     // - compute residual
@@ -745,9 +754,11 @@ int main(int argc, char *argv[]){
       SparseMatrix Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
       SparseMatrix Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
       SparseMatrix Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
+      SparseMatrix X1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) );
+      SparseMatrix X2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) );
       SparseMatrix Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
       SparseMatrix B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
-      SparseMatrix Cp = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
+      SparseMatrix Cs = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
       SparseMatrix Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
       SparseMatrix Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
 
@@ -783,7 +794,7 @@ int main(int argc, char *argv[]){
       MHDOp.SetBlock( 0, 1, &Bt );
       MHDOp.SetBlock( 0, 2, &Z  );
       MHDOp.SetBlock( 1, 0, &B  );
-      MHDOp.SetBlock( 1, 1, &Cp );
+      MHDOp.SetBlock( 1, 1, &Cs );
       MHDOp.SetBlock( 2, 0, &Y  );
       MHDOp.SetBlock( 2, 2, &Fa );
 
@@ -886,6 +897,26 @@ int main(int argc, char *argv[]){
       }
       OperatorsSequence MHDPr( precOps, precOwn );
 
+      // print rhs:
+      mfem::out.precision(std::numeric_limits< double >::max_digits10);
+      std::cout<<"rhsu: "; lclRes.GetBlock(0).Print(mfem::out, lclRes.GetBlock(0).Size());std::cout<<std::endl;
+      std::cout<<"rhsp: "; lclRes.GetBlock(1).Print(mfem::out, lclRes.GetBlock(1).Size());std::cout<<std::endl;
+      std::cout<<"rhsz: "; lclRes.GetBlock(2).Print(mfem::out, lclRes.GetBlock(2).Size());std::cout<<std::endl;
+      std::cout<<"rhsA: "; lclRes.GetBlock(3).Print(mfem::out, lclRes.GetBlock(3).Size());std::cout<<std::endl;
+
+
+      std::string matricesFileName = "results/_ugaOrig";
+      PrintMatrices(matricesFileName,
+                    Fu,  Bt, Z1, Z2,
+                    B ,  Cs, X1, X2,
+                    Mz,  K,
+                    Y ,  Fa, Ma,
+                    Mp,  Ap, Wp,
+                    Aa,  Cp, Wa,
+                    _essUhTDOF, _essPhTDOF, _essAhTDOF);
+      int uga;
+      std::cin>>uga;
+
 
 
 
@@ -925,6 +956,14 @@ int main(int argc, char *argv[]){
       tempZ.Neg();
       tempZ += zrhs;
       Mzi.Mult( tempZ, lclSol.GetBlock(2) );
+
+
+      // print solution:
+      mfem::out.precision(std::numeric_limits< double >::max_digits10);
+      std::cout<<"u: "; lclSol.GetBlock(0).Print(mfem::out, lclSol.GetBlock(0).Size());std::cout<<std::endl;
+      std::cout<<"p: "; lclSol.GetBlock(1).Print(mfem::out, lclSol.GetBlock(1).Size());std::cout<<std::endl;
+      std::cout<<"z: "; lclSol.GetBlock(2).Print(mfem::out, lclSol.GetBlock(2).Size());std::cout<<std::endl;
+      std::cout<<"A: "; lclSol.GetBlock(3).Print(mfem::out, lclSol.GetBlock(3).Size());std::cout<<std::endl;
 
 
       // - residual
@@ -1560,4 +1599,206 @@ void SaveError( const Array<BlockVector>& sol,
   delete aFun;
 
 }
+
+
+
+
+void PrintMatrices( const std::string& filename,
+       const SparseMatrix& _Fu,  const SparseMatrix& _Bt,  const SparseMatrix& _Z1, const SparseMatrix& _Z2,
+       const SparseMatrix& _B ,  const SparseMatrix& _Cs,  const SparseMatrix& _X1, const SparseMatrix& _X2,
+       const SparseMatrix& _Mz,  const SparseMatrix& _K,
+       const SparseMatrix& _Y ,  const SparseMatrix& _Fa,  const SparseMatrix& _Ma,
+       const SparseMatrix& _Mp,  const SparseMatrix& _Ap,  const SparseMatrix& _Wp,
+       const SparseMatrix& _Aa,  const SparseMatrix& _Cp,  const SparseMatrix& _Wa,
+       const Array<int>& _essUhTDOF, const Array<int>& _essPhTDOF, const Array<int>& _essAhTDOF  ){
+
+  std::cout<<"Printing matrices to "<<filename<<std::endl;
+
+
+  std::string myfilename;
+  std::ofstream myfile;
+  myfile.precision(std::numeric_limits< double >::max_digits10);
+
+
+  myfilename = filename + "_Mz.dat";
+  myfile.open( myfilename );
+  _Mz.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_K.dat";
+  myfile.open( myfilename );
+  _K.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Mp.dat";
+  myfile.open( myfilename );
+  _Mp.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Ap.dat";
+  myfile.open( myfilename );
+  _Ap.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Cs.dat";
+  myfile.open( myfilename );
+  _Cs.PrintMatlab(myfile);
+  myfile.close( );
+
+  // myfilename = filename + "_MaNZ.dat";
+  // myfile.open( myfilename );
+  // _MaNoZero.PrintMatlab(myfile);
+  // myfile.close( );
+
+  // myfilename = filename + "_MaNZL.dat";
+  // myfile.open( myfilename );
+  // _MaNoZeroLumped.PrintMatlab(myfile);
+  // myfile.close( );
+
+  myfilename = filename + "_Aa.dat";
+  myfile.open( myfilename );
+  _Aa.PrintMatlab(myfile);
+  myfile.close( );
+
+
+  // Dirichlet nodes
+  myfilename = filename + "_essU.dat";
+  myfile.open( myfilename );
+  _essUhTDOF.Print(myfile,1);
+  myfile.close( );
+
+  myfilename = filename + "_essP.dat";
+  myfile.open( myfilename );
+  _essPhTDOF.Print(myfile,1);
+  myfile.close( );
+
+  // myfilename = filename + "essZ.dat";
+  // myfile.open( myfilename );
+  // _essZhTDOF.Print(myfile,1);
+  // myfile.close( );
+
+  myfilename = filename + "_essA.dat";
+  myfile.open( myfilename );
+  _essAhTDOF.Print(myfile,1);
+  myfile.close( );
+
+
+
+  myfilename = filename + "_Ma.dat";
+  myfile.open( myfilename );
+  _Ma.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_B.dat";
+  myfile.open( myfilename );
+  _B.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Bt.dat";
+  myfile.open( myfilename );
+  _Bt.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_X1.dat";
+  myfile.open( myfilename );
+  _X1.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_X2.dat";
+  myfile.open( myfilename );
+  _X2.PrintMatlab(myfile);
+  myfile.close( );
+
+
+  myfilename = filename + "_Fu.dat";
+  myfile.open( myfilename );
+  _Fu.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Fa.dat";
+  myfile.open( myfilename );
+  _Fa.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Z1.dat";
+  myfile.open( myfilename );
+  _Z1.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Z2.dat";
+  myfile.open( myfilename );
+  _Z2.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Y.dat";
+  myfile.open( myfilename );
+  _Y.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Wp.dat";
+  myfile.open( myfilename );
+  _Wp.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Wa.dat";
+  myfile.open( myfilename );
+  _Wa.PrintMatlab(myfile);
+  myfile.close( );
+
+  // myfilename = filename + "_dtuWa_" + std::to_string(_myRank) + ".dat";
+  // myfile.open( myfilename );
+  // _dtuWa.PrintMatlab(myfile);
+  // myfile.close( );
+
+  myfilename = filename + "_Cp.dat";
+  myfile.open( myfilename );
+  _Cp.PrintMatlab(myfile);
+  myfile.close( );
+
+  // myfilename = filename + "_C0.dat";
+  // myfile.open( myfilename );
+  // _C0.PrintMatlab(myfile);
+  // myfile.close( );
+
+  // myfilename = filename + "_Cm.dat";
+  // myfile.open( myfilename );
+  // _Cm.PrintMatlab(myfile);
+  // myfile.close( );
+
+
+  // Vector B0(_dim);
+  // ComputeAvgB( B0 );
+  // double B0norm2 = ( B0(0)*B0(0) + B0(1)*B0(1) ) / (_area*_mu0); 
+  // myfilename = filename + "_B0.dat";
+  // myfile.open( myfilename );
+  // myfile<<B0norm2;
+  // myfile.close( );
+
+
+  // // rhs of non-linear operator
+  // myfilename = filename + "_NLrhsU.dat";
+  // myfile.open( myfilename );
+  // _frhs.Print(myfile,1);
+  // myfile.close( );
+
+  // myfilename = filename + "_NLrhsP.dat";
+  // myfile.open( myfilename );
+  // _grhs.Print(myfile,1);
+  // myfile.close( );
+
+  // myfilename = filename + "_NLrhsZ.dat";
+  // myfile.open( myfilename );
+  // _zrhs.Print(myfile,1);
+  // myfile.close( );
+
+  // myfilename = filename + "_NLrhsA.dat";
+  // myfile.open( myfilename );
+  // _hrhs.Print(myfile,1);
+  // myfile.close( );
+
+  std::cout<<"Matrices printed"<<std::endl;
+
+
+}
+
 

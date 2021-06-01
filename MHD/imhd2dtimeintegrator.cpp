@@ -1,4 +1,5 @@
 #include "imhd2dtimeintegrator.hpp"
+#include "imhd2dspaceintegrator.hpp"
 
 namespace mfem{
 
@@ -120,8 +121,7 @@ void IncompressibleMHD2DTimeIntegrator::AssembleElementGrad(
       // gshape_a.MultTranspose( *(elfun[3]), gAeval ); // ∇A
 
       double tu=0., ta=0.;
-      IncompressibleMHD2DTimeIntegrator::GetTaus( weval, gcEval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
-
+      IncompressibleMHD2DSpaceIntegrator::GetTaus( wEval, gcEval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
 
 
       //***********************************************************************
@@ -176,6 +176,45 @@ void IncompressibleMHD2DTimeIntegrator::AssembleElementGrad(
       AddMult_a_VWt(scale, gAw, shape_a, *(elmats(3,3)) );
 
 
+
+      // This requires some more thought: I need to both extract a "mass" matrix, and to include 
+      //  he extra linearisation term using < (w^{n+1}-w^{n}),(u·∇)v > 
+      // if ( _includeTestLin ){
+      //   // I need to test the residual of the vector potential equation against tu*(u·∇v)
+      //   // dtw term -------------------------------------------------------------
+      //   scale = tu * ip.weight;
+      //   Vector uEval(dim);
+      //   uCoeff.MultTranspose(shape_u, uEval);  // u
+
+      //   for ( int k = 0; k < dim; ++k ){
+      //     Vector tempgvi(dof_u);
+      //     gshape_u.GetColumn(k,tempgvi);
+      //     DenseMatrix tempugv(dof_u,dof_u);
+      //     MultVWt(tempgvi, shape_u, tempugv);
+      //     for ( int j = 0; j < dim; ++j ){
+      //       elmats(0,0)->AddMatrix( scale*uEval(j), tempugv, dof_u*j, dof_u*k );
+      //     }
+      //   }
+      // }
+
+      // if ( _includeTestLin ){
+      //   //***********************************************************************
+      //   // A,u block
+      //   //***********************************************************************
+      //   // I need to test the residual of the vector potential equation against ta*(u·∇b)
+      //   // dtC term -------------------------------------------------------------
+      //   double AEval = (elfun[3])->operator*(shape_a); // A
+      //   scale = ta * ip.weight;
+      //   for (int k = 0; k < dim; k++){
+      //     Vector tempugbi(dof_p);
+      //     gshape_a.GetColumn(k,tempugbi);
+      //     DenseMatrix tempugb(dof_a,dof_u);
+      //     MultVWt(tempugbi, shape_u, tempugb);
+      //     elmats(3,0)->AddMatrix( scale*AEval, tempugb, 0, dof_u*k );
+      //   }
+      // }
+
+
     }
   }
 
@@ -221,13 +260,6 @@ void IncompressibleMHD2DTimeIntegrator::AssembleElementVector(
 
   shape_u.SetSize(dof_u);
   shape_a.SetSize(dof_a);
-  shape_Du.SetSize(dof_u, dim);
-  shape_Dp.SetSize(dof_p, dim);
-  shape_Da.SetSize(dof_a, dim);
-
-  gshape_u.SetSize(dof_u, dim);
-  gshape_p.SetSize(dof_p, dim);
-  gshape_a.SetSize(dof_a, dim);
 
   uCoeff.UseExternalData((elfun[0])->GetData(), dof_u, dim);  // coefficients of basis functions for u
 
@@ -240,78 +272,126 @@ void IncompressibleMHD2DTimeIntegrator::AssembleElementVector(
     const IntegrationPoint &ip = ir.IntPoint(i);
     Tr.SetIntPoint(&ip);
     const DenseMatrix adJ( Tr.AdjugateJacobian() );
+    const double detJ = Tr.Weight();
     // - basis functions evaluations (on reference element)
     el[0]->CalcShape(  ip, shape_u  );
     el[3]->CalcShape(  ip, shape_a  );
-    el[0]->CalcDShape( ip, shape_Du );
-    el[1]->CalcDShape( ip, shape_Dp );
-    el[3]->CalcDShape( ip, shape_Da );
-    // - basis functions gradient evaluations (on physical element)
-    Mult(shape_Du, adJ, gshape_u);  // NB: this way they are all multiplied by detJ already!
-    Mult(shape_Dp, adJ, gshape_p);
-    Mult(shape_Da, adJ, gshape_a);
-    // - function evaluations
-    Vector wEval(dim), gcEval(dim);
-    _w->Eval(wEval, Tr, ip);
-    _c->GetGridFunction()->GetGradient( Tr, gcEval );
-
     Vector uEval(dim);
     uCoeff.MultTranspose(shape_u, uEval);          // u
     double AEval = (elfun[3])->operator*(shape_a); // A
 
-    double tu=0., ta=0.;
-    GetTaus( wEval, gcEval, Tr.InverseJacobian(), tu, ta );
-
-    double scale =0.;
-
 
 
     //***********************************************************************
-    // u block
+    // u,u block
     //***********************************************************************
-    Vector tempu(dof_u);
-    // I need to test the residual of the momentum equation against tu*(w·∇)v
-    gshape_u.Mult( wEval, tempu ); // this is (w·∇)v
-    // dtu ------------------------------------------------------------------
-    scale = tu * ip.weight;
-//   #ifndef MULT_BY_DT
-//       scale*= 1./_dt;
-//   #endif
+    // Mass (eventually rescaled by 1/dt) -----------------------------------
+    double scale = ip.weight * detJ;
+// #ifndef MULT_BY_DT
+//     scale*= 1./_dt;
+// #endif
     // -- this contribution is made block-wise: loop over physical dimensions
     for (int k = 0; k < dim; k++){
       for ( int j = 0; j < dof_u; ++j ){
-        elvecs[0]->operator()(j+k*dof_u) += tempu(j) * scale * uEval(k);
+        elvecs[0]->operator()(j+k*dof_u) += shape_u(j) * scale * uEval(k);
       }
     }
 
+
     //***********************************************************************
-    // p block
+    // A,A block
     //***********************************************************************
-    // I need to test the residual of the momentum equation against tu*∇q ***
-    Vector tempp(dof_p);
-    // dtu ------------------------------------------------------------------
-    scale = tu * ip.weight;
+    // Mass (eventually rescaled by 1/dt) -----------------------------------
+    scale = ip.weight * detJ;
 // #ifndef MULT_BY_DT
-//       scale *= 1/_dt;
+//     scale *= 1./_dt;
 // #endif
-    gshape_p.Mult( uEval,  tempp );
-    elvecs[1]->Add( scale, tempp );
+    elvecs[3]->Add( scale*AEval, shape_a );
+
 
 
 
     //***********************************************************************
-    // A block
     //***********************************************************************
-    // I need to test the residual of the vector potential equation against ta*w·∇b
-    Vector tempAA(dof_a);
-    gshape_a.Mult( wEval, tempAA); // this is w·∇b
-    // dtA ------------------------------------------------------------------
-    scale = ta * ip.weight;
-// #ifndef MULT_BY_DT
-//       scale *= 1/_dt;
-// #endif
-    elvecs[3]->Add( scale*AEval, tempAA );
+    // IF STABILIZATION IS INCLUDED, I NEED EXTRA TERMS!
+    //***********************************************************************
+    //***********************************************************************
+    if ( _stab ){
+      // - more basis functions gradient evaluations (on ref element)
+      shape_Du.SetSize(dof_u, dim);
+      shape_Dp.SetSize(dof_p, dim);
+      shape_Da.SetSize(dof_a, dim);
 
+      gshape_u.SetSize(dof_u, dim);
+      gshape_p.SetSize(dof_p, dim);
+      gshape_a.SetSize(dof_a, dim);
+
+      el[0]->CalcDShape( ip, shape_Du );
+      el[1]->CalcDShape( ip, shape_Dp );
+      el[3]->CalcDShape( ip, shape_Da );
+      // - basis functions gradient evaluations (on physical element)
+      Mult(shape_Du, adJ, gshape_u);  // NB: this way they are all multiplied by detJ already!
+      Mult(shape_Dp, adJ, gshape_p);
+      Mult(shape_Da, adJ, gshape_a);
+      // - function evaluations
+      Vector wEval(dim), gcEval(dim);
+      _w->Eval(wEval, Tr, ip);
+      _c->GetGridFunction()->GetGradient( Tr, gcEval );
+
+      double tu=0., ta=0.;
+      IncompressibleMHD2DSpaceIntegrator::GetTaus( wEval, gcEval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
+
+      double scale =0.;
+
+
+
+      //***********************************************************************
+      // u block
+      //***********************************************************************
+      Vector tempu(dof_u);
+      // I need to test the residual of the momentum equation against tu*(w·∇)v
+      gshape_u.Mult( wEval, tempu ); // this is (w·∇)v
+      // dtu ------------------------------------------------------------------
+      scale = tu * ip.weight;
+  //   #ifndef MULT_BY_DT
+  //       scale*= 1./_dt;
+  //   #endif
+      // -- this contribution is made block-wise: loop over physical dimensions
+      for (int k = 0; k < dim; k++){
+        for ( int j = 0; j < dof_u; ++j ){
+          elvecs[0]->operator()(j+k*dof_u) += tempu(j) * scale * uEval(k);
+        }
+      }
+
+      //***********************************************************************
+      // p block
+      //***********************************************************************
+      // I need to test the residual of the momentum equation against tu*∇q ***
+      Vector tempp(dof_p);
+      // dtu ------------------------------------------------------------------
+      scale = tu * ip.weight;
+  // #ifndef MULT_BY_DT
+  //       scale *= 1/_dt;
+  // #endif
+      gshape_p.Mult( uEval,  tempp );
+      elvecs[1]->Add( scale, tempp );
+
+
+
+      //***********************************************************************
+      // A block
+      //***********************************************************************
+      // I need to test the residual of the vector potential equation against ta*w·∇b
+      Vector tempAA(dof_a);
+      gshape_a.Mult( wEval, tempAA); // this is w·∇b
+      // dtA ------------------------------------------------------------------
+      scale = ta * ip.weight;
+  // #ifndef MULT_BY_DT
+  //       scale *= 1/_dt;
+  // #endif
+      elvecs[3]->Add( scale*AEval, tempAA );
+
+    }
   }
 
 
@@ -352,15 +432,15 @@ const IntegrationRule& IncompressibleMHD2DTimeIntegrator::GetRule(const Array<co
 
   // I check every term in the equations, see which poly order is reached, and take the max
   Array<int> ords(3);
-  if ( _stab ){
-    ords[0] = 2*ordU; // ( u, v )
-    ords[1] = 2*ordA; // ( A, B  )    
-    ords[2] = 0;
-  }else{
+  // if ( _stab ){
+  //   ords[0] = 2*ordU; // ( u, v )
+  //   ords[1] = 2*ordA; // ( A, B  )    
+  //   ords[2] = 0;
+  // }else{
     ords[0] = 2*ordU + ordGU;        // ( u, (w·∇)v )
     ords[1] =   ordU + ordGP;        // ( u,    ∇q  )
     ords[2] =   ordU + ordGA + ordA; // ( A,  w·∇B  )    
-  }
+  // }
 
 
   // std::cout<<"Selecting integrator of order "<<ords.Max()<<std::endl;

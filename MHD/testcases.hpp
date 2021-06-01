@@ -35,30 +35,30 @@ namespace Analytical4Data{
 };
 
 
-// Modified Hartmann flow instability
-namespace HartmannData{
-  void   uFun_ex( const Vector & x, const double t, Vector & u );
-  double pFun_ex( const Vector & x, const double t             );
-  double zFun_ex( const Vector & x, const double t             );
-  double aFun_ex( const Vector & x, const double t             );
-  void   fFun(    const Vector & x, const double t, Vector & f );
-  void   nFun(    const Vector & x, const double t, Vector & f );
-  double gFun(    const Vector & x, const double t             );
-  double hFun(    const Vector & x, const double t             );
-  double mFun(    const Vector & x, const double t             );
-  void   wFun(    const Vector & x, const double t, Vector & w );
-  double qFun(    const Vector & x, const double t             );
-  double cFun(    const Vector & x, const double t             );
-  double yFun(    const Vector & x, const double t             );
-  const double _G0   = 1.;
-  const double _B0   = 1.;
-  const double _mu   = 1.;
-  const double _eta  = 1.;
-  const double _mu0  = 1.;
-  const std::string _pbName   = "Hartmann";
-  const std::string _meshFile = "./meshes/tri-square-hartmann.mesh";
-  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
-};
+// // Modified Hartmann flow instability
+// namespace HartmannData{
+//   void   uFun_ex( const Vector & x, const double t, Vector & u );
+//   double pFun_ex( const Vector & x, const double t             );
+//   double zFun_ex( const Vector & x, const double t             );
+//   double aFun_ex( const Vector & x, const double t             );
+//   void   fFun(    const Vector & x, const double t, Vector & f );
+//   void   nFun(    const Vector & x, const double t, Vector & f );
+//   double gFun(    const Vector & x, const double t             );
+//   double hFun(    const Vector & x, const double t             );
+//   double mFun(    const Vector & x, const double t             );
+//   void   wFun(    const Vector & x, const double t, Vector & w );
+//   double qFun(    const Vector & x, const double t             );
+//   double cFun(    const Vector & x, const double t             );
+//   double yFun(    const Vector & x, const double t             );
+//   const double _G0   = 1.;
+//   const double _B0   = 1.;
+//   const double _mu   = 1.;
+//   const double _eta  = 1.;
+//   const double _mu0  = 1.;
+//   const std::string _pbName   = "Hartmann";
+//   const std::string _meshFile = "./meshes/tri-square-hartmann.mesh";
+//   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+// };
 
 
 
@@ -114,6 +114,7 @@ namespace IslandCoalescenceData{
   const double _mu0   = 1.;
   const std::string _pbName   = "IslandCoalescence";
   const std::string _meshFile ="./meshes/tri-square-island.mesh";
+  // const std::string _meshFile ="./meshes/test.msh";
   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
 };
 
@@ -166,9 +167,9 @@ namespace TearingModeData{
   const double _lambda = 5.;
   const double _Lx     = 3.;
   const double _beta   = 1e-3;
-  const double _mu  = 1e-2;
-  const double _eta = 1e-2;
-  const double _mu0 = 1.;
+  const double _mu     = 1e-2;
+  const double _eta    = 1e-2;
+  const double _mu0    = 1.;
   const std::string _pbName   = "TearingMode";
   // const std::string _meshFile ="./meshes/quad-rect-tearing-xper.mesh";
   // const std::string _meshFile ="./meshes/tri-rect-tearing-sym.mesh";
@@ -252,7 +253,7 @@ namespace CavityDrivenData{
   double qFun(    const Vector & x, const double t             );
   double cFun(    const Vector & x, const double t             );
   double yFun(    const Vector & x, const double t             );
-  const double _mu  = 1.;
+  const double _mu  = 1e-2;
   const double _eta = 1.;
   const double _mu0 = 1.;
   const std::string _pbName   = "DrivenCavity";

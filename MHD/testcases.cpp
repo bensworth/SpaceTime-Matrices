@@ -128,103 +128,103 @@ namespace Analytical4Data{
 
 
 
-//***************************************************************************
-// Modified Hartmann flow TODO
-//***************************************************************************
-// Hartmann flow
-namespace HartmannData{
-  // - velocity
-  void uFun_ex(const Vector & x, const double t, Vector & u){
-    u = 0.;
+// //***************************************************************************
+// // Modified Hartmann flow TODO
+// //***************************************************************************
+// // Hartmann flow
+// namespace HartmannData{
+//   // - velocity
+//   void uFun_ex(const Vector & x, const double t, Vector & u){
+//     u = 0.;
 
-    u(0) = _G0/_B0 * ( cosh(1.) - cosh(x(1)) )/sinh(1.);
-  }
-  // - pressure
-  double pFun_ex(const Vector & x, const double t ){
-    return -_G0*( x(0) + 1.0 );    // zero at outflow (x=-1)
-  }
-  // - laplacian of vector potential - unused
-  double zFun_ex(const Vector & x, const double t ){
+//     u(0) = _G0/_B0 * ( cosh(1.) - cosh(x(1)) )/sinh(1.);
+//   }
+//   // - pressure
+//   double pFun_ex(const Vector & x, const double t ){
+//     return -_G0*( x(0) + 1.0 );    // zero at outflow (x=-1)
+//   }
+//   // - laplacian of vector potential - unused
+//   double zFun_ex(const Vector & x, const double t ){
 
-    return -_G0/_B0 * ( 1. - cosh(x(1))/sinh(1.) );
-  }
-  // - vector potential
-  double aFun_ex(const Vector & x, const double t ){
-    return -_B0*x(0) - _G0/_B0 * ( x(1)*x(1)/2. - cosh(x(1))/sinh(1.) );
-  }
-  // - rhs of velocity - unused
-  void fFun(const Vector & x, const double t, Vector & f){
-    f = 0.;
-  }
-  // - normal derivative of velocity
-  void nFun(const Vector & x, const double t, Vector & n){
-    const double yy(x(1));
-    n = 0.;
+//     return -_G0/_B0 * ( 1. - cosh(x(1))/sinh(1.) );
+//   }
+//   // - vector potential
+//   double aFun_ex(const Vector & x, const double t ){
+//     return -_B0*x(0) - _G0/_B0 * ( x(1)*x(1)/2. - cosh(x(1))/sinh(1.) );
+//   }
+//   // - rhs of velocity - unused
+//   void fFun(const Vector & x, const double t, Vector & f){
+//     f = 0.;
+//   }
+//   // - normal derivative of velocity
+//   void nFun(const Vector & x, const double t, Vector & n){
+//     const double yy(x(1));
+//     n = 0.;
 
-    if ( yy== 1. ){
-      n(1) = -_G0/_B0 * sinh(yy)/sinh(1.);
-    }
-    if ( yy==-1. ){
-      n(1) =  _G0/_B0 * sinh(yy)/sinh(1.);
-    }
-  }
-  // - rhs of pressure - unused
-  double gFun(const Vector & x, const double t ){
-    return 0.;
-  }
-  // - rhs of vector potential
-  double hFun( const Vector & x, const double t ){
-    const double _G0  = HartmannData::_G0;
-    const double _B0  = HartmannData::_B0;
+//     if ( yy== 1. ){
+//       n(1) = -_G0/_B0 * sinh(yy)/sinh(1.);
+//     }
+//     if ( yy==-1. ){
+//       n(1) =  _G0/_B0 * sinh(yy)/sinh(1.);
+//     }
+//   }
+//   // - rhs of pressure - unused
+//   double gFun(const Vector & x, const double t ){
+//     return 0.;
+//   }
+//   // - rhs of vector potential
+//   double hFun( const Vector & x, const double t ){
+//     const double _G0  = HartmannData::_G0;
+//     const double _B0  = HartmannData::_B0;
 
-    return - _G0/_B0 * ( cosh(1.)/sinh(1.) - 1. );
-  }
-  // - normal derivative of vector potential
-  double mFun( const Vector & x, const double t ){
-    const double xx(x(0));
-    const double yy(x(1));
+//     return - _G0/_B0 * ( cosh(1.)/sinh(1.) - 1. );
+//   }
+//   // - normal derivative of vector potential
+//   double mFun( const Vector & x, const double t ){
+//     const double xx(x(0));
+//     const double yy(x(1));
 
-    if ( yy==1. || yy == -1. ){
-      return yy*( -_G0/_B0 * ( yy - sinh(yy)/sinh(1.) ) );
-    }
-    if ( xx==1. || xx == -1. ){
-      return -_B0*xx;
-    }
-    return 0.;
-  }
-  // - define perturbed IG for every linearised variable
-  void wFun(const Vector & x, const double t, Vector & w){
-    uFun_ex(x,t,w);
-    double ds = perturbation(x,t);
-    w(0) = w(0) + ds;
-    w(1) = w(1) - ds;
+//     if ( yy==1. || yy == -1. ){
+//       return yy*( -_G0/_B0 * ( yy - sinh(yy)/sinh(1.) ) );
+//     }
+//     if ( xx==1. || xx == -1. ){
+//       return -_B0*xx;
+//     }
+//     return 0.;
+//   }
+//   // - define perturbed IG for every linearised variable
+//   void wFun(const Vector & x, const double t, Vector & w){
+//     uFun_ex(x,t,w);
+//     double ds = perturbation(x,t);
+//     w(0) = w(0) + ds;
+//     w(1) = w(1) - ds;
 
-  }
-  double qFun(  const Vector & x, const double t ){
-    double ds = perturbation(x,t);
-    return pFun_ex(x,t) + ds;
-  }
-  double yFun(  const Vector & x, const double t ){
-    double ds = perturbation(x,t);
-    return zFun_ex(x,t) + ds;
-  }
-  double cFun(  const Vector & x, const double t ){
-    double ds = perturbation(x,t);
-    return aFun_ex(x,t) + ds;
-  }
+//   }
+//   double qFun(  const Vector & x, const double t ){
+//     double ds = perturbation(x,t);
+//     return pFun_ex(x,t) + ds;
+//   }
+//   double yFun(  const Vector & x, const double t ){
+//     double ds = perturbation(x,t);
+//     return zFun_ex(x,t) + ds;
+//   }
+//   double cFun(  const Vector & x, const double t ){
+//     double ds = perturbation(x,t);
+//     return aFun_ex(x,t) + ds;
+//   }
 
-  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA ){
-    // Set BC:
-    // - Dirichlet on u everywhere but on E
-    // - Dirichlet on p on E (outflow, used only in precon)
-    // - Dirichlet on A on W
-    essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-    essTagsV = essTagsU;
-    essTagsP.SetSize(1); essTagsP[0] = 2; // E
-    essTagsA.SetSize(2); essTagsA[0] = 1; essTagsA[1] = 3; // N, S
-  }
+//   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA ){
+//     // Set BC:
+//     // - Dirichlet on u everywhere but on E
+//     // - Dirichlet on p on E (outflow, used only in precon)
+//     // - Dirichlet on A on W
+//     essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
+//     essTagsV = essTagsU;
+//     essTagsP.SetSize(1); essTagsP[0] = 2; // E
+//     essTagsA.SetSize(2); essTagsA[0] = 1; essTagsA[1] = 3; // N, S
+//   }
 
-}
+// }
 
 
 
@@ -1074,12 +1074,11 @@ namespace CavityDrivenData{
 
   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA ){
     // Top 1 Right 2 Bottom=3 Left=4
-    // - Dirichlet on u and v everywhere
-    // - Dirichlet on A on top?
+    // - Dirichlet on u, v, and A everywhere
     essTagsU.SetSize(4); essTagsU[0] = 1; essTagsU[1] = 2; essTagsU[2] = 3; essTagsU[3] = 4;
     essTagsV = essTagsU;
     essTagsP.SetSize(0);
-    essTagsA.SetSize(0);  // TODO: what here?
+    essTagsA.SetSize(4); essTagsA[0] = 1; essTagsA[1] = 2; essTagsA[2] = 3; essTagsA[3] = 4;
   }
 
 

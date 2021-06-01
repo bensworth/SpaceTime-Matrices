@@ -38,7 +38,7 @@ public:
    ParBlockLowTriOperator( const MPI_Comm& comm, const ParBlockView& view=ROW_VIEW );
 
 
-   //! Constructor for ParBlockLowTriOperator.
+   //! Set block diagonal.
    /**
     *  @param mat  The operator to include in the block diagonal
     *  @param i    The index of the block diagonal to fill
@@ -49,6 +49,16 @@ public:
     *
     */
    void SetBlockDiag( const SparseMatrix * mat, int i=0, bool own=false);
+
+   //! Get block diagonal.
+   /**
+    *  @param i    The index of the block diagonal to fill
+    *  @return     Pointer to selected operator
+    *
+    *  @note Returns NULL if diagonal is not assigned.
+    *
+    */
+   const Operator* GetBlockDiag( int i );
 
 
 

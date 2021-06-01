@@ -1,7 +1,6 @@
 #include "oseenstpressureschurcomplement.hpp"
 
 
-
 namespace mfem{
 
 
@@ -110,6 +109,30 @@ void OseenSTPressureSchurComplement::SetAp( const SparseMatrix* Ap ){
   delete _Ap;
   _Ap = new PetscParMatrix( Ap );
 
+  // CholeskySolver C( Ap );
+
+  // int uga = 0;
+  // std::cin>>uga;
+
+
+  // using namespace petsc;
+  // Mat myA = Mat(*_Ap), myC;
+  // PetscErrorCode ierr;
+  // IS perm;
+  // MatFactorInfo info;
+
+  // MatGetFactor( myA, MATSOLVERPETSC, MAT_FACTOR_CHOLESKY, &myC );
+  // // MatCholeskyFactorSymbolic( myC, myA, perm, &info);
+  // MatCholeskyFactorNumeric(  myC, myA, &info);
+
+  // PetscObjectSetName((PetscObject)myC,"ApChol");
+  // PetscViewerPushFormat(PETSC_VIEWER_STDOUT_WORLD,PETSC_VIEWER_ASCII_INFO_DETAIL);
+  // MatView(myC,PETSC_VIEWER_STDOUT_WORLD);
+  // PetscViewerPopFormat(PETSC_VIEWER_STDOUT_WORLD);
+
+  // std::cout<<"Exported matrix"<<std::endl;
+  // int uga;
+  // std::cin>>uga;
 
   // Flag non-trivial null space (constant funcs) if there are no essnodes
   // - NB: this option can be passed at runtime with -ksp_constant_null_space TRUE
@@ -185,7 +208,7 @@ void OseenSTPressureSchurComplement::SetMp( const SparseMatrix* Mp ){
 
 // initialise info on pressure time-stepping operator
 void OseenSTPressureSchurComplement::SetWp( const SparseMatrix* Wp, bool WpEqualsAp ){
-  _Wp.MakeRef( *Wp );
+  _Wp = *Wp;
   _WpEqualsAp = WpEqualsAp;
 
   height = Wp->Height();
@@ -245,8 +268,8 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
     }
     MPI_Barrier(_comm);
     if ( _verbose>100 ){
-      std::cout<<"Inside P-block: Rank: "<<_myRank<< ", rhs for p: "; x.Print(std::cout, x.Size());
-      std::cout<<"Inside P-block: Rank: "<<_myRank<< ", IG  for p: "; y.Print(std::cout, y.Size());
+      std::cout<<"Inside P-block: Rank: "<<_myRank<< ", rhs for p: "; x.Print(mfem::out, x.Size());
+      std::cout<<"Inside P-block: Rank: "<<_myRank<< ", IG  for p: "; y.Print(mfem::out, y.Size());
     }
   }
 
@@ -264,14 +287,34 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
 
   // Have each processor solve for the "laplacian"
-  _Asolve->Mult( lclx, invAxMine );
+  // _Asolve->Mult( lclx, invAxMine );
+  // Have each processor solve for the "laplacian"
+  if ( _Asolve->Height() == this->height ){
+    _Asolve->Mult( lclx, invAxMine );
+  }else{
+    // I'm considering an "augmented" version of the laplacian, which takes also the lagrangian multiplies for int(p)=0;
+    Vector xAug( lclSize+1 );
+    Vector invAxMineAug( lclSize+1 );
+    for ( int i = 0; i < lclSize; ++i ){
+      xAug(i) = lclx(i);
+      invAxMineAug(i) = invAxMine(i);
+    }
+    xAug(lclSize) = 0.;
+    invAxMineAug(lclSize) = 0.;
+    _Asolve->Mult( xAug, invAxMineAug );
+    for ( int i = 0; i < lclSize; ++i ){
+      invAxMine(i) = invAxMineAug(i);
+    }
+  }
+
+
 
   if (_verbose>50 ){
     std::cout<<"Rank "<<_myRank<<" inverted pressure stiffness matrix\n";
     MPI_Barrier(_comm);
     if ( _verbose>100 ){
       std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result after inverting stiffness matrix: ";
-      invAxMine.Print(std::cout, invAxMine.Size());
+      invAxMine.Print(mfem::out, invAxMine.Size());
     }
   }
 
@@ -295,7 +338,7 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
     std::cout<<"Rank "<<_myRank<<" included contribution from pressure (convection)-diffusion operator"<<std::endl;
     if ( _verbose>100 ){
       std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result after spatial contribution: ";
-      lclx.Print(std::cout, lclx.Size());
+      lclx.Print(mfem::out, lclx.Size());
     }
     MPI_Barrier(_comm);
   }  
@@ -330,7 +373,7 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
     std::cout<<"Rank "<<_myRank<<" inverted pressure mass matrix\n";
     if ( _verbose>100 ){
       std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result after inverting mass matrix: ";
-      lcly.Print(std::cout, lcly.Size());
+      lcly.Print(mfem::out, lcly.Size());
     }
     MPI_Barrier(_comm);
   }
@@ -373,7 +416,7 @@ void OseenSTPressureSchurComplement::Mult( const Vector &x, Vector &y ) const{
 
   if(_verbose>100){
     std::cout<<"Inside P-block: Rank: "<<_myRank<< ", result for p: ";
-    y.Print(std::cout, y.Size());
+    y.Print(mfem::out, y.Size());
   }
 
   if(_myRank==0 && _verbose>200){

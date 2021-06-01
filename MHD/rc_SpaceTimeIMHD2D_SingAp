@@ -20,6 +20,7 @@
 # Solvers for Pressure Block preconditioner
 # - pressure 'laplacian'
 -PSolverLaplacian_ksp_type preonly
+-PSolverLaplacian_ksp_constant_null_space TRUE
 -PSolverLaplacian_pc_type lu
 # -- to make sure that zero pivot are excluded
 -PSolverLaplacian_pc_factor_shift_type NONZERO

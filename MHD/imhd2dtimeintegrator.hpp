@@ -40,7 +40,7 @@ private:
 public:
   IncompressibleMHD2DTimeIntegrator( double dt, double mu, double mu0, double eta, bool stab=false, 
                                      VectorGridFunctionCoefficient* w=NULL, GridFunctionCoefficient* c=NULL ):
-                                        _dt(dt),   _mu(mu),  _mu0(mu0),  _eta(eta), _stab(stab), _w(w), _c(c) {};
+                                        _dt(dt),   _mu(mu),  _mu0(mu0),  _eta(eta), _stab(stab), _w(w), _c(c){};
 
   // virtual double GetElementEnergy(const Array<const FiniteElement *>&el,
   //                                 ElementTransformation &Tr,
@@ -60,7 +60,7 @@ public:
 
 
   /// Get adequate GLL rule for element integration
-  static const IntegrationRule& GetRule(const Array<const FiniteElement *> &fe, ElementTransformation &T);
+  const IntegrationRule& GetRule(const Array<const FiniteElement *> &fe, ElementTransformation &T);
 
 
 };

@@ -91,40 +91,37 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
 // #ifdef MULT_BY_DT
     scale *= _dt;
 // #endif
-    DenseMatrix tempuu(dof_u);
-    MultAAt( gshape_u, tempuu );
-    tempuu *= scale;
+    DenseMatrix gugv(dof_u);
+    MultAAt( gshape_u, gugv );
 
     // this contribution is block-diagonal: for each physical dimension, I can just copy it
     for (int k = 0; k < dim; k++){
-      elmats(0,0)->AddMatrix( tempuu, dof_u*k, dof_u*k );
+      elmats(0,0)->AddMatrix( scale, gugv, dof_u*k, dof_u*k );
     }
 
 
     // Non-linear convection (eventually rescaled by dt) --------------------
-    Vector wgu(dof_u);  
- 
     scale = ip.weight;
 // #ifdef MULT_BY_DT
     scale *= _dt;
 // #endif
-
     // - term ((w·∇)u,v)
-    gshape_u.Mult(Ueval, wgu);
-    MultVWt(shape_u, wgu, tempuu);
-    tempuu *= scale;
+    Vector ugu(dof_u);  
+    gshape_u.Mult(Ueval, ugu);
+    DenseMatrix uguv(dof_u);
+    MultVWt(shape_u, ugu, uguv);
     // -- this contribution is block-diagonal: for each physical dimension, I can just copy it
     for (int k = 0; k < dim; k++){
-      elmats(0,0)->AddMatrix( tempuu, dof_u*k, dof_u*k );
+      elmats(0,0)->AddMatrix( scale, uguv, dof_u*k, dof_u*k );
     }
 
     // - term ((u·∇)w,v)
-    MultVVt(shape_u, tempuu);
-    tempuu *= scale;
+    DenseMatrix uv(dof_u);
+    MultVVt(shape_u, uv);
     // -- this is not, so we must loop over its components
     for (int k = 0; k < dim; k++){
       for (int j = 0; j < dim; j++){
-        elmats(0,0)->AddMatrix(gUeval(k, j), tempuu, dof_u*k, dof_u*j );
+        elmats(0,0)->AddMatrix(gUeval(k, j)*scale, uv, dof_u*k, dof_u*j );
       }
     }
 
@@ -179,7 +176,7 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
     // A,A block
     //***********************************************************************
     // Stiffness (eventually rescaled by dt) --------------------------------
-    scale = ip.weight / detJ * _eta/_mu0;
+    scale = ip.weight / detJ * (_eta/_mu0);
 // #ifdef MULT_BY_DT
     scale *= _dt;
 // #endif
@@ -265,6 +262,12 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
 // #endif
     AddMult_a_ABt( scale, gshape_z, gshape_a, *(elmats(2,3)) );
 
+    // // TODO: change this to the above!!
+    // Vector dgshape_a(dof_a);
+    // el[3]->CalcPhysLinLaplacian( Tr, dgshape_a );
+    // scale = -ip.weight * detJ;
+    // AddMult_a_VWt( scale, shape_z, dgshape_a, *(elmats(2,3)) );
+
     // NB: integration by parts gives an extra boundary term -int_dO grad(A)n y.
     //     While its contribution is included in the rhs for the Neumann part of
     //     the boundary, thiw needs to be explicitly computed for the Dirichlet part.
@@ -282,23 +285,30 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
     //***********************************************************************
     //***********************************************************************
     if ( _stab ){
-
+      // - function evaluations
+      Vector wEval(dim);
+      _w->Eval(wEval, Tr, ip);
+      Vector gcEval(dim);
+      _c->GetGridFunction()->GetGradient( Tr, gcEval );
+      // - stabilisation parameters
       double tu=0., ta=0.;
-      GetTaus( Ueval, gAeval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
+      GetTaus( wEval, gcEval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
 
       // - basis functions evaluations (on reference element)
       shape_Dp.SetSize(dof_p, dim);
       gshape_p.SetSize(dof_p, dim);
-      // Vector dgshape_u(dof_u);
-      // Vector dgshape_A(dof_A);
+      Vector dgshape_u(dof_u);
+      Vector dgshape_a(dof_a);
       el[1]->CalcDShape( ip, shape_Dp );
-      // el[0]->CalcPhysLaplacian( ip, dgshape_u ); // TODO: should I scale by detJ?
-      // el[3]->CalcPhysLaplacian( ip, dgshape_A ); // TODO: should I scale by detJ?
+      if ( _include2ndOrd ){
+        el[0]->CalcPhysLinLaplacian( Tr, dgshape_u );
+        el[3]->CalcPhysLinLaplacian( Tr, dgshape_a );
+      }else{
+        Zeval     = 0.;
+        dgshape_u = 0.;
+        dgshape_a = 0.;
+      }
       Mult(shape_Dp, adJ, gshape_p);  // NB: this way they are all multiplied by detJ already!
-
-
-
-      // After linearisation, the skew-symmetric terms are (w·∇)u, ∇p, and  w·∇A?????????????
 
 
 
@@ -306,42 +316,43 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       // u,u block
       //***********************************************************************
       // I need to test the residual of the momentum equation against tu*(w·∇)v
+      Vector wgv(dof_u);
+      gshape_u.Mult(wEval, wgv);  // this is (w·∇)v
+
       // (w·∇)u term -------------------------------------------------------
       scale = tu * ip.weight / detJ;
 // #ifdef MULT_BY_DT
       scale*= _dt;
 // #endif
-      MultVVt(wgu, tempuu);
-      tempuu *= scale;
       // -- this contribution is block-diagonal: for each physical dimension, I can just copy it
+      DenseMatrix uguwgv(dof_u);
+      MultVWt(wgv, ugu, uguwgv);
       for (int k = 0; k < dim; k++){
-        elmats(0,0)->AddMatrix( tempuu, dof_u*k, dof_u*k );
+        elmats(0,0)->AddMatrix( scale, uguwgv, dof_u*k, dof_u*k );
       }
-
       // (u·∇)w term -------------------------------------------------------
-      scale = tu * ip.weight / detJ;
-// #ifdef MULT_BY_DT
-      scale*= _dt;
-// #endif
-      MultVWt(wgu, shape_u, tempuu);
-      tempuu *= scale;
-      // -- this is not, so we must loop over its components
+      DenseMatrix uwgv(dof_u);
+      MultVWt(wgv, shape_u, uwgv);
+      // -- this is not, so we must loop over all of its components
       for (int k = 0; k < dim; k++){
         for (int j = 0; j < dim; j++){
-          elmats(0,0)->AddMatrix(gUeval(k, j), tempuu, dof_u*k, dof_u*j );
+          elmats(0,0)->AddMatrix( scale*gUeval(k, j), uwgv, dof_u*k, dof_u*j );
         }
       }
 
       // -\mu ∇·∇u term -------------------------------------------------------
-//       // -- this contribution is block-diagonal
-//       scale = - tu * _mu * ip.weight / (detJ*detJ); // TODO: scale by detJ?
-// // #ifdef MULT_BY_DT
-//       scale*= _dt;
-// // #endif
-//       MultVWt(wgu, dgshape_u, tempuu);
-//       for (int k = 0; k < dim; k++){
-//         elmats(0,0)->AddMatrix( tempuu, dof_u*k, dof_u*k );
-//       }
+      scale = - tu * _mu * ip.weight;
+// #ifdef MULT_BY_DT
+      scale*= _dt;
+// #endif
+      // -- this contribution is block-diagonal
+      DenseMatrix luwgv(dof_u);
+      MultVWt(wgv, dgshape_u, luwgv);
+      for (int k = 0; k < dim; k++){
+        elmats(0,0)->AddMatrix( scale, luwgv, dof_u*k, dof_u*k );
+      }
+
+
 
       //***********************************************************************
       // u,p block
@@ -379,18 +390,18 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       scale*= _dt;
   // #endif
       for (int k = 0; k < dim; k++){
-        Vector tempgpi(dof_p);
-        DenseMatrix tempup(dof_u,dof_p);
-        gshape_p.GetColumn(k,tempgpi);
-        MultVWt(wgu, tempgpi, tempup);
-        elmats(0,1)->AddMatrix( scale, tempup, dof_u*k, 0 );
+        Vector gpi;
+        gshape_p.GetColumnReference(k,gpi);
+        DenseMatrix gpwgv(dof_u,dof_p);
+        MultVWt(wgv, gpi, gpwgv);
+        elmats(0,1)->AddMatrix( scale, gpwgv, dof_u*k, 0 );
       }
 
 
       //***********************************************************************
       // u,z block
       //***********************************************************************
-      // TODO: should I include something here?
+      // TODO: should I include anything here?
       // The point is, this would dramatically change the shape of the Jacobian,
       //  adding non-zero blocks to Z. Now, I think this isn't done in Cyr's paper,
       //  the reason being (I assume) because the basis functions are picked so
@@ -398,10 +409,39 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       //  considering a different formulation, which actually should include some
       //  terms, but hey, whatever: if the eq for j is solved exactly, it should
       //  still be 0?
+      if ( _include2ndOrd ){
+        // z ∇C·((w·∇)v) term -------------------------------------------------
+        scale = tu * ip.weight / _mu0 / detJ;
+    // #ifdef MULT_BY_DT
+        scale *= _dt;
+        DenseMatrix zwgv(dof_u,dof_z);
+        MultVWt(wgv, shape_z, zwgv);
+        // -- this contribution is defined block-wise
+        for (int k = 0; k < dim; k++){
+          elmats(0,2)->AddMatrix( gAeval(k)*scale, zwgv, dof_u*k, 0 );
+        }
+
+      }
+
       //***********************************************************************
       // u,A block
       //***********************************************************************
       // same here
+      if ( _include2ndOrd ){
+        // y ∇A·((w·∇)v) term -------------------------------------------------
+        scale = tu * ip.weight / _mu0 / detJ;
+// #ifdef MULT_BY_DT
+        scale *= _dt;
+// #endif    
+        // -- this contribution is also defined block-wise, so loop
+        for (int k = 0; k < dim; k++){
+          Vector gAi;
+          gshape_a.GetColumnReference( k, gAi );
+          DenseMatrix gAwgv(dof_u,dof_a);
+          MultVWt(wgv, gAi, gAwgv);
+          elmats(0,3)->AddMatrix( Zeval*scale, gAwgv, dof_u*k, 0 );
+        }
+      }
 
 
       
@@ -420,21 +460,6 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       //***********************************************************************
       // p,u block
       //***********************************************************************
-//       // -\mu ∇·∇u term -------------------------------------------------------
-//       // -- this contribution is block-diagonal
-//       scale = - tu * _mu * ip.weight / (detJ*detJ); // TODO: scale by detJ?
-// // #ifdef MULT_BY_DT
-//       scale*= _dt;
-// // #endif
-//       for (int k = 0; k < dim; k++){
-//         Vector tempgpi(dof_p);
-//         DenseMatrix tempgpdgu(dof_p,dof_u);
-//         gshape_p.GetColumn(k,tempgpi);
-//         MultVWt(tempgpi, dgshape_u, tempgpdgu);
-//         tempgpdgu *= scale;
-//         elmats(1,0)->AddMatrix( tempgpdgu, 0, dof_u*k );
-//       }
-
       // (w·∇)u term -------------------------------------------------------
       // I'm breaking symmetry, but that doesn't mean I can't reuse the same code
       //  for the symmetric bits ;)
@@ -443,11 +468,11 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       scale*= _dt;
   // #endif
       for (int k = 0; k < dim; k++){
-        Vector tempgpi(dof_p);
-        DenseMatrix temppu(dof_p,dof_u);
-        gshape_p.GetColumn(k,tempgpi);
-        MultVWt(tempgpi, wgu, temppu);
-        elmats(1,0)->AddMatrix( scale, temppu, 0, dof_u*k );
+        Vector gqi;
+        gshape_p.GetColumnReference(k,gqi);
+        DenseMatrix ugugq(dof_p,dof_u);
+        MultVWt(gqi, ugu, ugugq);
+        elmats(1,0)->AddMatrix( scale, ugugq, 0, dof_u*k );
       }
 
       // (u·∇)w term -------------------------------------------------------
@@ -455,16 +480,29 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
   // #ifdef MULT_BY_DT
       scale*= _dt;
   // #endif
-      DenseMatrix tempgpgw( dof_p, dim );
-      Mult(gshape_p,gUeval,tempgpgw);
+      DenseMatrix gqgu( dof_p, dim );
+      Mult(gshape_p,gUeval,gqgu);
       for (int k = 0; k < dim; k++){
-        Vector tempgpgwi(dof_p);
-        tempgpgw.GetColumn(k,tempgpgwi);
-        DenseMatrix temppu( dof_p, dof_u );
-        MultVWt(tempgpgwi, shape_u, temppu);
-        elmats(1,0)->AddMatrix( scale, temppu, 0, dof_u*k );
+        Vector gqgui;
+        gqgu.GetColumnReference(k,gqgui);
+        DenseMatrix gqguu( dof_p, dof_u );
+        MultVWt(gqgui, shape_u, gqguu);
+        elmats(1,0)->AddMatrix( scale, gqguu, 0, dof_u*k );
       }
 
+      // -\mu ∇·∇u term -------------------------------------------------------
+      // -- this contribution is block-diagonal
+      scale = - tu * _mu * ip.weight; // TODO: scale by detJ?
+// #ifdef MULT_BY_DT
+      scale*= _dt;
+// #endif
+      for (int k = 0; k < dim; k++){
+        Vector gqi;
+        gshape_p.GetColumnReference(k,gqi);
+        DenseMatrix gqlu(dof_p,dof_u);
+        MultVWt(gqi, dgshape_u, gqlu);
+        elmats(1,0)->AddMatrix( scale, gqlu, 0, dof_u*k );
+      }
 
 
 
@@ -473,20 +511,39 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       // p,z block
       //***********************************************************************
       // same considerations as for u,z
+      if ( _include2ndOrd ){
+        // z ∇C·∇q term -------------------------------------------------------
+        scale = tu * ip.weight / _mu0 / detJ;
+    // #ifdef MULT_BY_DT
+        scale *= _dt;
+        Vector gAgq(dof_p);
+        gshape_p.Mult( gAeval, gAgq );
+        AddMult_a_VWt( scale, gAgq, shape_z, *(elmats(1,2)) );
+      }
+
       //***********************************************************************
       // p,A block
       //***********************************************************************
       // same here
+      if ( _include2ndOrd ){
+        // y ∇A·∇q term -------------------------------------------------------
+        scale = tu * ip.weight / _mu0 / detJ;
+// #ifdef MULT_BY_DT
+        scale *= _dt;
+// #endif    
+        AddMult_a_ABt( Zeval*scale, gshape_p, gshape_a, *(elmats(1,3)) );
+      }
+
 
 
       //***********************************************************************
       // z,z block
       //***********************************************************************
-      // Ignore
+      // No stab here
       //***********************************************************************
       // z,A block
       //***********************************************************************
-      // Ignore
+      // No stab here
 
 
 
@@ -494,19 +551,22 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       // A,A block
       //***********************************************************************
       // I need to test the residual of the vector potential equation against ta*(w·∇b)
+      Vector wgB(dof_a);
+      gshape_a.Mult( wEval, wgB ); // this is (w·∇b)
+
       // w·∇A term ------------------------------------------------------------
-      scale = ta * ip.weight / detJ; // TODO: scale by detJ?
+      scale = ta * ip.weight / detJ;
 // #ifdef MULT_BY_DT
       scale*= _dt;
 // #endif
-      AddMult_a_VVt(scale, gAu, *(elmats(3,3)) );
+      AddMult_a_VWt(scale, wgB, gAu, *(elmats(3,3)) );
 
-//       // -\eta/\mu0 ∇·∇A term ---------------------------------------------------
-//       scale = - ta * _eta/_mu0 * ip.weight / (detJ*detJ); // TODO: scale by detJ?
-// // #ifdef MULT_BY_DT
-//       scale*= _dt;
-// // #endif
-//       AddMult_a_VWt(scale, gAu, dgshape_A, *(elmats(3,3)) );
+      // -\eta/\mu0 ∇·∇A term ---------------------------------------------------
+      scale = - ta * (_eta/_mu0) * ip.weight;
+// #ifdef MULT_BY_DT
+      scale*= _dt;
+// #endif
+      AddMult_a_VWt(scale, wgB, dgshape_a, *(elmats(3,3)) );
 
 
 
@@ -514,14 +574,15 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
       // A,u block
       //***********************************************************************
       // u·∇c term ------------------------------------------------------------
-      MultVWt(gAu, shape_u, tempAu);
-      scale = ta * ip.weight / detJ; // TODO: scale by detJ?
+      scale = ta * ip.weight / detJ;
   // #ifdef MULT_BY_DT
       scale *= _dt;
+      DenseMatrix ugcwgb(dof_a,dof_u);
+      MultVWt(wgB, shape_u, ugcwgb);
   // #endif    
       // -- this contribution is defined block-wise
       for (int k = 0; k < dim; k++){
-        elmats(3,0)->AddMatrix( gAeval(k)*scale, tempAu, 0, dof_u*k );
+        elmats(3,0)->AddMatrix( gAeval(k)*scale, ugcwgb, 0, dof_u*k );
       }
 
 
@@ -532,6 +593,22 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementGrad(
   }
 
 
+//   // finally rescale everything by dt
+// // #ifdef MULT_BY_DT
+//   elmats(0,0)->operator*=(_dt);
+//   elmats(0,2)->operator*=(_dt);
+//   elmats(0,3)->operator*=(_dt);
+//   elmats(1,0)->operator*=(_dt);
+//   elmats(3,0)->operator*=(_dt);
+//   elmats(3,3)->operator*=(_dt);
+//   if ( _stab ){
+//     elmats(0,1)->operator*=(_dt);
+//     if ( _include2ndOrd ){
+//       elmats(1,2)->operator*=(_dt);
+//       elmats(1,3)->operator*=(_dt);
+//     }
+//   }
+// // #endif
 
 
 
@@ -624,7 +701,6 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
     uCoeff.MultTranspose(shape_u, Ueval);          // u
     double Peval = (elfun[1])->operator*(shape_p); // p
     double Zeval = (elfun[2])->operator*(shape_z); // z
-    double Aeval = (elfun[3])->operator*(shape_a); // A
     MultAtB(uCoeff, gshape_u, gUeval);             // ∇u
     gshape_a.MultTranspose( *(elfun[3]), gAeval ); // ∇A
     double gAu   = gAeval * Ueval;                 // u·∇A
@@ -727,6 +803,13 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
 // #endif
     elvecs[2]->Add( scale, tempzA );
 
+    // TODO: change me to the part above
+    // Vector dgshape_a(dof_a);
+    // el[3]->CalcPhysLinLaplacian( Tr, dgshape_a );
+    // double lAeval = (elfun[3])->operator*(dgshape_a); // ∇·∇A
+    // scale = ip.weight * detJ;
+    // elvecs[2]->Add( -scale*lAeval, shape_z );
+
 
 
 
@@ -736,7 +819,7 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
     // Stiffness (eventually rescaled by dt) --------------------------------
     Vector tempAA(dof_a);
     gshape_a.Mult(gAeval, tempAA);
-    scale = ip.weight / detJ * _eta/_mu0;
+    scale = ip.weight / detJ * (_eta/_mu0);
 // #ifdef MULT_BY_DT
     scale *= _dt;
 // #endif
@@ -764,50 +847,64 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
     //***********************************************************************
     if ( _stab ){
 
+      // - function evaluations
+      Vector wEval(dim);
+      _w->Eval(wEval, Tr, ip);
+      Vector gcEval(dim);
+      _c->GetGridFunction()->GetGradient( Tr, gcEval );
+      //  -- for rhs
+      Vector fEval(dim);
+      _f->Eval(fEval, Tr, ip);
+      double hEval = _h->Eval(Tr, ip);
+
+      // - stabilisation parameters
       double tu=0., ta=0.;
-      GetTaus( Ueval, gAeval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
+      GetTaus( wEval, gcEval, Tr.InverseJacobian(), _dt, _mu, _mu0, _eta, tu, ta );
 
       // - basis functions evaluations (on reference element)
       DenseMatrix shape_Dp(dof_p, dim);
       DenseMatrix gshape_p(dof_p, dim);
       Vector dgshape_u(dof_u);
-      Vector dgshape_A(dof_a);
+      Vector dgshape_a(dof_a);
       el[1]->CalcDShape( ip, shape_Dp );
       el[0]->CalcPhysLinLaplacian( Tr, dgshape_u ); // this is the laplacian in *physical* coords, so no need to rescale by detJ
-      el[3]->CalcPhysLinLaplacian( Tr, dgshape_A );
-      double lAeval = (elfun[3])->operator*(dgshape_A); // ∇·∇A
+      el[3]->CalcPhysLinLaplacian( Tr, dgshape_a );
+      double lAeval;
       Vector lueval(dim);
-      uCoeff.MultTranspose( dgshape_u, lueval);                  // ∇·∇u
+      if ( _include2ndOrd ){
+        uCoeff.MultTranspose( dgshape_u, lueval);  // ∇·∇u
+        lAeval = (elfun[3])->operator*(dgshape_a); // ∇·∇A
+      }else{
+        Zeval  = 0.;
+        lAeval = 0.;
+        lueval = 0.;
+      }
       Mult(shape_Dp, adJ, gshape_p);  // NB: this way they are all multiplied by detJ already!
       Vector gpeval(dim);
       gshape_p.MultTranspose( *(elfun[1]), gpeval ); // ∇p
 
-      // rhs evaluations
-      Vector fEval(dim);
-      _f->Eval(fEval, Tr, ip);
-      double hEval = _h->Eval(Tr, ip);
 
       //***********************************************************************
       // u block
       //***********************************************************************
-      // I need to test the residual of the momentum equation against tu*(u·∇)v
-      Vector tempu(dof_u);
-      gshape_u.Mult( Ueval, tempu ); // this is (u·∇)v
+      // I need to test the residual of the momentum equation against tu*(w·∇)v
+      Vector wgv(dof_u);
+      gshape_u.Mult( wEval, wgv ); // this is (w·∇)v
 
       Vector resU(dim);
       for ( int k = 0; k < dim; ++k ){
-// #ifdef MULT_BY_DT
-        //                               (u·∇)u      -  mu ∇·∇u      + ∇p             + z∇A/mu0                   - f
-        resU(k) = tu * ip.weight * _dt*( ugu(k)/detJ - _mu*lueval(k) + gpeval(k)/detJ + Zeval*gAeval(k)/_mu0/detJ - fEval(k) );
-// #else
-        // resU(k) = tu * ip.weight *     ( ugu(k)/detJ - _mu*lUeval(k) + gpeval(k)/detJ + Zeval*gAeval(k)/_mu0/detJ - fEval(k) );
-// #endif
+        //                         (u·∇)u       -  mu ∇·∇u      + ∇p             + z∇A/mu0                   - f
+        resU(k) = tu * ip.weight *( ugu(k)/detJ - _mu*lueval(k) + gpeval(k)/detJ + Zeval*gAeval(k)/_mu0/detJ - fEval(k) );
       }
+// #ifdef MULT_BY_DT
+      resU *= _dt;
+// #endif
+
 
       // -- this contribution is made block-wise: loop over physical dimensions
       for (int k = 0; k < dim; k++){
         for ( int j = 0; j < dof_u; ++j ){
-          elvecs[0]->operator()(j+k*dof_u) += tempu(j) * resU(k);
+          elvecs[0]->operator()(j+k*dof_u) += wgv(j) * resU(k);
         }
       }
 
@@ -826,14 +923,14 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
       //***********************************************************************
       // A block
       //***********************************************************************
-      // I need to test the residual of the vector potential equation against ta*u·∇b
-      gshape_a.Mult( Ueval, tempAA); // this is u·∇b
+      // I need to test the residual of the vector potential equation against ta*w·∇b
+      gshape_a.Mult( wEval, tempAA); // this is w·∇b
+      //                              u·∇A     -   eta/ mu0  ∇·∇A   - h
+      double resA = ta * ip.weight *( gAu/detJ - (_eta/_mu0)*lAeval - hEval );
 // #ifdef MULT_BY_DT
-      //                                  u·∇A     -  eta/ mu0 ∇·∇A   - h
-      double resA = ta * ip.weight *_dt*( gAu/detJ - _eta/_mu0*lAeval - hEval );
-// #else
-      // double res = ta * ip.weight *    ( gAu/detJ - _eta/_mu0*lAeval - hEval );
+      resA *= _dt;
 // #endif
+
       elvecs[3]->Add( resA, tempAA );
 
     }
@@ -1047,7 +1144,7 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleFaceVector(
 
 void IncompressibleMHD2DSpaceIntegrator::GetTaus( const Vector& u, const Vector& gA, const DenseMatrix& Jinv,
                                                   double dt, double mu, double mu0, double eta,
-                                                  double& tauU, double& tauA) const{
+                                                  double& tauU, double& tauA){
 
   double B2 = gA*gA; // B is [dyA, -dxA], so |B| and |gradA| coincide
 
@@ -1056,8 +1153,10 @@ void IncompressibleMHD2DSpaceIntegrator::GetTaus( const Vector& u, const Vector&
   double GCn = GC.FNorm();
 
   // with rho = 1, I could simplify...
-  tauU = 4./(dt*dt) + GC.InnerProduct(u.GetData(),u.GetData()) + C1*C1* mu* mu*GCn*GCn + C2*C2/mu0*B2*GCn;
-  tauA = 4./(dt*dt) + GC.InnerProduct(u.GetData(),u.GetData()) + C1*C1*eta*eta*GCn*GCn;
+  // tauU = 4./(dt*dt) + GC.InnerProduct(u.GetData(),u.GetData()) + C1*C1* mu* mu*GCn*GCn + C2*C2/mu0*B2*GCn; // 1/dt^2 since 1st order method is used
+  // tauA = 4./(dt*dt) + GC.InnerProduct(u.GetData(),u.GetData()) + C1*C1*eta*eta*GCn*GCn;
+  tauU = 1./(dt*dt) + GC.InnerProduct(u.GetData(),u.GetData()) + C1*C1* mu* mu*GCn*GCn + C2*C2/mu0*B2*GCn;
+  tauA = 1./(dt*dt) + GC.InnerProduct(u.GetData(),u.GetData()) + C1*C1*eta*eta*GCn*GCn;
   tauU = 1./sqrt(tauU);
   tauA = 1./sqrt(tauA);
 
@@ -1068,7 +1167,7 @@ void IncompressibleMHD2DSpaceIntegrator::GetTaus( const Vector& u, const Vector&
 
 
 
-void IncompressibleMHD2DSpaceIntegrator::GetGC( const DenseMatrix& Jinv, DenseMatrix& GC ) const{
+void IncompressibleMHD2DSpaceIntegrator::GetGC( const DenseMatrix& Jinv, DenseMatrix& GC ){
   // I need to assemble the "contravariant metric tensor Gc of the transformation from local element coordinates {ζα} to physical coordinates {xi}".
   //  Now, if I got everything right:
   //  - Tr.Jacobian() gives the jacobian of the transformation from {ζα}->{xi}
@@ -1132,15 +1231,15 @@ const IntegrationRule& IncompressibleMHD2DSpaceIntegrator::GetRule(const Array<c
   // - 2*ordA, ordU+(ordGA)+ordA,2*(ordGA)
   //  and it's likely that the non-linear terms will give the biggest headaches, so:
   Array<int> ords(3);
-  if ( !_stab ){
-    ords[0] = 2*ordU + ordGU;         // ( (u·∇)u, v )
-    ords[1] =   ordU + ordGA + ordZ;  // (   z ∇A, v )
-    ords[2] =   ordU + ordGA + ordA;  // ( (u·∇A), B )
-  }else{
+  // if ( !_stab ){
+  //   ords[0] = 2*ordU + ordGU;         // ( (u·∇)u, v )
+  //   ords[1] =   ordU + ordGA + ordZ;  // (   z ∇A, v )
+  //   ords[2] =   ordU + ordGA + ordA;  // ( (u·∇A), B )
+  // }else{
     ords[0] = 2*ordU + 2*ordGU;                  // ( (u·∇)u, (w·∇)v )
     ords[1] =   ordU +   ordGU +   ordGA + ordZ; // (   z ∇A, (w·∇)v )
     ords[2] = 2*ordU           + 2*ordGA;        // ( (u·∇A),  w·∇B )    
-  }
+  // }
 
 
 
