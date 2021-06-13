@@ -86,7 +86,7 @@ private:
   // relevant matrices
   // - blocks for single time-steps
   BlockNonlinearForm _IMHD2DOperator;
-  BlockNonlinearForm _IMHD2DMassStabOperator;
+  BlockNonlinearForm _IMHD2DMassOperator;
   SparseMatrix _Mu;
   SparseMatrix _Fu;
   SparseMatrix _Mz;
@@ -283,7 +283,7 @@ public:
 	void PrintMatrices( const std::string& filename ) const;
 	void GetDirichletIdx( Array<int>& essUhTDOF, Array<int>& essPhTDOF,	Array<int>& essAhTDOF ) const;
 	// TODO:
-	void TimeStep( const BlockVector& x, BlockVector& y, const std::string &innerConvpath, int output );
+	void TimeStep( const BlockVector& x, BlockVector& y, const std::string &convpath, int refLvl, int precType, int output );
 
 
 private:

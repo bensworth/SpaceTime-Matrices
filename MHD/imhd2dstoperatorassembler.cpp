@@ -73,7 +73,7 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   SetEverythingUnassembled();
 
   if ( _stab && _myRank == 0 ){
-    std::cout<<"Warning: SUPG stabilisation requested but not yet implemented\n";
+    std::cout<<"Warning: SUPG stabilisation requested but not yet properly tested\n";
   }
 
 
@@ -90,6 +90,12 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   for (int i = 0; i < refLvl; i++)
     _mesh->UniformRefinement();
 
+  if ( _myRank == 0 ){
+    double hMin, hMax, rMin, rMax;
+    _mesh->GetCharacteristics( hMin, hMax, rMin, rMax );
+    std::cout<<"   --dx   "<<hMin<<", "<<hMax<<std::endl;
+  }
+
   // - initialise FE info
   _UhFEColl = new H1_FECollection( ordU, _dim );
   _PhFEColl = new H1_FECollection( ordP, _dim );
@@ -103,15 +109,15 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
   // - initialise info on domain
   ComputeDomainArea();
 
-  // if (_myRank == 0 ){
-  //   std::cout << "***********************************************************\n";
-  //   std::cout << "|Omega| = " << _area                      << "\n";
-  //   std::cout << "dim(Uh) = " << _UhFESpace->GetTrueVSize() << "\n";
-  //   std::cout << "dim(Ph) = " << _PhFESpace->GetTrueVSize() << "\n";
-  //   std::cout << "dim(Zh) = " << _ZhFESpace->GetTrueVSize() << "\n";
-  //   std::cout << "dim(Ah) = " << _AhFESpace->GetTrueVSize() << "\n";
-  //   std::cout << "***********************************************************\n";
-  // }
+  if (_myRank == 0 ){
+    std::cout << "***********************************************************\n";
+    std::cout << "|Omega| = " << _area                      << "\n";
+    std::cout << "dim(Uh) = " << _UhFESpace->GetTrueVSize() << "\n";
+    std::cout << "dim(Ph) = " << _PhFESpace->GetTrueVSize() << "\n";
+    std::cout << "dim(Zh) = " << _ZhFESpace->GetTrueVSize() << "\n";
+    std::cout << "dim(Ah) = " << _AhFESpace->GetTrueVSize() << "\n";
+    std::cout << "***********************************************************\n";
+  }
   
 
 
@@ -171,8 +177,8 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
                                                                                &_fFuncCoeff, &_hFuncCoeff, &_wFuncCoeff, &_cFuncCoeff ) ); // for bilinforms
   _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DSpaceIntegrator( _dt, _mu, _mu0, _eta ), _isEssBdrA );  // for flux in third equation
 
-  _IMHD2DMassStabOperator.SetSpaces( feSpaces );
-  _IMHD2DMassStabOperator.AddDomainIntegrator(  new IncompressibleMHD2DTimeIntegrator( _dt, _mu, _mu0, _eta, _stab, &_wFuncCoeff, &_cFuncCoeff ) );
+  _IMHD2DMassOperator.SetSpaces( feSpaces );
+  _IMHD2DMassOperator.AddDomainIntegrator(  new IncompressibleMHD2DTimeIntegrator( _dt, _mu, _mu0, _eta, _stab, &_wFuncCoeff, &_cFuncCoeff ) );
 
   // -- impose Dirichlet BC on non-linear operator
   // --- check if the two velocity components have the same BC
@@ -194,13 +200,13 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     tmpEssTags[3] = &essBdrA;
     Array< Vector * > dummy(4); dummy = NULL;
     _IMHD2DOperator.SetEssentialBC( tmpEssTags, dummy ); dummy = NULL;
-    _IMHD2DMassStabOperator.SetEssentialBC( tmpEssTags, dummy );
+    _IMHD2DMassOperator.SetEssentialBC( tmpEssTags, dummy );
   }else{
   // --- otherwise I need to use an added feature to mfem (requires modification to the BlockNonlinearForm class)
-    // if ( _myRank == 0 ){
-    //   std::cout<<"Warning! Function BlockNonlinearForm::SetEssentialTrueDofs() is not standard MFEM!"<<std::endl
-    //            <<"         I had to modify the class to impose different BC on different velocity components."<<std::endl;
-    // }
+    if ( _myRank == 0 ){
+      std::cout<<"Warning! Function BlockNonlinearForm::SetEssentialTrueDofs() is not standard MFEM!"<<std::endl
+               <<"         I had to modify the class to impose different BC on different velocity components."<<std::endl;
+    }
     Array< Array<int> * > tmpEssDofs(4);
     Array<int> tempPhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on pressure: they are only used to assemble the pressure operators    
     Array<int> tempZhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on laplacian of vector potential    
@@ -210,7 +216,7 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     tmpEssDofs[3] = &_essAhTDOF;
     Array< Vector * > dummy(4); dummy = NULL;
     _IMHD2DOperator.SetEssentialTrueDofs( tmpEssDofs, dummy ); dummy = NULL;
-    _IMHD2DMassStabOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
+    _IMHD2DMassOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
   }
 
 
@@ -259,7 +265,7 @@ IMHD2DSTOperatorAssembler::IMHD2DSTOperatorAssembler( const MPI_Comm& comm, cons
     _cGridFunc(_essAhTDOF[i]) = aBC(_essAhTDOF[i]);
   }
 
-  // -- finally set handy function coefficients pointing at the gridfunctions (used in _IMHD2DMassStabOperator)
+  // -- finally set handy function coefficients pointing at the gridfunctions (used in _IMHD2DMassOperator)
   _wFuncCoeff.SetGridFunction(&_wGridFunc);
   _cFuncCoeff.SetGridFunction(&_cGridFunc);
 
@@ -923,7 +929,7 @@ void IMHD2DSTOperatorAssembler::AssembleMp( ){
 // Assemble "laplacian" operator for pressure block:
 //  Ap <->  ( ∇p, ∇q )
 // - This should be assembled as if it had homogeneous dirichlet BC on the outflow boundary
-//    and homogeneous Neumann BC on the inflow boundary (dirichlet for u)
+//    and homogeneous Neumann BC on the outflow boundary (dirichlet for u)
 void IMHD2DSTOperatorAssembler::AssembleAp( ){
 
   if( _ApAssembled ){
@@ -957,20 +963,65 @@ void IMHD2DSTOperatorAssembler::AssembleAp( ){
   aVarf.Assemble();
   aVarf.Finalize();
   
-  _Ap.MakeRef( aVarf.SpMat() );
-  _Ap.SetGraphOwner(true);
-  _Ap.SetDataOwner(true);
-  aVarf.LoseMat();
 
-  // Impose homogeneous dirichlet BC by simply removing corresponding equations
-  mfem::Array<int> colsP(_Ap.Height());
-  colsP = 0.;
-  for (int i = 0; i < _essPhTDOF.Size(); ++i){
-    colsP[_essPhTDOF[i]] = 1;
-  }
-  _Ap.EliminateCols( colsP );
-  for (int i = 0; i < _essPhTDOF.Size(); ++i){
-    _Ap.EliminateRow( _essPhTDOF[i], mfem::Matrix::DIAG_ONE );
+  if ( _essPhTDOF.Size() == 0 ){
+    if ( _myRank==0 ){
+      std::cout<<"Warning: augmenting pressure 'laplacian' with zero-mean condition\n";
+    }
+  
+    // Constraint
+    LinearForm pInt( _PhFESpace );
+    pInt.AddDomainIntegrator( new DomainLFIntegrator( one ) );  //int_ q
+    pInt.GetDLFI()->operator[](0)->SetIntRule(ir);
+    pInt.Assemble();
+
+    SparseMatrix Apr;
+    Apr.MakeRef( aVarf.SpMat() );
+    Array<int> myii( Apr.NumRows()         + 2 );
+    Array<int> myjj( Apr.NumNonZeroElems() + 2*( pInt.Size() ) + 1 );
+    Vector     mydd( Apr.NumNonZeroElems() + 2*( pInt.Size() ) + 1 );
+
+    myii[0] = 0;
+    for ( int ii = 0; ii < Apr.NumRows(); ++ii ){
+      int off = Apr.GetI()[ii+1] - Apr.GetI()[ii];
+      myii[ii+1] = myii[ii] + off + 1;
+      for ( int jj = 0; jj < off; ++jj ){
+        myjj[ myii[ii] + jj ] = Apr.GetJ()[    Apr.GetI()[ii] + jj ];
+        mydd[ myii[ii] + jj ] = Apr.GetData()[ Apr.GetI()[ii] + jj ];
+      }
+      myjj[ myii[ii] + off ] = Apr.NumCols();
+      mydd[ myii[ii] + off ] = pInt.GetData()[ii];
+    }
+    for ( int jj = 0; jj < pInt.Size(); ++jj ){
+      myjj[ myii[ Apr.NumRows() ] + jj ] = jj;
+      mydd[ myii[ Apr.NumRows() ] + jj ] = pInt.GetData()[jj];
+    }
+    myii[ Apr.NumRows() + 1 ] = myii[ Apr.NumRows() ] + pInt.Size() + 1;
+    myjj[ myii[Apr.NumRows()+1] - 1 ] = pInt.Size();
+    mydd[ myii[Apr.NumRows()+1] - 1 ] = 0.;
+
+    // Finally assemble sparse matrix
+    SparseMatrix myAp( myii.GetData(), myjj.GetData(), mydd.GetData(), _PhFESpace->GetTrueVSize()+1, _PhFESpace->GetTrueVSize()+1, false, false, true );
+    _Ap = myAp;
+
+
+  }else{
+    _Ap.MakeRef( aVarf.SpMat() );
+    _Ap.SetGraphOwner(true);
+    _Ap.SetDataOwner(true);
+    aVarf.LoseMat();
+
+    // Impose homogeneous dirichlet BC by simply removing corresponding equations
+    mfem::Array<int> colsP(_Ap.Height());
+    colsP = 0.;
+    for (int i = 0; i < _essPhTDOF.Size(); ++i){
+      colsP[_essPhTDOF[i]] = 1;
+    }
+    _Ap.EliminateCols( colsP );
+    for (int i = 0; i < _essPhTDOF.Size(); ++i){
+      _Ap.EliminateRow( _essPhTDOF[i], mfem::Matrix::DIAG_ONE );
+    }
+
   }
 
 
@@ -2387,6 +2438,7 @@ void IMHD2DSTOperatorAssembler::AssembleAS( ){
   _aSinv->SetW( &_Wa );
   _aSinv->SetCCinv( _CCainv );
 
+  _aSAssembled = true;
 
   if( _verbose>1 ){
     if ( _myRank==0 ){
@@ -2632,7 +2684,7 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( ParBlockLowTriOperator*& FFFu, P
   // - Compute local operator gradient at IG
   // -- since we already flagged the relevant esential BC to the local operator,
   //     the matrices are already constrained
-  BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+  BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassOperator.GetGradient( x ) );
   _Mu = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
   _Ma = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
 
@@ -2967,7 +3019,7 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( ParBlockLowTriOperator*& FFFu, P
   //   //    however, they are stored with zeroes in the submatrices corresponding to Dirichlet nodes, so I first need to clean those entries
   //   SparseMatrix tMus, tMas;
 
-  //   BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+  //   BlockOperator* JMs = dynamic_cast<BlockOperator*>( &_IMHD2DMassOperator.GetGradient( x ) );
   //   tMus = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(0,0) ) );
   //   _Mps = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(1,0) ) ); // Mps instead is fine as is, as it's a whole new addition
   //   tMas = *( dynamic_cast<SparseMatrix*>( &JMs->GetBlock(3,3) ) );
@@ -3392,7 +3444,7 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
   // Include contribution from time derivative ------------------------------
   // - From current time step
   BlockVector dty(myX), tempy(myX);
-  _IMHD2DMassStabOperator.Mult(myX,dty);
+  _IMHD2DMassOperator.Mult(myX,dty);
   // - From previous time step
   BlockVector prevX(myX); prevX = 0.;
   // -- Send lcl solution to next proc
@@ -3412,11 +3464,11 @@ void IMHD2DSTOperatorAssembler::ApplyOperator( const BlockVector& x, BlockVector
     prevX.GetBlock(0) = uBC;
     prevX.GetBlock(3) = aBC;
   }
-  _IMHD2DMassStabOperator.Mult(prevX,tempy);
+  _IMHD2DMassOperator.Mult(prevX,tempy);
   dty -= tempy;
 
   // -- Include contribution into y
-  y -= dty;  // NB: remember _IMHD2DMassStabOperator computes NEGATIVE mass matrix, hence -= !
+  y -= dty;  // NB: remember _IMHD2DMassOperator computes NEGATIVE mass matrix, hence -= !
 
 
 
@@ -3502,7 +3554,7 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
     _Mps.Clear();
     _Ma.Clear();
 
-    BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassStabOperator.GetGradient( x ) );
+    BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassOperator.GetGradient( x ) );
     _Mu  = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
     _Mps = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(1,0) ) );
     _Ma  = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
@@ -3755,22 +3807,31 @@ void IMHD2DSTOperatorAssembler::AssemblePreconditioner( Operator*& Fuinv, Operat
 // This is also extremely inefficient, as it freezes all allocated processors, while only one does the whole job,
 //  but I can't be bothered to re-implement the necessary classes
 void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
-                                          const std::string &innerConvpath, int output ){
+                                          const std::string &convPath, int refLvl, int precType, int output ){
 
-  const int   maxNewtonIt = 20;
-  const double   GMRESTol = 1e-10/ sqrt( _numProcs );
-  const double  newtonTol = 1e-9 / sqrt( _numProcs );
+  std::string innerConvpath = convPath + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + "/";
+  if (output>0 && !std::experimental::filesystem::exists( innerConvpath ) && _myRank == 0){
+    std::experimental::filesystem::create_directories( innerConvpath );
+  }
+  std::string innerInnerConvpath = innerConvpath + "tt" + std::to_string(_myRank+1) + "/";
+  if (output>0 && !std::experimental::filesystem::exists( innerInnerConvpath ) && _myRank == 0){
+    std::experimental::filesystem::create_directories( innerInnerConvpath );
+  }
+
+
+  const int   maxNewtonIt = 10;
+  const double newtonRTol = 0.;
+  const double newtonATol = 1e-10/ sqrt( _numProcs );
 
   if( _myRank == 0 ){
-    std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10/1e-9 (Newt/GMRES), scaled by the number of time steps."<<std::endl
+    std::cout<<"Warning: Considering a fixed overall tolerance of 1e-10, scaled by the number of time steps."<<std::endl
              <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
              <<"          so make sure to delete it from there!"<<std::endl;    
   }
 
 
-  // I assume all *constant* operators are already assembled
 
-  // Define operator
+  // Assemble skeleton for preconditioner
   Array<int> offsets(5);
   offsets[0] = 0;
   offsets[1] = _Fu.NumRows();
@@ -3778,63 +3839,13 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   offsets[3] = _Mz.NumRows();
   offsets[4] = _Fa.NumRows();
   offsets.PartialSum();
-  PetscParMatrix myB( &_B );
-
-  // - assemble matrix
-  BlockOperator myMHDOp( offsets );
-  myMHDOp.SetBlock(0, 0, &_Fu);
-  myMHDOp.SetBlock(2, 2, &_Mz);
-  myMHDOp.SetBlock(3, 3, &_Fa);
-  myMHDOp.SetBlock(0, 1, myB.Transpose());
-  myMHDOp.SetBlock(0, 2, &_Z1);
-  myMHDOp.SetBlock(0, 3, &_Z2);
-  myMHDOp.SetBlock(1, 0, &_B);
-  myMHDOp.SetBlock(2, 3, &_K);
-  myMHDOp.SetBlock(3, 0, &_Y);
-
-
-  // Define preconditioner components
-  // If I define them properly to begin with, I don't need to re-assemble them
-  // // - Inverse of pressure Schur complement - reuse code from ST case, but with single processor
-  // delete _pSinv;
-  // _pSinv = new OseenSTPressureSchurComplement( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, _verbose );
-  // _pSinv->SetAp( &_Ap );
-  // _pSinv->SetWp( &_Wp );
-  // _pSinv->SetMp( &_Mp );
-
-
-  // - Inverse of magnetic Schur complement - reuse code from ST case, but with single processor
-  // delete _CCainv;
-  // _CCainv = new SpaceTimeWaveSolver( MPI_COMM_SELF, NULL, NULL, NULL, _essAhTDOF, false, true, _verbose);
-  // ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
-  // ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
-  // ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
-  // delete _aSinv;
-  // _aSinv = new IMHD2DSTMagneticSchurComplement( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
-  // _aSinv->SetM( &_MaNoZero );
-  // _aSinv->SetW( &_Wa );
-  // _aSinv->SetCCinv( _CCainv );
-
-
-  // - Inverse of velocity operator
-  // delete _FFuinv;
-  // _FFuinv  = new SpaceTimeSolver( MPI_COMM_SELF, NULL, NULL, _essUhTDOF, true, _verbose );
-  // ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
-  // ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetM( &_Mu );
-
-
-  // - Inverse of mass matrix of laplacian of vector field
-  // can reuse _MMzinv out-of-the-box
-
-
-  // Assemble preconditioner
   // - inverse of Lub
   BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsets );
   Array<const Operator*> YFuiOps(2);
   YFuiOps[0] = _FFuinv;
   YFuiOps[1] = &_Y;
   OperatorsSequence* YFui = new OperatorsSequence( YFuiOps );   // does not own
-  ScaledOperator* mMzi    = new ScaledOperator( _MMzinv, -1.0 );
+  ScaledOperator* mMzi = new ScaledOperator( _MMzinv, -1.0 );
   Array<const Operator*> mYFuiZ1Mziops(3);
   Array<bool>            mYFuiZ1Mziown(3);
   mYFuiZ1Mziops[0] = mMzi; mYFuiZ1Mziown[0] = true;
@@ -3870,17 +3881,46 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   BlockUpperTriangularPreconditioner *Uup = new BlockUpperTriangularPreconditioner( offsets );
   Uup->iterative_mode = false;
   Uup->SetBlock( 0, 0, _FFuinv );
-  Uup->SetBlock( 0, 1, myB.Transpose() );
-  Uup->SetBlock( 1, 1, _pSinv  );
+  Uup->SetBlock( 0, 1, &_Bt   );
+  Uup->SetBlock( 1, 1, _pSinv );
+  Uup->SetBlock( 1, 2, &_X1   );
+  Uup->SetBlock( 1, 3, &_X2   );
   Uup->owns_blocks = false;
   
   // - combine them together
-  Array<const Operator*> precOps(4);
-  Array<bool>      precOwn(4);
-  precOps[0] = Lub;  precOwn[0] = true;
-  precOps[1] = Uub;  precOwn[1] = true;
-  precOps[2] = Lup;  precOwn[2] = true;
-  precOps[3] = Uup;  precOwn[3] = true;
+  Array<const Operator*> precOps;
+  Array<bool>            precOwn;
+  switch (precType){
+    // Full Preconditioner Uupi*Lupi*Uubi*Lubi
+    case 0:{
+      precOps.SetSize(4);
+      precOwn.SetSize(4);
+      precOps[0] = Lub;  precOwn[0] = true;
+      precOps[1] = Uub;  precOwn[1] = true;
+      precOps[2] = Lup;  precOwn[2] = true;
+      precOps[3] = Uup;  precOwn[3] = true;
+      break;
+    }
+    // simplified: Uupi*Lupi*Uubi
+    case 1:{
+      precOps.SetSize(3);
+      precOwn.SetSize(3);
+      precOps[0] = Uub;  precOwn[0] = true;
+      precOps[1] = Lup;  precOwn[1] = true;
+      precOps[2] = Uup;  precOwn[2] = true;
+      break;
+    }
+    // uber simplified: Uupi*Uubi
+    case 2:{
+      precOps.SetSize(2);
+      precOwn.SetSize(2);
+      precOps[0] = Uub;  precOwn[0] = true;
+      precOps[1] = Uup;  precOwn[1] = true;
+      break;
+    }
+    default:
+    std::cerr<<"ERROR: Preconditioner type "<<precType<<" not recognised."<<std::endl;
+  }
   OperatorsSequence myMHDPr( precOps, precOwn );
 
   // Ok, so at this stage all the skeletons for the various operators should be there. Now it's time to get serious
@@ -3888,173 +3928,270 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 
   // Initialise Newton iterations
   // - y is used as initial guess only for master
-  BlockVector lclSol(offsets);
-  lclSol = y;
+  BlockVector lclSol(offsets), prevSol(offsets);
+  lclSol  = y;
+  prevSol = 0.;
   // - otherwise receive solution from previous processor, and use it as initial guess
   if ( _myRank > 0 ){
     // - overwrite initial guess with solution from previous time-step
-    MPI_Recv( lclSol.GetData(), offsets[4], MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
-    // - include effect from solution at previous time step on rhs (temporal derivative): rhs -= M*x
-    // -- M should be the same for every proc, so it doesn't really matter which one performs the multiplication
-    //     and is stored with negative sign, so multiply by -1
-    _Mu.AddMult( lclSol.GetBlock(0), _frhs, -1.0 );
-    _Ma.AddMult( lclSol.GetBlock(3), _hrhs, -1.0 );
+    MPI_Recv( prevSol.GetData(), offsets[4], MPI_DOUBLE, _myRank-1, _myRank, _comm, MPI_STATUS_IGNORE );
     // - however, remember to preserve Dirichlet nodes
+    lclSol = prevSol;
     for ( int i = 0; i < _essUhTDOF.Size(); ++i ){
       lclSol.GetBlock(0)(_essUhTDOF[i]) = y.GetBlock(0)(_essUhTDOF[i]);
     }
     for ( int i = 0; i < _essAhTDOF.Size(); ++i ){
       lclSol.GetBlock(3)(_essAhTDOF[i]) = y.GetBlock(3)(_essAhTDOF[i]);
     }
+  }else{
+    // for rank 0, this contribution stems from the IC
+    VectorFunctionCoefficient uFuncCoeff( _dim, _uFunc );
+    FunctionCoefficient       aFuncCoeff( _aFunc );
+    uFuncCoeff.SetTime( 0 );
+    aFuncCoeff.SetTime( 0 );
+    GridFunction uBC(_UhFESpace);
+    GridFunction aBC(_AhFESpace);
+    uBC.ProjectCoefficient(uFuncCoeff);
+    aBC.ProjectCoefficient(aFuncCoeff);
+    prevSol.GetBlock(0) = uBC;
+    prevSol.GetBlock(3) = aBC;
   }
 
-  // - initialise operators with initial guess on solution
-  UpdateLinearisedOperators( lclSol );  // fun fact: this works fine also if called as non-collective
-
   // - compute residual
+  //  -- spatial contribution
   BlockVector lclRes(offsets);
-  _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
-  lclRes.GetBlock(0) -= _frhs;             // N(x) - b
+  _IMHD2DOperator.Mult( lclSol, lclRes );        // N(x)
+  lclRes.GetBlock(0) -= _frhs;                   // N(x) - b
   lclRes.GetBlock(1) -= _grhs;
   lclRes.GetBlock(2) -= _zrhs;
   lclRes.GetBlock(3) -= _hrhs;
-  lclRes.Neg();                            // b - N(x)
+  lclRes.Neg();                                  // b - N(x)
+  //  -- temporal contribution
+  BlockVector dtu(offsets), tempN(offsets);
+  _IMHD2DMassOperator.Mult( lclSol,    dtu );    // - u^{n+1}
+  _IMHD2DMassOperator.Mult( prevSol, tempN );    // - u^{n}
+  dtu -= tempN;                                  // -(u^{n+1}-u^{n})
+  //  -- combine together
+  lclRes += dtu;
+  //  -- shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
+  for ( int i = 0; i < _essUhTDOF.Size(); ++i )
+    lclRes.GetBlock(0)(_essUhTDOF[i]) = 0.;
+  for ( int i = 0; i < _essAhTDOF.Size(); ++i )
+    lclRes.GetBlock(3)(_essAhTDOF[i]) = 0.;
 
   // - compute norm of residual and initialise relevant quantities for Newton iteration
+  double newtonIt = 0;
+  int newtNonConv = 0;
+  int GMRESNonConv = 0;
   double newtonRes = lclRes.Norml2();
   double newtonRes0 = newtonRes;
-  double newtonErrWRTPrevIt = newtonTol;
-  int newtonIt = 0;
-  double totGMRESit = 0.; //leave it as double, so that when I'll average it, it won't round-off
+  double newtonErrWRTPrevIt = newtonATol;
+  double tempResu;
+  double tempResp;
+  double tempResz;
+  double tempResa;
+  double totGMRESIt = 0.;
+  std::cout << "***********************************************************\n";
+  std::cout << "Starting Newton for time-step "<<_myRank+1<<", initial residual "<< newtonRes
+            << ", (u,p,z,A) = ("<< lclRes.GetBlock(0).Norml2() <<","
+                                << lclRes.GetBlock(1).Norml2() <<","
+                                << lclRes.GetBlock(2).Norml2() <<","
+                                << lclRes.GetBlock(3).Norml2() <<")" << std::endl;
+  std::cout << "***********************************************************\n";
 
-  std::cout << "***********************************************************\n";
-  std::cout << "Starting Newton for time-step "<<_myRank+1<<", initial residual "<< newtonRes <<std::endl;
-  std::cout << "***********************************************************\n";
-  if ( output>0 ){
-    std::string filename = innerConvpath +"NEWTconv_proc" + std::to_string(_myRank) + ".txt";
+  if( output>0 ){
+    if (  _myRank==0 ){
+      // initialise per time-step data collection
+      std::string filename = innerConvpath +"NEWTconv.txt";
+      std::ofstream myfile;
+      myfile.open( filename, std::ios::app );
+      myfile << "tt,\tRes_norm_tot\tRel_res_norm\tNewton_its,\tNewton_conv\tAvg_GMRES_its\tGMRES_noConv" << std::endl;    
+      myfile << 0 << ",\t" << newtonRes0 << ",\t" << 1.0 << ",\t"
+             << 0 << ",\t" << false      << ",\t" << 0   << ",\t" << 0  << std::endl;
+      myfile.close();
+    }
+    // initialise data collection for specific time-step
+    std::string filename = innerInnerConvpath +"NEWTconv.txt";
     std::ofstream myfile;
     myfile.open( filename, std::ios::app );
-    myfile << "#It"    <<"\t"<< "Res norm"<<"\t"<< "Rel res norm"       <<"\t"<< "Norm of update\tInner converged\tInner res\tInner its"  <<std::endl;
-    myfile << newtonIt <<"\t"<< newtonRes <<"\t"<< newtonRes/newtonRes0 <<"\t"<< 0.0         <<"\t"<< false   <<"\t"<<0.0<<"\t"<<0 <<std::endl;
+    myfile << "#It\t"        << "Res_norm_tot\t"        
+            << "Res_norm_u\t"          << "Res_norm_p\t"          << "Res_norm_z\t"          << "Res_norm_a\t"
+            << "Rel_res_norm\t"        << "Norm of update\t"
+            <<"Inner converged\t"<<"Inner res\t"<<"Inner its"<<std::endl;
+    myfile << newtonIt <<"\t"<< newtonRes <<"\t"
+            << lclRes.GetBlock(0).Norml2()<<"\t"<<lclRes.GetBlock(1).Norml2()<<"\t"
+            << lclRes.GetBlock(2).Norml2()<<"\t"<<lclRes.GetBlock(3).Norml2()<<"\t"
+            << newtonRes/newtonRes0 <<"\t"<< 0.0 <<"\t"
+            << false       <<"\t"<< 0.0   <<"\t"<<0   <<std::endl;
     myfile.close();
-  }
+  }    
 
-  // - stop if:       max it reached                 residual small enough        relative residual small enough       //     difference wrt prev it small enough
-  bool stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol );  // || ( newtonErrWRTPrevIt < newtonTol );
 
-  // Main loop (newton solver)
-  while( !stopNewton ){ 
-    // Define internal (GMRES) solver
+
+  //*************************************************************************
+  // NEWTON ITERATIONS
+  //*************************************************************************
+  for ( newtonIt = 0; newtonIt < maxNewtonIt
+                   && newtonRes >= newtonATol
+                   && newtonRes/newtonRes0 >= newtonRTol;
+                   // && newtonErrWRTPrevIt >= newtonTol;
+                   ++newtonIt ){      
+
+    // - update operators using guess on solution
+    UpdateLinearisedOperators( lclSol );  // fun fact: this works fine also if called as non-collective
+
+
+
+    // - assemble matrix
+    BlockOperator myMHDOp( offsets );
+    myMHDOp.SetBlock(0, 0, &_Fu);
+    myMHDOp.SetBlock(0, 1, &_Bt);
+    myMHDOp.SetBlock(0, 2, &_Z1);
+    myMHDOp.SetBlock(0, 3, &_Z2);
+    myMHDOp.SetBlock(1, 0, &_B);
+    myMHDOp.SetBlock(1, 1, &_Cs);
+    myMHDOp.SetBlock(1, 2, &_X1);
+    myMHDOp.SetBlock(1, 3, &_X2);
+    myMHDOp.SetBlock(2, 2, &_Mz);
+    myMHDOp.SetBlock(2, 3, &_K);
+    myMHDOp.SetBlock(3, 0, &_Y);
+    myMHDOp.SetBlock(3, 3, &_Fa);
+
+
+    // Define solver
     PetscLinearSolver solver( MPI_COMM_SELF, "solver_" );
     bool isIterative = true;
     solver.iterative_mode = isIterative;
-    // Register operator and preconditioner with the solver
+    // - register preconditioner and system
     solver.SetPreconditioner(myMHDPr);
     solver.SetOperator(myMHDOp);
     // - eventually register viewer to print to file residual evolution for inner iterations
-    if ( output>1 ){
-      std::string filename = innerConvpath +"GMRESconv_Nit" + std::to_string(newtonIt) + "_proc" + std::to_string(_myRank) + ".txt";
-      // - create viewer to instruct KSP object how to print residual evolution to file
-      PetscViewer    viewer;
-      PetscViewerAndFormat *vf;
-      PetscViewerCreate( PETSC_COMM_SELF, &viewer );
-      PetscViewerSetType( viewer, PETSCVIEWERASCII );
-      PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
-      PetscViewerFileSetName( viewer, filename.c_str() );
-      // - register it to the ksp object
-      KSP ksp = solver;
-      PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
-      PetscViewerDestroy( &viewer );
-      // // - create a more complex context if fancier options must be printed (error wrt analytical solution)
-      // UPErrorMonitorCtx mctx;
-      // mctx.lenghtU = offsets[1];
-      // mctx.lenghtP = offsets[2] - offsets[1];
-      // mctx.lenghtZ = offsets[3] - offsets[2];
-      // mctx.lenghtA = offsets[4] - offsets[3];
-      // mctx.STassembler = mhdAssembler;
-      // mctx.comm = MPI_COMM_WORLD;
-      // mctx.vf   = vf;
-      // UPErrorMonitorCtx* mctxptr = &mctx;
-      KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf,
-                          (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
-    }
+    // if ( output>1 ){
+    //   std::string filename = innerInnerConvpath +"GMRESconv_Nit" + std::to_string(newtonIt) + ".txt";
+    //   // - create viewer to instruct KSP object how to print residual evolution to file
+    //   PetscViewer    viewer;
+    //   PetscViewerAndFormat *vf;
+    //   PetscViewerCreate( PETSC_COMM_WORLD, &viewer );
+    //   PetscViewerSetType( viewer, PETSCVIEWERASCII );
+    //   PetscViewerFileSetMode( viewer, FILE_MODE_APPEND );
+    //   PetscViewerFileSetName( viewer, filename.c_str() );
+    //   // - register it to the ksp object
+    //   KSP ksp = solver;
+    //   PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
+    //   PetscViewerDestroy( &viewer );
 
-    // Set adjusted tolerances
-    solver.SetTol(GMRESTol);
-    solver.SetRelTol(GMRESTol);
-    solver.SetAbsTol(GMRESTol);
+    //   UPSplitResidualMonitorCtx mctx;
+    //   mctx.lenghtU = offsets[1];
+    //   mctx.lenghtP = offsets[2] - offsets[1];
+    //   mctx.lenghtZ = offsets[3] - offsets[2];
+    //   mctx.lenghtA = offsets[4] - offsets[3];
+    //   mctx.comm = MPI_COMM_WORLD;
+    //   mctx.vf   = vf;
+    //   // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
+    //   UPSplitResidualMonitorCtx* mctxptr = &mctx;
+    //   KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPSplitResidualMonitor, mctxptr, NULL );
+    //   // KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,
+    //   //                vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
+    // }
 
-    // Define initial guess for update to solution (all zero)
+
+
+    // - solve!
     BlockVector lclDeltaSol( offsets );
     lclDeltaSol = 0.;
-
-    // Solve for current linearisation
     solver.Mult( lclRes, lclDeltaSol );
+    // - Shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
+    for ( int i = 0; i < _essUhTDOF.Size(); ++i )
+      lclDeltaSol.GetBlock(0)(_essUhTDOF[i]) = 0.;
+    for ( int i = 0; i < _essAhTDOF.Size(); ++i )
+      lclDeltaSol.GetBlock(3)(_essAhTDOF[i]) = 0.;
+
+
 
     // Update relevant quantities
     // - solution
     lclSol += lclDeltaSol;
-    // - residual
-    _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
-    lclRes.GetBlock(0) -= _frhs;             // N(x) - b
+
+
+    // - compute residual
+    //  -- spatial contribution
+    _IMHD2DOperator.Mult( lclSol, lclRes );        // N(x)
+    lclRes.GetBlock(0) -= _frhs;                   // N(x) - b
     lclRes.GetBlock(1) -= _grhs;
     lclRes.GetBlock(2) -= _zrhs;
     lclRes.GetBlock(3) -= _hrhs;
-    lclRes.Neg();                            // b - N(x)
-      // -- compute residual norm
+    lclRes.Neg();                                  // b - N(x)
+    //  -- temporal contribution
+    _IMHD2DMassOperator.Mult( lclSol,  dtu   );    // - u^{n+1}
+    _IMHD2DMassOperator.Mult( prevSol, tempN );    // - u^{n}
+    dtu -= tempN;                                  // -(u^{n+1}-u^{n})
+    //  -- combine together
+    lclRes += dtu;
+    // - Shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
+    for ( int i = 0; i < _essUhTDOF.Size(); ++i )
+      lclRes.GetBlock(0)(_essUhTDOF[i]) = 0.;
+    for ( int i = 0; i < _essAhTDOF.Size(); ++i )
+      lclRes.GetBlock(3)(_essAhTDOF[i]) = 0.;
     newtonRes = lclRes.Norml2();
-    // -- compute norm of newton update
     newtonErrWRTPrevIt = lclDeltaSol.Norml2();
 
+    tempResu = lclRes.GetBlock(0).Norml2();
+    tempResp = lclRes.GetBlock(1).Norml2();
+    tempResz = lclRes.GetBlock(2).Norml2();
+    tempResa = lclRes.GetBlock(3).Norml2();
 
-    // Output relevant measurements
-    newtonIt++;
-    int GMRESits   = solver.GetNumIterations();
-    totGMRESit += GMRESits;
+
+
+
+    // Output
+    int GMRESits = solver.GetNumIterations();
+    totGMRESIt += GMRESits;
     if (solver.GetConverged()){
       std::cout << "Inner solver converged in ";
     }else{
       std::cout << "Inner solver *DID NOT* converge in ";
+      GMRESNonConv++;
     }
     std::cout<< GMRESits << " iterations. Residual "<< solver.GetFinalNorm() <<std::endl;
+    std::cout << "***********************************************************\n";
+    std::cout << "Newton iteration "<< newtonIt+1 <<" for time-step "<< _myRank+1 <<", residual "<< newtonRes
+              << ", (u,p,z,A) = ("<< tempResu <<"," << tempResp <<"," << tempResz <<"," << tempResa <<")" << std::endl;
     if( output>0 ){
-      std::string filename = innerConvpath +"NEWTconv_proc" + std::to_string(_myRank) + ".txt";
+      std::string filename = innerInnerConvpath +"NEWTconv.txt";
       std::ofstream myfile;
       myfile.open( filename, std::ios::app );
-      myfile << newtonIt << "\t" << newtonRes << "\t" << newtonRes/newtonRes0 << "\t" << newtonErrWRTPrevIt << "\t"
-             << solver.GetConverged() << "\t" << solver.GetFinalNorm() << "\t" << GMRESits<<std::endl;
+      myfile << newtonIt <<"\t"<< newtonRes <<"\t"
+             << tempResu <<"\t"<< tempResp  <<"\t" <<tempResz << "\t" << tempResa << "\t"
+             << newtonRes/newtonRes0 <<"\t"<< newtonErrWRTPrevIt << "\t"
+             << solver.GetConverged() <<"\t"<< solver.GetFinalNorm() <<"\t"<<GMRESits <<std::endl;
       myfile.close();
     }      
     std::cout << "***********************************************************\n";
-    std::cout << "Newton iteration "<<newtonIt<<" for time-step "<<_myRank+1<<", residual "<< newtonRes <<std::endl;
-    std::cout << "***********************************************************\n";
-    // - check stopping criterion
-    stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol ) || ( newtonErrWRTPrevIt < 1e-12 );
-    // - and eventually update the operators themselves
-    if( !stopNewton ){
-      UpdateLinearisedOperators( lclSol );
-    }
 
   }
 
-  std::cout   << "Newton outer solver for time-step " <<_myRank+1;
-  if( newtonIt < maxNewtonIt ){
+
+  bool newtConv = (newtonIt < maxNewtonIt);
+  std::cout   << "Newton outer solver for time-step " << _myRank+1;
+  if( newtConv ){
     std::cout << " converged in "                     << newtonIt;
   }else{
     std::cout << " *DID NOT* converge in "            << maxNewtonIt;
+    newtNonConv++;
   }
   std::cout   << " iterations. Residual norm is "     << newtonRes;
-  std::cout   << ", avg internal GMRES it are "       << totGMRESit/newtonIt  << ".\n";
+  std::cout   << ", avg internal GMRES it are "       << totGMRESIt/newtonIt  << ".\n";
   std::cout   << "***********************************************************\n";
-  // - eventually store info on newton convergence
+
   if( output>0 ){
-    std::string filename = innerConvpath + "Newton_convergence_results.txt";
+    std::string filename = innerConvpath +"NEWTconv.txt";
     std::ofstream myfile;
     myfile.open( filename, std::ios::app );
-    myfile << _myRank << "\t" << newtonRes << "\t" << newtonRes/newtonRes0 << "\t" 
-           << totGMRESit << "\t" << newtonIt << "\t" << (newtonIt < maxNewtonIt) <<std::endl;
+    myfile << _myRank+1 << ",\t" << newtonRes << ",\t" << newtonRes/newtonRes0 << ",\t"
+           << newtonIt  << ",\t" << newtConv  << ",\t" << totGMRESIt/newtonIt  << ",\t" << GMRESNonConv  << std::endl;
     myfile.close();
   }    
+
 
 
   // Store final solution for this time-step and send to next processor
@@ -4066,24 +4203,51 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 
   // sum residuals at each time step
   newtonRes*= newtonRes;
+  tempResu *= tempResu;
+  tempResp *= tempResp;
+  tempResz *= tempResz;
+  tempResa *= tempResa;
   MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, _comm );
-  double finalResNorm = sqrt(newtonRes);
+  MPI_Allreduce( MPI_IN_PLACE, &tempResu,  1, MPI_DOUBLE, MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &tempResp,  1, MPI_DOUBLE, MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &tempResz,  1, MPI_DOUBLE, MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &tempResa,  1, MPI_DOUBLE, MPI_SUM, _comm );
+  double STres  = sqrt(newtonRes);
+  double STresu = sqrt(tempResu);
+  double STresp = sqrt(tempResp);
+  double STresz = sqrt(tempResz);
+  double STresa = sqrt(tempResa);
 
   // average out iterations at each time step
-  MPI_Allreduce( MPI_IN_PLACE, &newtonIt, 1, MPI_INT,    MPI_SUM, _comm );
-  double avgNewtonIt = double(newtonIt) / _numProcs;
+  MPI_Allreduce( MPI_IN_PLACE, &newtonIt,     1, MPI_DOUBLE, MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &newtNonConv,  1, MPI_INT,    MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &totGMRESIt,   1, MPI_DOUBLE, MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &GMRESNonConv, 1, MPI_INT,    MPI_SUM, _comm );
 
 
-  if( _myRank == 0 ){
-    std::cout<<"***********************************************************"  <<std::endl
-             <<"*********** TIME-STEPPING PROCEDURE COMPLETED! ************"  <<std::endl
-             <<"***********************************************************"  <<std::endl
-             <<"* - Final space-time residual               " << finalResNorm <<std::endl
-             <<"* - Average Newton its per time-step        " << avgNewtonIt  <<std::endl
-             <<"***********************************************************"<<std::endl
-             <<"***********************************************************"<<std::endl;
+  if ( _myRank == 0 ){
+    std::cout<<"***********************************************************\n";
+    std::cout<<"***********************************************************\n";
+    std::cout<<"\nALL DONE!\n\n";
+    std::cout<<"***********************************************************\n";
+    std::cout<<"Total # of Newton iterations: "<<newtonIt  <<". Non-converged: "<<newtNonConv <<". Avg per time-step: "<<newtonIt/_numProcs <<"\n";
+    std::cout<<"Total # of GMRES  iterations: "<<totGMRESIt<<". Non-converged: "<<GMRESNonConv<<". Avg per time-step: "<<totGMRESIt/_numProcs
+                                                                                              <<". Avg per Newton it: "<<totGMRESIt/newtonIt<<"\n";
+    std::cout<<"Final space-time norm of residual: "<< STres
+             << ", (u,p,z,A) = ("<<STresu<<","<<STresp<<","<<STresz<<","<<STresa<<")"<< std::endl;
+    std::cout<<"***********************************************************\n";
+
+    if( output>0 ){
+      std::string filename = convPath +"Newton_convergence_results.txt";
+      std::ofstream myfile;
+      myfile.open( filename, std::ios::app );
+      double Tend = _dt*_numProcs;
+      myfile << Tend       << ",\t" << _numProcs    << ",\t" << refLvl               << ",\t" << STres<< ",\t"
+             << newtonIt   << ",\t" << newtNonConv  << ",\t" << newtonIt/_numProcs   << ",\t"
+             << totGMRESIt << ",\t" << GMRESNonConv << ",\t" << totGMRESIt/_numProcs << ",\t" << totGMRESIt/newtonIt << std::endl;
+      myfile.close();
+    }    
   }
-
 
   // wait for write to be completed..possibly non-necessary
   MPI_Barrier(_comm);

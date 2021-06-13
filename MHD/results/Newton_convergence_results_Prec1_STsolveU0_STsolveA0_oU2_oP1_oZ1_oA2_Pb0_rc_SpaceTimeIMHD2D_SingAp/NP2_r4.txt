@@ -1,2 +1,0 @@
-It	ResidualNorm	ResRelNorm	NormDiffPrevIt	GMRESits
-0	3.68699e-06	1	0	0

@@ -80,6 +80,8 @@ OseenSTPressureSchurComplement::OseenSTPressureSchurComplement( const MPI_Comm& 
                                                                 const Array<int>& essQhTDOF, int verbose ):
   _comm(comm), _dt(dt), _mu(mu), _Ap(NULL), _Mp(NULL), _WpEqualsAp(false), _Asolve(NULL), _Msolve(NULL), _essQhTDOF(essQhTDOF), _verbose(verbose){
 
+  _WpEqualsAp = true;
+
   if( Ap != NULL ) SetAp(Ap);
   if( Mp != NULL ) SetMp(Ap);
   if( Wp != NULL ) SetWp(Wp, false);

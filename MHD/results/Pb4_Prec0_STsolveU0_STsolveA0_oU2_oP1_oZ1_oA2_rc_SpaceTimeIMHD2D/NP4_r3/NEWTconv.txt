@@ -1,4 +1,0 @@
-#It	Res norm	Rel res norm	Norm of update	Inner converged	Inner res	Inner its
-0	1.89374	1	0	0	0	0
-1	5.8563	3.09244	5.8563	0	1.28427	100
-2	6.16179	3.25376	6.16179	0	5.65225	100

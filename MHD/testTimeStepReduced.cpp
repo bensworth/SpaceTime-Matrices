@@ -1,5 +1,9 @@
 // Test file to check correctness of implementation of time-stepper and
-// preconditioner when using reduced system (without z)
+//  preconditioner when using reduced system (without z)
+// Basically overrides z, computing it explicitly as solution of Mz*z = - K*A
+//  whenever necessary, and also compacting Lorentz force operator
+//  Z = Z2-Z1Mzi*K and X = X2-X1Mzi*K
+//  inside the preconditioners
 //---------------------------------------------------------------------------
 #include "mfem.hpp"
 #include "petsc.h"
@@ -7,11 +11,11 @@
 #include "blockUpperTriangularPreconditioner.hpp"
 #include "operatorssequence.hpp"
 #include "operatorsseries.hpp"
-#include "imhd2dintegrator.hpp"
+#include "imhd2dspaceintegrator.hpp"
+#include "imhd2dtimeintegrator.hpp"
 #include "imhd2dstmagneticschurcomplement.hpp"
 #include "oseenstpressureschurcomplement.hpp"
-#include "vectorconvectionintegrator.hpp"
-#include "boundaryfacefluxintegrator.hpp"
+// #include "oseenstpressureschurcomplementsimple.hpp"
 #include <string>
 #include <fstream>
 #include <iostream>
@@ -27,6 +31,11 @@ using namespace mfem;
 // Handy functions for assembling various operators
 void AssembleAp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
                  const IntegrationRule *ir, SparseMatrix& _Ap );
+void AssembleApAug( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
+                    const IntegrationRule *ir, SparseMatrix& _Ap );
+void AssembleBMuBt( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
+                    FiniteElementSpace *_UhFESpace, const Array<int>& _essUhTDOF,
+                    const IntegrationRule *ir, SparseMatrix& _Ap );
 void AssembleMp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
                  const IntegrationRule *ir, SparseMatrix& _Mp );
 void AssembleWp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF, const Array<int>& neuBdrP,
@@ -49,7 +58,7 @@ void AssembleLub( const Operator* Y,   const Operator* Fui,
                   BlockLowerTriangularPreconditioner* Lub );
 void AssembleUub( const Operator* Z,   const Operator* aSi, BlockUpperTriangularPreconditioner* Uub );
 void AssembleLup( const Operator* Fui, const Operator* B,   BlockLowerTriangularPreconditioner* Lup );
-void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup );
+void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* X, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup );
 //---------------------------------------------------------------------------
 void SaveSolution( const Array<BlockVector>& sol,
                    const Array< FiniteElementSpace* >& feSpaces, double _dt, Mesh* _mesh,
@@ -63,13 +72,14 @@ void SaveError( const Array<BlockVector>& sol,
                 double _dt, Mesh* _mesh,
                 const std::string& path, const std::string& filename );
 void PrintMatrices( const std::string& filename,
-       const SparseMatrix& _Fu,  const SparseMatrix& _Bt,  const SparseMatrix& _Z1, const SparseMatrix& _Z2,
+       const SparseMatrix& _Fu,  const SparseMatrix& _Bt,  const SparseMatrix& _Z1, const SparseMatrix& _Z2, const SparseMatrix& _Mu,
        const SparseMatrix& _B ,  const SparseMatrix& _Cs,  const SparseMatrix& _X1, const SparseMatrix& _X2,
        const SparseMatrix& _Mz,  const SparseMatrix& _K,
        const SparseMatrix& _Y ,  const SparseMatrix& _Fa,  const SparseMatrix& _Ma,
-       const SparseMatrix& _Mp,  const SparseMatrix& _Ap,  const SparseMatrix& _Wp,
+       const SparseMatrix& _Mp,  const SparseMatrix& _Ap,  const SparseMatrix& _Wp, const SparseMatrix& _Mps,
        const SparseMatrix& _Aa,  const SparseMatrix& _Cp,  const SparseMatrix& _Wa,
        const Array<int>& _essUhTDOF, const Array<int>& _essPhTDOF, const Array<int>& _essAhTDOF  );
+
 //---------------------------------------------------------------------------
 int main(int argc, char *argv[]){
 
@@ -86,7 +96,8 @@ int main(int argc, char *argv[]){
   const int _dim = 2;
   const char *petscrc_file = "rc_SpaceTimeIMHD2D";
 
-  bool output = false;
+  bool output    = false;
+  bool outputRes = false;
   int precType = 2;
 
   int ordU = 2;
@@ -95,8 +106,9 @@ int main(int argc, char *argv[]){
   int ordA = 2;
 
   int NT = 2;
-  int pbType = 5;
+  int pbType = 6;
   string pbName;
+  bool stab = false;
   int verbose = 0;
 
   double _mu  = 1.0;
@@ -143,9 +155,8 @@ int main(int argc, char *argv[]){
                 "                          rc_STMHD_FGMRES  (use FGMRES rather than GMRES for outer solver (useful if ST=2))\n");
   args.AddOption(&pbType, "-Pb", "--problem",
                 "Problem: 1 to 4-Analytical test cases\n"
-                "              5-Kelvin-Helmholtz instability (default)\n"
-                "              6-Island coalescensce\n"
-                "              7-Modified Hartmann flow\n"
+                "              5-Kelvin-Helmholtz instability\n"
+                "              6-Island coalescensce (default)\n"
                 "             11-Driven cavity flow\n"
         );
   args.AddOption(&precType, "-P", "--preconditioner",
@@ -153,8 +164,14 @@ int main(int argc, char *argv[]){
                 "                        1-Cyr et al simplified: Uupi*Lupi*Uubi\n"
                 "                        2-Cyr et al uber simplified: Uupi*Uubi (default)\n"
         );
-  args.AddOption(&output, "-out", "--output", "-noOut", "--noOutput",
+  args.AddOption(&output, "-out", "--outputSolution", "-noOut", "--noOutputSolution",
                 "Print paraview solution\n"
+        );
+  args.AddOption(&outputRes, "-outRes", "--outputResidual", "-noOutRes", "--noOutputResidual",
+                "Print paraview residual\n"
+        );
+  args.AddOption(&stab, "-S", "--stab", "-noS", "-noStab",
+                "Stabilise via SUPG (default: false)\n"
         );
   args.AddOption(&verbose, "-V", "--verbose",
                 "Control how much info to print to terminal:(=-1   print large block matrices, and trigger eigs analysis - bit of a hack)\n"
@@ -172,8 +189,8 @@ int main(int argc, char *argv[]){
 
   const double _dt = ( Tend-T0 )/ NT;
 
-  const int   maxNewtonIt = 5;
-  const double  newtonRTol = 1e-4;
+  const int   maxNewtonIt  = 10;
+  const double  newtonRTol = 1e-5;
   const double  newtonATol = 0.;
 
   MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
@@ -186,170 +203,14 @@ int main(int argc, char *argv[]){
   Array<int> essTagsP(0);
   Array<int> essTagsA(0);
 
+  MHDTestCaseSelector( pbType, 
+                       uFun, pFun, zFun, aFun,
+                       fFun, gFun, hFun, nFun, mFun,
+                       wFun, qFun, yFun, cFun,
+                       _mu, _eta, _mu0,
+                       pbName, mesh_file,
+                       essTagsU, essTagsV, essTagsP, essTagsA );
 
-  switch (pbType){
-    // analytical test-case
-    case 4:{
-      mesh_file = Analytical4Data::_meshFile;
-      pbName    = Analytical4Data::_pbName;
-
-      uFun = Analytical4Data::uFun_ex;
-      pFun = Analytical4Data::pFun_ex;
-      zFun = Analytical4Data::zFun_ex;
-      aFun = Analytical4Data::aFun_ex;
-      fFun = Analytical4Data::fFun;
-      gFun = Analytical4Data::gFun;
-      hFun = Analytical4Data::hFun;
-      nFun = Analytical4Data::nFun;
-      mFun = Analytical4Data::mFun;
-      wFun = Analytical4Data::wFun;
-      qFun = Analytical4Data::qFun;
-      yFun = Analytical4Data::yFun;
-      cFun = Analytical4Data::cFun;
-
-      _mu  = Analytical4Data::_mu;
-      _eta = Analytical4Data::_eta;
-      _mu0 = Analytical4Data::_mu0;
-      
-      Analytical4Data::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
-
-      break;
-    }
-    // Kelvin-Helmholtz instability
-    case 5:{
-      mesh_file = KHIData::_meshFile;
-      pbName    = KHIData::_pbName;
-
-      uFun = KHIData::uFun_ex;
-      pFun = KHIData::pFun_ex;
-      zFun = KHIData::zFun_ex;
-      aFun = KHIData::aFun_ex;
-      fFun = KHIData::fFun;
-      gFun = KHIData::gFun;
-      hFun = KHIData::hFun;
-      nFun = KHIData::nFun;
-      mFun = KHIData::mFun;
-      wFun = KHIData::wFun;
-      qFun = KHIData::qFun;
-      yFun = KHIData::yFun;
-      cFun = KHIData::cFun;
-
-      _mu  = KHIData::_mu;
-      _eta = KHIData::_eta;
-      _mu0 = KHIData::_mu0;
-      
-      KHIData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
-
-      break;
-    }
-    // Island coalescence
-    case 6:{
-      mesh_file = IslandCoalescenceData::_meshFile;
-      pbName    = IslandCoalescenceData::_pbName;
-
-      uFun = IslandCoalescenceData::uFun_ex;
-      pFun = IslandCoalescenceData::pFun_ex;
-      zFun = IslandCoalescenceData::zFun_ex;
-      aFun = IslandCoalescenceData::aFun_ex;
-      fFun = IslandCoalescenceData::fFun;
-      gFun = IslandCoalescenceData::gFun;
-      hFun = IslandCoalescenceData::hFun;
-      nFun = IslandCoalescenceData::nFun;
-      mFun = IslandCoalescenceData::mFun;
-      wFun = IslandCoalescenceData::wFun;
-      qFun = IslandCoalescenceData::qFun;
-      yFun = IslandCoalescenceData::yFun;
-      cFun = IslandCoalescenceData::cFun;
-
-      _mu  = IslandCoalescenceData::_mu;
-      _eta = IslandCoalescenceData::_eta;
-      _mu0 = IslandCoalescenceData::_mu0;
-      
-      IslandCoalescenceData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
-      break;
-    }
-    // Tearing mode
-    case 9:{
-      mesh_file = TearingModeData::_meshFile;
-      pbName    = TearingModeData::_pbName;
-
-      uFun = TearingModeData::uFun_ex;
-      pFun = TearingModeData::pFun_ex;
-      zFun = TearingModeData::zFun_ex;
-      aFun = TearingModeData::aFun_ex;
-      fFun = TearingModeData::fFun;
-      gFun = TearingModeData::gFun;
-      hFun = TearingModeData::hFun;
-      nFun = TearingModeData::nFun;
-      mFun = TearingModeData::mFun;
-      wFun = TearingModeData::wFun;
-      qFun = TearingModeData::qFun;
-      yFun = TearingModeData::yFun;
-      cFun = TearingModeData::cFun;
-
-      _mu  = TearingModeData::_mu;
-      _eta = TearingModeData::_eta;
-      _mu0 = TearingModeData::_mu0;
-      
-      TearingModeData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
-      break;
-    }
-    // Tearing mode flipped
-    case 10:{
-      mesh_file = TearingModeFlippedData::_meshFile;
-      pbName    = TearingModeFlippedData::_pbName;
-
-      uFun = TearingModeFlippedData::uFun_ex;
-      pFun = TearingModeFlippedData::pFun_ex;
-      zFun = TearingModeFlippedData::zFun_ex;
-      aFun = TearingModeFlippedData::aFun_ex;
-      fFun = TearingModeFlippedData::fFun;
-      gFun = TearingModeFlippedData::gFun;
-      hFun = TearingModeFlippedData::hFun;
-      nFun = TearingModeFlippedData::nFun;
-      mFun = TearingModeFlippedData::mFun;
-      wFun = TearingModeFlippedData::wFun;
-      qFun = TearingModeFlippedData::qFun;
-      yFun = TearingModeFlippedData::yFun;
-      cFun = TearingModeFlippedData::cFun;
-
-      _mu  = TearingModeFlippedData::_mu;
-      _eta = TearingModeFlippedData::_eta;
-      _mu0 = TearingModeFlippedData::_mu0;
-      
-      TearingModeFlippedData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
-      break;
-    }
-    // Driven cavity flow
-    case 11:{
-      mesh_file = CavityDrivenData::_meshFile;
-      pbName    = CavityDrivenData::_pbName;
-
-      uFun = CavityDrivenData::uFun_ex;
-      pFun = CavityDrivenData::pFun_ex;
-      zFun = CavityDrivenData::zFun_ex;
-      aFun = CavityDrivenData::aFun_ex;
-      fFun = CavityDrivenData::fFun;
-      gFun = CavityDrivenData::gFun;
-      hFun = CavityDrivenData::hFun;
-      nFun = CavityDrivenData::nFun;
-      mFun = CavityDrivenData::mFun;
-      wFun = CavityDrivenData::wFun;
-      qFun = CavityDrivenData::qFun;
-      yFun = CavityDrivenData::yFun;
-      cFun = CavityDrivenData::cFun;
-
-      _mu  = CavityDrivenData::_mu;
-      _eta = CavityDrivenData::_eta;
-      _mu0 = CavityDrivenData::_mu0;
-      
-      CavityDrivenData::setEssTags(essTagsU, essTagsV, essTagsP, essTagsA);
-      break;
-    }
-
-    default:
-      std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
-  }
 
   args.PrintOptions(cout);
   std::cout<<"   --dt   "<<_dt<<std::endl;
@@ -386,6 +247,11 @@ int main(int argc, char *argv[]){
   // - refine as needed
   for (int i = 0; i < refLvl; i++)
     _mesh->UniformRefinement();
+
+  double hMin, hMax, rMin, rMax;
+  _mesh->GetCharacteristics( hMin, hMax, rMin, rMax );
+  std::cout<<"   --dx   "<<hMin<<", "<<hMax<<std::endl;
+
 
   // - initialise FE info
   FiniteElementCollection* _UhFEColl = new H1_FECollection( ordU, _dim );
@@ -452,9 +318,9 @@ int main(int argc, char *argv[]){
   // std::cout << "Dir A      "; _essAhTDOF.Print(mfem::out, _essAhTDOF.Size() ); std::cout<< "\n";
   // std::cout << "***********************************************************\n";
 
-  // - initialise paraview output
+  // - initialise paraview output solution
   string outFilePath = "ParaView";
-  string outFileName = "STIMHD2D_Orig_" + pbName;
+  string outFileName = "STIMHD2D_" + pbName;
   // -- GridFunction representing solution
   GridFunction uGF( _UhFESpace );
   GridFunction pGF( _PhFESpace );
@@ -472,6 +338,45 @@ int main(int argc, char *argv[]){
   paraviewDC.RegisterField( "z", &zGF );
   paraviewDC.RegisterField( "A", &aGF );
 
+  // - initialise paraview output residual
+  string outFilePathRes = "ParaView";
+  string outFileNameRes = "STIMHD2D_" + pbName + "_res";
+  // -- GridFunction representing residual
+  GridFunction uresGF( _UhFESpace );
+  GridFunction presGF( _PhFESpace );
+  GridFunction zresGF( _ZhFESpace );
+  GridFunction aresGF( _AhFESpace );
+  // -- set up paraview data file
+  ParaViewDataCollection paraviewDCRes( outFileNameRes, _mesh );
+  paraviewDCRes.SetPrefixPath(outFilePathRes);
+  paraviewDCRes.SetLevelsOfDetail( 2 );
+  paraviewDCRes.SetDataFormat(VTKFormat::BINARY);
+  paraviewDCRes.SetHighOrderOutput(true);
+  // -- link wFun, pFun and vFun
+  paraviewDCRes.RegisterField( "u_res", &uresGF );
+  paraviewDCRes.RegisterField( "p_res", &presGF );
+  paraviewDCRes.RegisterField( "z_res", &zresGF );
+  paraviewDCRes.RegisterField( "A_res", &aresGF );
+
+  // - initialise paraview output error
+  string outFilePathErr = "ParaView";
+  string outFileNameErr = "STIMHD2D_" + pbName + "_err";
+  // -- GridFunction representing residual
+  GridFunction uerrGF( _UhFESpace );
+  GridFunction perrGF( _PhFESpace );
+  GridFunction zerrGF( _ZhFESpace );
+  GridFunction aerrGF( _AhFESpace );
+  // -- set up paraview data file
+  ParaViewDataCollection paraviewDCErr( outFileNameErr, _mesh );
+  paraviewDCErr.SetPrefixPath(outFilePathErr);
+  paraviewDCErr.SetLevelsOfDetail( 2 );
+  paraviewDCErr.SetDataFormat(VTKFormat::BINARY);
+  paraviewDCErr.SetHighOrderOutput(true);
+  // -- link wFun, pFun and vFun
+  paraviewDCErr.RegisterField( "u-uh", &uerrGF );
+  paraviewDCErr.RegisterField( "p-ph", &perrGF );
+  paraviewDCErr.RegisterField( "z-zh", &zerrGF );
+  paraviewDCErr.RegisterField( "A-Ah", &aerrGF );
 
 
 
@@ -512,42 +417,56 @@ int main(int argc, char *argv[]){
 
   // Define integration rule to be used throughout
   Array<int> ords(3);
-  ords[0] = 2*ordU + ordU-1;         // ( (u·∇)u, v )
-  ords[1] =   ordU + ordA-1 + ordZ;  // (   z ∇A, v )
-  ords[2] =   ordU + ordA-1 + ordA;  // ( (u·∇A), B )
+  if ( !stab ){
+    ords[0] = 2*ordU + ordU-1;         // ( (u·∇)u, v )
+    ords[1] =   ordU + ordA-1 + ordZ;  // (   z ∇A, v )
+    ords[2] =   ordU + ordA-1 + ordA;  // ( (u·∇A), B )
+  }else{
+    ords[0] = 2*ordU + 2*(ordU-1);                 // ( (u·∇)u, (w·∇)v )
+    ords[1] =   ordU +    ordU-1 + ordA-1 + ordZ;  // (   z ∇A, (w·∇)v )
+    ords[2] = 2*ordU + 2*(ordA-1);                 // ( (u·∇A),  w·∇B )    
+  }
   const IntegrationRule *ir  = &IntRules.Get( Geometry::Type::TRIANGLE, ords.Max() ); // for domains
   const IntegrationRule *bir = &IntRules.Get( Geometry::Type::SEGMENT,  ords.Max() ); // for boundaries
   std::cout<<"Selecting integrator of order "<<ords.Max()<<std::endl;
 
 
   // Define own integrator
+  BlockVector lclSol = sol[0];    // this will contain the update on the solution at each time-step
+  GridFunction _wGridFunc(  _UhFESpace, lclSol.GetBlock(0).GetData() ); // these will be used in the integrator, so link these variables to
+  GridFunction _cGridFunc(  _AhFESpace, lclSol.GetBlock(3).GetData() ); //  lclSol once and for all, so that it gets updated automatically
+  VectorGridFunctionCoefficient _wFuncCoeff( &_wGridFunc );             //  and store them in a handy decorator used in the integrator
+  GridFunctionCoefficient       _cFuncCoeff( &_cGridFunc );
   Array< FiniteElementSpace* > feSpaces(4);
   feSpaces[0] = _UhFESpace;
   feSpaces[1] = _PhFESpace;
   feSpaces[2] = _ZhFESpace;
   feSpaces[3] = _AhFESpace;
-  BlockNonlinearForm _IMHD2DOperator;
+  BlockNonlinearForm _IMHD2DOperator, _IMHD2DMassOperator; // operators for returning spatial and temporal (mass) part of MHD equations
   _IMHD2DOperator.SetSpaces( feSpaces );
-  _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ) );
-  _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ), essBdrA );
-  // _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DIntegrator( _dt, _mu, _mu0, _eta ) );
-  // std::cout<<"Warning: excluding bdr contribution from integrator"<<std::endl;
+  _IMHD2DOperator.AddDomainIntegrator(  new IncompressibleMHD2DSpaceIntegrator( _dt, _mu, _mu0, _eta, stab,
+                                                                               &fFuncCoeff, &hFuncCoeff, &_wFuncCoeff, &_cFuncCoeff ) ); // for bilinforms
+  _IMHD2DOperator.AddBdrFaceIntegrator( new IncompressibleMHD2DSpaceIntegrator( _dt, _mu, _mu0, _eta ), essBdrA );  // for flux in third equation
+  _IMHD2DMassOperator.SetSpaces( feSpaces );
+  _IMHD2DMassOperator.AddDomainIntegrator(  new IncompressibleMHD2DTimeIntegrator( _dt, _mu, _mu0, _eta, stab, &_wFuncCoeff, &_cFuncCoeff ) );
 
-  std::cout<<"Warning: I'm messing up BC for pressure! Also on operators and rhs for f!"<<std::endl;
+  std::cout<<"Warning: I'm not considering BC on pressure, and I'm imposing Neumann integral of velocity =0!"<<std::endl;
   Array< Array<int> * > tmpEssDofs(4);
-  // Array<int> tempPhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on pressure: they are only used to assemble the pressure operators    
+  Array<int> tempPhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on pressure: they are only used to assemble the pressure operators    
   Array<int> tempZhTDOF(0); // Set all to 0: Dirichlet BC are never imposed on laplacian of vector potential    
   tmpEssDofs[0] = &_essUhTDOF;
-  // tmpEssDofs[1] = &tempPhTDOF;
-  tmpEssDofs[1] = &_essPhTDOF;
+  tmpEssDofs[1] = &tempPhTDOF;
+  // tmpEssDofs[1] = &_essPhTDOF;
   tmpEssDofs[2] = &tempZhTDOF;
   tmpEssDofs[3] = &_essAhTDOF;
   Array< Vector * > dummy(4); dummy = NULL;
-  _IMHD2DOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
+  _IMHD2DOperator.SetEssentialTrueDofs(     tmpEssDofs, dummy );  dummy = NULL;
+  _IMHD2DMassOperator.SetEssentialTrueDofs( tmpEssDofs, dummy );
+
   // - extract and keep some constant operators
   BlockOperator* dummyJ = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( sol[0] ) );
-  SparseMatrix Mz = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,2) ) );
-  SparseMatrix K  = *( dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,3) ) );
+  SparseMatrix Mz = *(    dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,2) ) );
+  SparseMatrix K  = *(    dynamic_cast<SparseMatrix*>( &dummyJ->GetBlock(2,3) ) );
   // - inverse of mass matrix for z
   PetscParMatrix MzPetsc( &Mz );
   PetscLinearSolver Mzi( MzPetsc, "ZSolverMass_" );
@@ -556,15 +475,21 @@ int main(int argc, char *argv[]){
   // Pressure Schur complement operators
   SparseMatrix Ap;
   SparseMatrix Mp;
-  SparseMatrix Fp;
-  AssembleAp( _PhFESpace, _essPhTDOF, ir, Ap );
+  AssembleApAug( _PhFESpace, _essPhTDOF, ir, Ap );
+  // AssembleBMuBt( _PhFESpace, _essPhTDOF, _UhFESpace, _essUhTDOF, ir, Ap );
+  // AssembleAp( _PhFESpace, _essPhTDOF, ir, Ap );
   AssembleMp( _PhFESpace, _essPhTDOF, ir, Mp );
   // // - assembling each component explicitly (implemented later)
   // PetscParMatrix ApPetsc( &Ap );
   // PetscLinearSolver Api( ApPetsc, "PSolverLaplacian_" );
   // PetscParMatrix MpPetsc( &Mp );
   // PetscLinearSolver Mpi( MpPetsc, "PSolverMass_" );
-  // - using own Schur complement class
+  // - using own simplified Schur complement class
+  // OseenSTPressureSchurComplementSimple pSi( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, verbose );
+  // SparseMatrix Fp;
+  // pSi.SetAp( &Ap );
+  // pSi.SetMp( &Mp );
+  // // - using own Schur complement class
   OseenSTPressureSchurComplement pSi( MPI_COMM_SELF, _dt, _mu, NULL, NULL, NULL, _essPhTDOF, verbose );
   SparseMatrix Wp;
   pSi.SetAp( &Ap );
@@ -608,7 +533,40 @@ int main(int argc, char *argv[]){
     paraviewDC.SetCycle( 0 );
     paraviewDC.SetTime( 0. );
     paraviewDC.Save();
+    if ( pbType <= 4 ){ // if analytical solution is available, print error, too
+      uFuncCoeff.SetTime( T0 );
+      pFuncCoeff.SetTime( T0 );
+      zFuncCoeff.SetTime( T0 );
+      aFuncCoeff.SetTime( T0 );
+      uerrGF.ProjectCoefficient( uFuncCoeff );
+      perrGF.ProjectCoefficient( pFuncCoeff );
+      zerrGF.ProjectCoefficient( zFuncCoeff );
+      aerrGF.ProjectCoefficient( aFuncCoeff );
+      uerrGF -= sol[0].GetBlock(0);
+      perrGF -= sol[0].GetBlock(1);
+      zerrGF -= sol[0].GetBlock(2);
+      aerrGF -= sol[0].GetBlock(3);
+      // -- store
+      paraviewDCErr.SetCycle( 0 );
+      paraviewDCErr.SetTime( 0. );
+      paraviewDCErr.Save();
+    }
+
   }
+
+  if ( outputRes ){
+    // -- assign to linked variables
+    uresGF = 0.;
+    presGF = 0.;
+    zresGF = 0.;
+    aresGF = 0.;
+    // -- store
+    paraviewDCRes.SetCycle( 0 );
+    paraviewDCRes.SetTime( 0. );
+    paraviewDCRes.Save();
+  }
+
+
 
 
 
@@ -625,24 +583,24 @@ int main(int argc, char *argv[]){
     // for u
     // - actual rhs
     LinearForm frhs( _UhFESpace );
-    ScalarVectorProductCoefficient muNFuncCoeff(_mu, nFuncCoeff);
     frhs.AddDomainIntegrator(   new VectorDomainLFIntegrator(         fFuncCoeff       )          );  //int_\Omega f*v
+    // ScalarVectorProductCoefficient muNFuncCoeff(_mu, nFuncCoeff);
     // frhs.AddBoundaryIntegrator( new VectorBoundaryLFIntegrator(     muNFuncCoeff       ), neuBdrU );  //int_d\Omega \mu * du/dn *v
     // frhs.AddBoundaryIntegrator( new VectorBoundaryFluxLFIntegrator(   pFuncCoeff, -1.0 ), neuBdrU );  //int_d\Omega -p*v*n
     frhs.GetDLFI()->operator[](0)->SetIntRule(ir);
     // frhs.GetBLFI()->operator[](0)->SetIntRule(bir);
     // frhs.GetBLFI()->operator[](1)->SetIntRule(bir);
     frhs.Assemble();
-    frhs.operator*=( _dt );
-    // - effect from solution at previous iteration
-    LinearForm uPrevForm( _UhFESpace );
-    GridFunction uPrev( _UhFESpace ); uPrev = sol[tt-1].GetBlock(0);
-    VectorGridFunctionCoefficient uPrevFuncCoeff( &uPrev );
-    uPrevForm.AddDomainIntegrator( new VectorDomainLFIntegrator( uPrevFuncCoeff ) );  //int_\Omega u(t-1)*v
-    uPrevForm.GetDLFI()->operator[](0)->SetIntRule(ir);
-    uPrevForm.Assemble();
-    // - combine together
-    frhs += uPrevForm;
+    frhs *= _dt;
+    // // - effect from solution at previous iteration
+    // LinearForm uPrevForm( _UhFESpace );
+    // GridFunction uPrev( _UhFESpace ); uPrev = sol[tt-1].GetBlock(0);
+    // VectorGridFunctionCoefficient uPrevFuncCoeff( &uPrev );
+    // uPrevForm.AddDomainIntegrator( new VectorDomainLFIntegrator( uPrevFuncCoeff ) );  //int_\Omega u(t-1)*v
+    // uPrevForm.GetDLFI()->operator[](0)->SetIntRule(ir);
+    // uPrevForm.Assemble();
+    // // - combine together
+    // frhs += uPrevForm;
 
     // for p
     LinearForm grhs( _PhFESpace );
@@ -669,30 +627,30 @@ int main(int argc, char *argv[]){
     hrhs.GetDLFI()->operator[](0)->SetIntRule(ir);
     hrhs.GetBLFI()->operator[](0)->SetIntRule(bir);
     hrhs.Assemble();
-    hrhs.operator*=( _dt );
-    // - effect from solution at previous iteration
-    LinearForm aPrevForm( _AhFESpace );
-    GridFunction aPrev( _AhFESpace ); aPrev = sol[tt-1].GetBlock(3);
-    GridFunctionCoefficient aPrevFuncCoeff( &aPrev );
-    aPrevForm.AddDomainIntegrator( new DomainLFIntegrator( aPrevFuncCoeff ) );  //int_\Omega A(t-1)*B
-    aPrevForm.GetDLFI()->operator[](0)->SetIntRule(ir);
-    aPrevForm.Assemble();
-    // - combine together
-    hrhs += aPrevForm;
+    hrhs *= _dt;
+    // // - effect from solution at previous iteration
+    // LinearForm aPrevForm( _AhFESpace );
+    // GridFunction aPrev( _AhFESpace ); aPrev = sol[tt-1].GetBlock(3);
+    // GridFunctionCoefficient aPrevFuncCoeff( &aPrev );
+    // aPrevForm.AddDomainIntegrator( new DomainLFIntegrator( aPrevFuncCoeff ) );  //int_\Omega A(t-1)*B
+    // aPrevForm.GetDLFI()->operator[](0)->SetIntRule(ir);
+    // aPrevForm.Assemble();
+    // // - combine together
+    // hrhs += aPrevForm;
 
     // clean Dirichlet nodes from rhs (they are already solved for, and they shouldn't dirty the solution)
     frhs.SetSubVector( _essUhTDOF, 0. );
-    grhs.SetSubVector( _essPhTDOF, 0. );
+    // grhs.SetSubVector( _essPhTDOF, 0. );
     hrhs.SetSubVector( _essAhTDOF, 0. );
 
 
     // Initialise Newton iteration using sol recovered at previous time step
-    BlockVector lclSol = sol[tt-1];
+    lclSol = sol[tt-1];
     // - however, remember to preserve Dirichlet nodes
     for ( int i = 0; i < _essUhTDOF.Size(); ++i )
       lclSol.GetBlock(0)(_essUhTDOF[i]) = sol[tt].GetBlock(0)(_essUhTDOF[i]);
-    for ( int i = 0; i < _essPhTDOF.Size(); ++i )
-      lclSol.GetBlock(1)(_essPhTDOF[i]) = sol[tt].GetBlock(1)(_essPhTDOF[i]);
+    // for ( int i = 0; i < _essPhTDOF.Size(); ++i )
+    //   lclSol.GetBlock(1)(_essPhTDOF[i]) = sol[tt].GetBlock(1)(_essPhTDOF[i]);
     for ( int i = 0; i < _essAhTDOF.Size(); ++i )
       lclSol.GetBlock(3)(_essAhTDOF[i]) = sol[tt].GetBlock(3)(_essAhTDOF[i]);
     // - also set z to be *exactly* the laplacian of A
@@ -704,35 +662,67 @@ int main(int argc, char *argv[]){
     tempZ.Neg();
     Mzi.Mult( tempZ, lclSol.GetBlock(2) );  // solve for z
 
-    // print solution:
-    mfem::out.precision(std::numeric_limits< double >::max_digits10);
-    std::cout<<"u: "; lclSol.GetBlock(0).Print(mfem::out, lclSol.GetBlock(0).Size());std::cout<<std::endl;
-    std::cout<<"p: "; lclSol.GetBlock(1).Print(mfem::out, lclSol.GetBlock(1).Size());std::cout<<std::endl;
-    std::cout<<"z: "; lclSol.GetBlock(2).Print(mfem::out, lclSol.GetBlock(2).Size());std::cout<<std::endl;
-    std::cout<<"A: "; lclSol.GetBlock(3).Print(mfem::out, lclSol.GetBlock(3).Size());std::cout<<std::endl;
 
 
     // - compute residual
-    _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
-    lclRes.GetBlock(0) -= frhs;              // N(x) - b
+    //  -- spatial contribution
+    _IMHD2DOperator.Mult( lclSol, lclRes );        // N(x)
+    lclRes.GetBlock(0) -= frhs;                    // N(x) - b
     lclRes.GetBlock(1) -= grhs;
     // lclRes.GetBlock(2) -= zrhs;
-    lclRes.GetBlock(2)  = 0.;                // should already be basically zero!
+    lclRes.GetBlock(2)  = 0.;                      // should already be basically zero!
     lclRes.GetBlock(3) -= hrhs;
-    lclRes.Neg();                            // b - N(x)
+    lclRes.Neg();                                  // b - N(x)
+    //  -- temporal contribution
+    BlockVector dtu(offsets), tempN(offsets);
+    _IMHD2DMassOperator.Mult( lclSol,    dtu   );  // - u^{n+1}
+    _IMHD2DMassOperator.Mult( sol[tt-1], tempN );  // - u^{n}
+    dtu -= tempN;                                  // -(u^{n+1}-u^{n})
+    //  -- combine together
+    lclRes += dtu;
+    // - Shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
+    for ( int i = 0; i < _essUhTDOF.Size(); ++i )
+      lclRes.GetBlock(0)(_essUhTDOF[i]) = 0.;
+    for ( int i = 0; i < _essAhTDOF.Size(); ++i )
+      lclRes.GetBlock(3)(_essAhTDOF[i]) = 0.;
+
+
+
 
     // - compute norm of residual and initialise relevant quantities for Newton iteration
     int newtonIt = 0;
+    double erru, errp, errz, erra, errtot;
     double newtonRes = lclRes.Norml2();
     double newtonRes0 = newtonRes;
     double newtonErrWRTPrevIt = newtonATol;
     double totGMRESit = 0.; //leave it as double, so that when I'll average it, it won't round-off
     std::cout << "***********************************************************\n";
-    std::cout << "Starting Newton for time-step "<<tt<<", initial residual "<< newtonRes
+    std::cout << "Pb " << pbName <<". Starting Newton for time-step "<<tt<<", initial residual "<< newtonRes
               << ", (u,p,z,A) = ("<< lclRes.GetBlock(0).Norml2() <<","
                                   << lclRes.GetBlock(1).Norml2() <<","
                                   << lclRes.GetBlock(2).Norml2() <<","
                                   << lclRes.GetBlock(3).Norml2() <<")" << std::endl;
+    if ( pbType<=4 ){ // if analytical solution is available, print info on error, too
+      uFuncCoeff.SetTime( T0 + _dt*tt );
+      pFuncCoeff.SetTime( T0 + _dt*tt );
+      zFuncCoeff.SetTime( T0 + _dt*tt );
+      aFuncCoeff.SetTime( T0 + _dt*tt );
+      uerrGF.ProjectCoefficient( uFuncCoeff );
+      perrGF.ProjectCoefficient( pFuncCoeff );
+      zerrGF.ProjectCoefficient( zFuncCoeff );
+      aerrGF.ProjectCoefficient( aFuncCoeff );
+      uerrGF -= lclSol.GetBlock(0);
+      perrGF -= lclSol.GetBlock(1);
+      zerrGF -= lclSol.GetBlock(2);
+      aerrGF -= lclSol.GetBlock(3);
+      erru   = uerrGF.Norml2();
+      errp   = perrGF.Norml2();
+      errz   = zerrGF.Norml2();
+      erra   = aerrGF.Norml2();
+      errtot = sqrt(erru*erru + errp*errp + errz*errz + erra*erra);
+      std::cout << "Initial error "<< errtot
+                << ", (u,p,z,A) = ("<< erru <<","<< errp <<","<< errz <<","<< erra <<")" << std::endl;
+    }
     std::cout << "***********************************************************\n";
 
 
@@ -752,15 +742,35 @@ int main(int argc, char *argv[]){
       // - Get gradient and define relevant operators
       BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( lclSol ) );
       SparseMatrix Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
+      SparseMatrix Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
       SparseMatrix Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
       SparseMatrix Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
-      SparseMatrix X1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) );
-      SparseMatrix X2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) );
-      SparseMatrix Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
       SparseMatrix B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
       SparseMatrix Cs = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
+      SparseMatrix X1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) );
+      SparseMatrix X2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) );
       SparseMatrix Y  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) );
       SparseMatrix Fa = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) );
+      //  -- Include temporal part
+      BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassOperator.GetGradient( lclSol ) );
+      SparseMatrix MuS = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
+      SparseMatrix MaS = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
+      //  --- for the mass matrix we need to kill the Dirichlet nodes, otherwise
+      //       we risk dirtying the diagonal (should already be 1)
+      for (int i = 0; i < _essUhTDOF.Size(); ++i){
+        MuS( _essUhTDOF[i], _essUhTDOF[i] ) = 0.;
+      }
+      for (int i = 0; i < _essAhTDOF.Size(); ++i){
+        MaS( _essAhTDOF[i], _essAhTDOF[i] ) = 0.;
+      }
+      Fu.Add( -1., MuS ); // remember mass matrices are assembled with negative sign!
+      Fa.Add( -1., MaS );
+
+      SparseMatrix Mps = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(1,0) ) );
+      B.Add( -1., Mps );
+
+
+
 
       // - Complete Z operator
       ScaledOperator* mMzi = new ScaledOperator( &Mzi, -1.0 );
@@ -775,11 +785,28 @@ int main(int argc, char *argv[]){
       Zops[0] = mZ1MziK;  Zown[0] = true;
       Zops[1] = &Z2;      Zown[1] = false;
       OperatorsSeries Z( Zops, Zown ); // own second, not first
+      // - Complete X operator
+      ScaledOperator* mMzi2 = new ScaledOperator( &Mzi, -1.0 );
+      Array<const Operator*> mX1MziKops(3);
+      Array<bool>            mX1MziKown(3);
+      mX1MziKops[0] = &K;    mX1MziKown[0] = false;      
+      mX1MziKops[1] = mMzi2; mX1MziKown[1] = true;
+      mX1MziKops[2] = &X1;   mX1MziKown[2] = false;
+      OperatorsSequence* mX1MziK = new OperatorsSequence( mX1MziKops, mX1MziKown );
+      Array<const Operator*> Xops(2);
+      Array<bool>            Xown(2);
+      Xops[0] = mX1MziK;  Xown[0] = true;
+      Xops[1] = &X2;      Xown[1] = false;
+      OperatorsSeries X( Xops, Xown ); // own second, not first
       // std::cout<<" K:        "<<        K.Height() <<","<<        K.Width() <<std::endl;
       // std::cout<<"-Mzi:      "<<    mMzi->Height() <<","<<    mMzi->Width() <<std::endl;
       // std::cout<<" Z1:       "<<       Z1.Height() <<","<<       Z1.Width() <<std::endl;
       // std::cout<<" Z2:       "<<       Z2.Height() <<","<<       Z2.Width() <<std::endl;
       // std::cout<<"-Z1MziK:   "<< mZ1MziK->Height() <<","<< mZ1MziK->Width() <<std::endl;
+      // std::cout<<" X1:       "<<       X1.Height() <<","<<       X1.Width() <<std::endl;
+      // std::cout<<" X2:       "<<       X2.Height() <<","<<       X2.Width() <<std::endl;
+      // std::cout<<"-X1MziK:   "<< mX1MziK->Height() <<","<< mX1MziK->Width() <<std::endl;
+      // std::cout<<" X:        "<<        X.Height() <<","<<        X.Width() <<std::endl;
       // std::cout<<" Fu:       "<<       Fu.Height() <<","<<       Fu.Width() <<std::endl;
       // std::cout<<" B:        "<<        B.Height() <<","<<        B.Width() <<std::endl;
       // std::cout<<" Z:        "<<        Z.Height() <<","<<        Z.Width() <<std::endl;
@@ -795,6 +822,7 @@ int main(int argc, char *argv[]){
       MHDOp.SetBlock( 0, 2, &Z  );
       MHDOp.SetBlock( 1, 0, &B  );
       MHDOp.SetBlock( 1, 1, &Cs );
+      MHDOp.SetBlock( 1, 2, &X  );
       MHDOp.SetBlock( 2, 0, &Y  );
       MHDOp.SetBlock( 2, 2, &Fa );
 
@@ -813,11 +841,14 @@ int main(int argc, char *argv[]){
           break;
         }
       }
-      if ( isQuietState ){
+      if ( !isQuietState ){
         AssembleWp( _PhFESpace, _essPhTDOF, neuBdrP, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Wp );
         pSi.SetWp( &Wp, isQuietState );
       }
-      // // -- Assembling each component explicitly
+      // -- Using own simplified class
+      // AssembleFp( _PhFESpace, _essPhTDOF, neuBdrP, _dt, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Fp );
+      // pSi.SetFp( &Fp );
+      // -- Assembling each component explicitly
       // AssembleFp( _PhFESpace, _essPhTDOF, neuBdrP, _dt, _mu, _UhFESpace, lclSol.GetBlock(0), ir, bir, Fp );
       // Array<const Operator*> pSiops(3);
       // Array<bool>            pSiown(3);
@@ -856,10 +887,14 @@ int main(int argc, char *argv[]){
                                          *Uup = new BlockUpperTriangularPreconditioner( offsetsReduced );
       BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsetsReduced ),
                                          *Lup = new BlockLowerTriangularPreconditioner( offsetsReduced );
-      AssembleLub( &Y, &Fui,        Lub );
-      AssembleUub( &Z,        &aSi, Uub );
-      AssembleLup( &Fui, &B,        Lup );
-      AssembleUup( &Fui, &Bt, &pSi, Uup );
+      AssembleLub( &Y, &Fui,            Lub );
+      AssembleUub( &Z,            &aSi, Uub );
+      AssembleLup( &Fui, &B,            Lup );
+      AssembleUup( &Fui, &Bt, &X, &pSi, Uup );
+      // std::cout<<" Lub:      "<< Lub->Height() <<","<< Lub->Width() <<std::endl;
+      // std::cout<<" Uub:      "<< Uub->Height() <<","<< Uub->Width() <<std::endl;
+      // std::cout<<" Lup:      "<< Lup->Height() <<","<< Lup->Width() <<std::endl;
+      // std::cout<<" Uup:      "<< Uup->Height() <<","<< Uup->Width() <<std::endl;
       
       // - combine them together
       Array<const Operator*> precOps;
@@ -896,27 +931,26 @@ int main(int argc, char *argv[]){
         std::cerr<<"ERROR: Preconditioner type "<<pbType<<" not recognised."<<std::endl;
       }
       OperatorsSequence MHDPr( precOps, precOwn );
+      // std::cout<<" P:        "<< MHDPr.Height() <<","<< MHDPr.Width() <<std::endl;
 
-      // print rhs:
-      mfem::out.precision(std::numeric_limits< double >::max_digits10);
-      std::cout<<"rhsu: "; lclRes.GetBlock(0).Print(mfem::out, lclRes.GetBlock(0).Size());std::cout<<std::endl;
-      std::cout<<"rhsp: "; lclRes.GetBlock(1).Print(mfem::out, lclRes.GetBlock(1).Size());std::cout<<std::endl;
-      std::cout<<"rhsz: "; lclRes.GetBlock(2).Print(mfem::out, lclRes.GetBlock(2).Size());std::cout<<std::endl;
-      std::cout<<"rhsA: "; lclRes.GetBlock(3).Print(mfem::out, lclRes.GetBlock(3).Size());std::cout<<std::endl;
+      // // rhs:
+      // mfem::out.precision(std::numeric_limits< double >::max_digits10);
+      // std::cout<<"rhsu: "; lclRes.GetBlock(0).Print(mfem::out, lclRes.GetBlock(0).Size());std::cout<<std::endl;
+      // std::cout<<"rhsp: "; lclRes.GetBlock(1).Print(mfem::out, lclRes.GetBlock(1).Size());std::cout<<std::endl;
+      // std::cout<<"rhsz: "; lclRes.GetBlock(2).Print(mfem::out, lclRes.GetBlock(2).Size());std::cout<<std::endl;
+      // std::cout<<"rhsA: "; lclRes.GetBlock(3).Print(mfem::out, lclRes.GetBlock(3).Size());std::cout<<std::endl;
 
-
-      std::string matricesFileName = "results/_ugaOrig";
-      PrintMatrices(matricesFileName,
-                    Fu,  Bt, Z1, Z2,
-                    B ,  Cs, X1, X2,
-                    Mz,  K,
-                    Y ,  Fa, Ma,
-                    Mp,  Ap, Wp,
-                    Aa,  Cp, Wa,
-                    _essUhTDOF, _essPhTDOF, _essAhTDOF);
-      int uga;
-      std::cin>>uga;
-
+      // std::string matricesFileName = "results/_uga";
+      // PrintMatrices(matricesFileName,
+      //               Fu,  Bt, Z1, Z2, MuS,
+      //               B ,  Cs, X1, X2,
+      //               Mz,  K,
+      //               Y ,  Fa, MaS,
+      //               Mp,  Ap, Wp, Mps,
+      //               Aa,  Cp, Wa,
+      //               _essUhTDOF, _essPhTDOF, _essAhTDOF);
+      // int uga;
+      // std::cin>>uga;
 
 
 
@@ -935,6 +969,13 @@ int main(int argc, char *argv[]){
       lclResReduced.GetBlock(1) = lclRes.GetBlock(1);
       lclResReduced.GetBlock(2) = lclRes.GetBlock(3);
       solver.Mult( lclResReduced, lclDeltaSolReduced );
+      // - Shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
+      for ( int i = 0; i < _essUhTDOF.Size(); ++i )
+        lclDeltaSolReduced.GetBlock(0)(_essUhTDOF[i]) = 0.;
+      for ( int i = 0; i < _essAhTDOF.Size(); ++i )
+        lclDeltaSolReduced.GetBlock(2)(_essAhTDOF[i]) = 0.;
+
+
 
       // BlockVector tmp( offsetsReduced );
       // MHDOp.Mult( lclDeltaSolReduced, tmp );
@@ -953,26 +994,42 @@ int main(int argc, char *argv[]){
       lclSol.GetBlock(2) = 0.;
       _IMHD2DOperator.Mult( lclSol, lclRes );
       Vector tempZ = lclRes.GetBlock(2);      // this is the "full" K*A, including effect from Dirichlet
+      tempZ -= zrhs;
       tempZ.Neg();
-      tempZ += zrhs;
       Mzi.Mult( tempZ, lclSol.GetBlock(2) );
 
+      // // print solution:
+      // mfem::out.precision(std::numeric_limits< double >::max_digits10);
+      // std::cout<<"u: "; lclSol.GetBlock(0).Print(mfem::out, lclSol.GetBlock(0).Size());std::cout<<std::endl;
+      // std::cout<<"p: "; lclSol.GetBlock(1).Print(mfem::out, lclSol.GetBlock(1).Size());std::cout<<std::endl;
+      // std::cout<<"z: "; lclSol.GetBlock(2).Print(mfem::out, lclSol.GetBlock(2).Size());std::cout<<std::endl;
+      // std::cout<<"A: "; lclSol.GetBlock(3).Print(mfem::out, lclSol.GetBlock(3).Size());std::cout<<std::endl;
 
-      // print solution:
-      mfem::out.precision(std::numeric_limits< double >::max_digits10);
-      std::cout<<"u: "; lclSol.GetBlock(0).Print(mfem::out, lclSol.GetBlock(0).Size());std::cout<<std::endl;
-      std::cout<<"p: "; lclSol.GetBlock(1).Print(mfem::out, lclSol.GetBlock(1).Size());std::cout<<std::endl;
-      std::cout<<"z: "; lclSol.GetBlock(2).Print(mfem::out, lclSol.GetBlock(2).Size());std::cout<<std::endl;
-      std::cout<<"A: "; lclSol.GetBlock(3).Print(mfem::out, lclSol.GetBlock(3).Size());std::cout<<std::endl;
-
-
-      // - residual
-      _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
-      lclRes.GetBlock(0) -= frhs;              // N(x) - b
+      // - compute residual
+      //  -- spatial contribution
+      _IMHD2DOperator.Mult( lclSol, lclRes );        // N(x)
+      lclRes.GetBlock(0) -= frhs;                    // N(x) - b
       lclRes.GetBlock(1) -= grhs;
-      lclRes.GetBlock(2)  = 0.;                // this should already be basically zero
+      // lclRes.GetBlock(2) -= zrhs;
+      lclRes.GetBlock(2)  = 0.;                      // should already be basically zero!
       lclRes.GetBlock(3) -= hrhs;
-      lclRes.Neg();                            // b - N(x)
+      lclRes.Neg();                                  // b - N(x)
+      //  -- temporal contribution
+      _IMHD2DMassOperator.Mult( lclSol,    dtu   );  // - u^{n+1}
+      _IMHD2DMassOperator.Mult( sol[tt-1], tempN );  // - u^{n}
+      dtu -= tempN;                                  // -(u^{n+1}-u^{n})
+      //  -- combine together
+      lclRes += dtu;
+      // _IMHD2DOperator.Mult( lclSol, lclRes );  // N(x)
+      // lclRes.GetBlock(0) -= frhs;              // N(x) - b
+      // lclRes.GetBlock(1) -= grhs;
+      // lclRes.GetBlock(2)  = 0.;                // this should already be basically zero
+      // lclRes.GetBlock(3) -= hrhs;
+      // - Shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
+      for ( int i = 0; i < _essUhTDOF.Size(); ++i )
+        lclRes.GetBlock(0)(_essUhTDOF[i]) = 0.;
+      for ( int i = 0; i < _essAhTDOF.Size(); ++i )
+        lclRes.GetBlock(3)(_essAhTDOF[i]) = 0.;
       newtonRes = lclRes.Norml2();
       newtonErrWRTPrevIt = lclDeltaSol.Norml2();
 
@@ -995,7 +1052,25 @@ int main(int argc, char *argv[]){
                                     << lclRes.GetBlock(1).Norml2() <<","
                                     << lclRes.GetBlock(2).Norml2() <<","
                                     << lclRes.GetBlock(3).Norml2() <<")" << std::endl;
+        if ( pbType<=4 ){ // if analytical solution is available, print info on error, too
+          uerrGF.ProjectCoefficient( uFuncCoeff );
+          perrGF.ProjectCoefficient( pFuncCoeff );
+          zerrGF.ProjectCoefficient( zFuncCoeff );
+          aerrGF.ProjectCoefficient( aFuncCoeff );
+          uerrGF -= lclSol.GetBlock(0);
+          perrGF -= lclSol.GetBlock(1);
+          zerrGF -= lclSol.GetBlock(2);
+          aerrGF -= lclSol.GetBlock(3);
+          erru   = uerrGF.Norml2();
+          errp   = perrGF.Norml2();
+          errz   = zerrGF.Norml2();
+          erra   = aerrGF.Norml2();
+          errtot = sqrt(erru*erru + errp*errp + errz*errz + erra*erra);
+          std::cout << "Error "<< errtot
+                    << ", (u,p,z,A) = ("<< erru <<","<< errp <<","<< errz <<","<< erra <<")" << std::endl;
+        }
       std::cout << "***********************************************************\n";
+
 
 
       // Clean up - no need: it's owned by MHDpr
@@ -1014,6 +1089,9 @@ int main(int argc, char *argv[]){
       newtNonConv++;
     }
     std::cout   << " iterations. Residual norm is "     << newtonRes;
+    if ( pbType<=4 ){
+      std::cout << ", error norm is "                   << errtot;
+    }
     std::cout   << ", avg internal GMRES it are "       << totGMRESit/newtonIt  << ".\n";
     std::cout   << "***********************************************************\n";
 
@@ -1024,7 +1102,7 @@ int main(int argc, char *argv[]){
 
 
     // print to paraview
-    if ( output ){
+    if ( output && ( tt == NT || tt<10 || (tt%5 == 1 ) ) ){     // output every 5 instants (and also last)
       // -- assign to linked variables
       uGF = sol[tt].GetBlock(0);
       pGF = sol[tt].GetBlock(1);
@@ -1034,7 +1112,38 @@ int main(int argc, char *argv[]){
       paraviewDC.SetCycle( tt );
       paraviewDC.SetTime( _dt*tt );
       paraviewDC.Save();
+  
+      if ( pbType <= 4 ){ // if analytical solution is available, print error, too
+        uerrGF.ProjectCoefficient( uFuncCoeff );
+        perrGF.ProjectCoefficient( pFuncCoeff );
+        zerrGF.ProjectCoefficient( zFuncCoeff );
+        aerrGF.ProjectCoefficient( aFuncCoeff );
+        uerrGF -= sol[tt].GetBlock(0);
+        perrGF -= sol[tt].GetBlock(1);
+        zerrGF -= sol[tt].GetBlock(2);
+        aerrGF -= sol[tt].GetBlock(3);
+        // -- store
+        paraviewDCErr.SetCycle( tt );
+        paraviewDCErr.SetTime( _dt*tt );
+        paraviewDCErr.Save();
+      }
+
     }
+  
+    if ( outputRes && ( tt == NT || tt<10 || (tt%5 == 1 ) ) ){  // output every 5 instants (and also last)
+      // -- assign to linked variables
+      uresGF = lclRes.GetBlock(0);
+      presGF = lclRes.GetBlock(1);
+      zresGF = lclRes.GetBlock(2);
+      aresGF = lclRes.GetBlock(3);
+      // -- store
+      paraviewDCRes.SetCycle( tt );
+      paraviewDCRes.SetTime( _dt*tt );
+      paraviewDCRes.Save();
+    }
+
+
+
 
   }
 
@@ -1051,9 +1160,9 @@ int main(int argc, char *argv[]){
  
   // SaveSolution( sol, feSpaces, _dt, _mesh, outFilePath, outFileName );
 
-  if ( pbType == 4 ){
-    SaveError( sol, feSpaces, uFun, pFun, zFun, aFun, _dt, _mesh, outFilePath, outFileName + "_err" );
-  }
+  // if ( pbType == 4 ){
+  //   SaveError( sol, feSpaces, uFun, pFun, zFun, aFun, _dt, _mesh, outFilePath, outFileName + "_err" );
+  // }
 
 
   delete _UhFESpace;
@@ -1127,6 +1236,164 @@ void AssembleAp( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
   for (int i = 0; i < _essPhTDOF.Size(); ++i){
     _Ap.EliminateRow( _essPhTDOF[i], mfem::Matrix::DIAG_ONE );
   }
+}
+
+// Laplacian, augmented with lagrangian multiplier for zero-mean pressure
+void AssembleApAug( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
+                    const IntegrationRule *ir, SparseMatrix& _Ap ){
+  if ( _essPhTDOF.Size() != 0 ){
+    AssembleAp( _PhFESpace, _essPhTDOF, ir, _Ap );
+    return;
+  }
+  std::cerr<<"Warning: augmenting pressure 'laplacian' with zero-mean condition\n";
+
+
+  ConstantCoefficient one( 1.0 );
+
+  // Diffusion operator
+  BilinearForm aVarf( _PhFESpace );
+  aVarf.AddDomainIntegrator(  new DiffusionIntegrator( one ));
+  aVarf.GetDBFI()->operator[](0)->SetIntRule(ir);
+  aVarf.Assemble();
+  aVarf.Finalize();
+  SparseMatrix Apr;
+  Apr.MakeRef( aVarf.SpMat() );
+
+  // Constraint
+  LinearForm pInt( _PhFESpace );
+  pInt.AddDomainIntegrator( new DomainLFIntegrator( one ) );  //int_ q
+  pInt.GetDLFI()->operator[](0)->SetIntRule(ir);
+  pInt.Assemble();
+
+  
+
+  Array<int> myii( Apr.NumRows()         + 2 );
+  Array<int> myjj( Apr.NumNonZeroElems() + 2*( pInt.Size() ) + 1 );
+  Vector     mydd( Apr.NumNonZeroElems() + 2*( pInt.Size() ) + 1 );
+
+  myii[0] = 0;
+  for ( int ii = 0; ii < Apr.NumRows(); ++ii ){
+    int off = Apr.GetI()[ii+1] - Apr.GetI()[ii];
+    myii[ii+1] = myii[ii] + off + 1;
+    for ( int jj = 0; jj < off; ++jj ){
+      myjj[ myii[ii] + jj ] = Apr.GetJ()[    Apr.GetI()[ii] + jj ];
+      mydd[ myii[ii] + jj ] = Apr.GetData()[ Apr.GetI()[ii] + jj ];
+    }
+    myjj[ myii[ii] + off ] = Apr.NumCols();
+    mydd[ myii[ii] + off ] = pInt.GetData()[ii];
+  }
+  for ( int jj = 0; jj < pInt.Size(); ++jj ){
+    myjj[ myii[ Apr.NumRows() ] + jj ] = jj;
+    mydd[ myii[ Apr.NumRows() ] + jj ] = pInt.GetData()[jj];
+  }
+  myii[ Apr.NumRows() + 1 ] = myii[ Apr.NumRows() ] + pInt.Size() + 1;
+  myjj[ myii[Apr.NumRows()+1] - 1 ] = pInt.Size();
+  mydd[ myii[Apr.NumRows()+1] - 1 ] = 0.;
+
+  // Finally assemble sparse matrix
+  SparseMatrix myAp( myii.GetData(), myjj.GetData(), mydd.GetData(), _PhFESpace->GetTrueVSize()+1, _PhFESpace->GetTrueVSize()+1, false, false, true );
+
+  _Ap = myAp;
+
+  // std::string filename = "results/_uga";
+  // std::string myfilename;
+  // std::ofstream myfile;
+  // myfile.precision(std::numeric_limits< double >::max_digits10);
+  // std::cout<<"Printing matrices to "<<filename<<std::endl;
+  // myfilename = filename + "_ApAug.dat";
+  // myfile.open( myfilename );
+  // _Ap.PrintMatlab(myfile);
+  // myfile.close( );
+
+  // AssembleAp(_PhFESpace, _essPhTDOF, ir, myAp);
+  // myfilename = filename + "_Ap.dat";
+  // myfile.open( myfilename );
+  // myAp.PrintMatlab(myfile);
+  // myfile.close( );
+
+  // std::cout<<"Done "<<filename<<std::endl;
+  // int uga;
+  // std::cin>>uga;
+}
+
+
+// "Laplacian" for p - alternative version, Ap = B*diag(Mu)^-1*B^t
+void AssembleBMuBt( FiniteElementSpace *_PhFESpace, const Array<int>& _essPhTDOF,
+                    FiniteElementSpace *_UhFESpace, const Array<int>& _essUhTDOF,
+                    const IntegrationRule *ir, SparseMatrix& _Ap ){
+
+  // Assemble Mu
+  BilinearForm mVarf( _UhFESpace );
+  ConstantCoefficient one( 1.0 );
+  mVarf.AddDomainIntegrator(new VectorMassIntegrator( one ));
+  mVarf.GetDBFI()->operator[](0)->SetIntRule(ir);
+  mVarf.Assemble();
+  mVarf.Finalize();
+
+  SparseMatrix Mu;
+  Mu.MakeRef( mVarf.SpMat() );
+  Mu.SetGraphOwner(true);
+  Mu.SetDataOwner(true);
+  mVarf.LoseMat();
+
+  // extract its diagonal
+  Vector MDiagInv;
+  Mu.GetDiag( MDiagInv );
+  for ( int i = 0; i < MDiagInv.Size(); ++i ){  // invert it
+    MDiagInv(i) = 1./MDiagInv(i);
+  }
+  // - impose homogeneous dirichlet BC by fixing at 1 the corresponding equations
+  for (int i = 0; i < _essUhTDOF.Size(); ++i){
+    MDiagInv( _essUhTDOF[i] ) = 1.0;
+  }
+
+
+
+
+  // Assemble B
+  MixedBilinearForm bVarf( _UhFESpace, _PhFESpace );
+  ConstantCoefficient mone( -1.0 );
+  bVarf.AddDomainIntegrator(new VectorDivergenceIntegrator(mone) );
+
+  bVarf.Assemble();
+  bVarf.Finalize();
+
+  SparseMatrix B = bVarf.SpMat();
+  B.SetGraphOwner(true);
+  B.SetDataOwner(true);
+  bVarf.LoseMat();
+
+  // - impose homogeneous dirichlet BC by simply removing corresponding equations
+  Array<int> colsP(B.Height()), colsU(B.Width());
+  colsP = 0.;
+  colsU = 0.;
+  for (int i = 0; i < _essPhTDOF.Size(); ++i){
+    colsP[_essPhTDOF[i]] = 1;
+  }
+  for (int i = 0; i < _essUhTDOF.Size(); ++i){
+    colsU[_essUhTDOF[i]] = 1;
+  }
+  B.EliminateCols( colsU );
+  for (int i = 0; i < _essPhTDOF.Size(); ++i){
+    B.EliminateRow( _essPhTDOF[i] );
+  }
+
+
+  SparseMatrix MuLinv(MDiagInv);
+
+  // Array<const Operator*> pSiops(3);
+  // Array<bool>            pSiown(3);
+  // pSiops[0] = &Api;      pSiown[0] = false;
+  // pSiops[1] = &Fp;       pSiown[1] = false;
+  // pSiops[2] = &Mpi;      pSiown[2] = false;
+  // OperatorsSequence pSi( pSiops, pSiown );
+
+
+  // SparseMatrix *MiF  = Mult(MaLinv,_Fa);
+  // SparseMatrix *FMiF = Mult(_Fa,*MiF);
+  // _Cp = *FMiF;
+  std::cerr<<"AssembleBMuBt Not yet implemented!"<<std::endl;
+
 }
 
 
@@ -1448,15 +1715,16 @@ void AssembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPr
 
 
 // Assembles upper factor of LU factorisation of velocity/pressure part of preconditioner
-//       ⌈ Fu Bt     ⌉
-// Uup = |    pS     |
-//       |       I   |
-//       ⌊         I ⌋
-void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup ){
+//       ⌈ Fu Bt       ⌉
+// Uup = |    pS X1 X2 |
+//       |       I     |
+//       ⌊          I  ⌋
+void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* X, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup ){
   Uup->iterative_mode = false;
   Uup->SetBlock( 0, 0, Fui );
   Uup->SetBlock( 0, 1, Bt  );
   Uup->SetBlock( 1, 1, pSi );
+  Uup->SetBlock( 1, 2, X   );
   Uup->owns_blocks = false;
 }
 
@@ -1602,13 +1870,12 @@ void SaveError( const Array<BlockVector>& sol,
 
 
 
-
 void PrintMatrices( const std::string& filename,
-       const SparseMatrix& _Fu,  const SparseMatrix& _Bt,  const SparseMatrix& _Z1, const SparseMatrix& _Z2,
+       const SparseMatrix& _Fu,  const SparseMatrix& _Bt,  const SparseMatrix& _Z1, const SparseMatrix& _Z2, const SparseMatrix& _Mu,
        const SparseMatrix& _B ,  const SparseMatrix& _Cs,  const SparseMatrix& _X1, const SparseMatrix& _X2,
        const SparseMatrix& _Mz,  const SparseMatrix& _K,
        const SparseMatrix& _Y ,  const SparseMatrix& _Fa,  const SparseMatrix& _Ma,
-       const SparseMatrix& _Mp,  const SparseMatrix& _Ap,  const SparseMatrix& _Wp,
+       const SparseMatrix& _Mp,  const SparseMatrix& _Ap,  const SparseMatrix& _Wp, const SparseMatrix& _Mps,
        const SparseMatrix& _Aa,  const SparseMatrix& _Cp,  const SparseMatrix& _Wa,
        const Array<int>& _essUhTDOF, const Array<int>& _essPhTDOF, const Array<int>& _essAhTDOF  ){
 
@@ -1633,6 +1900,11 @@ void PrintMatrices( const std::string& filename,
   myfilename = filename + "_Mp.dat";
   myfile.open( myfilename );
   _Mp.PrintMatlab(myfile);
+  myfile.close( );
+
+  myfilename = filename + "_Mps.dat";
+  myfile.open( myfilename );
+  _Mps.PrintMatlab(myfile);
   myfile.close( );
 
   myfilename = filename + "_Ap.dat";
@@ -1683,6 +1955,11 @@ void PrintMatrices( const std::string& filename,
   myfile.close( );
 
 
+
+  myfilename = filename + "_Mu.dat";
+  myfile.open( myfilename );
+  _Mu.PrintMatlab(myfile);
+  myfile.close( );
 
   myfilename = filename + "_Ma.dat";
   myfile.open( myfilename );

@@ -675,6 +675,22 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
 
   const IntegrationRule& ir = GetRule(el, Tr);
 
+  // // DELETE ME *******************************************************************************************************************************************************
+  // double Zeval = 0.;
+  // for (int i = 0; i < ir.GetNPoints(); ++i){
+  //   // compute quantities specific to this integration point
+  //   // - Jacobian-related
+  //   const IntegrationPoint &ip = ir.IntPoint(i);
+  //   Tr.SetIntPoint(&ip);
+  //   el[2]->CalcShape(  ip, shape_z  );
+  //   double temp = (elfun[2])->operator*(shape_z); // z
+
+  //   Zeval += temp * ip.weight;
+  // }
+  // Zeval = Zeval / ir.GetNPoints();
+  // // TO HERE *******************************************************************************************************************************************************
+
+
   for (int i = 0; i < ir.GetNPoints(); ++i){
     // compute quantities specific to this integration point
     // - Jacobian-related
@@ -763,7 +779,7 @@ void IncompressibleMHD2DSpaceIntegrator::AssembleElementVector(
     // -- this contribution is defined block-wise: for each physical dimension, I can just copy it
     for (int k = 0; k < dim; k++){
       for ( int j = 0; j < dof_u; ++j ){
-        elvecs[0]->operator()(j+k*dof_u) += shape_u(j) * scale * Zeval * gAeval(k);
+        elvecs[0]->operator()(j+k*dof_u) += shape_u(j) * scale * Zeval *  gAeval(k);
       }
     }
 
@@ -1231,15 +1247,15 @@ const IntegrationRule& IncompressibleMHD2DSpaceIntegrator::GetRule(const Array<c
   // - 2*ordA, ordU+(ordGA)+ordA,2*(ordGA)
   //  and it's likely that the non-linear terms will give the biggest headaches, so:
   Array<int> ords(3);
-  // if ( !_stab ){
-  //   ords[0] = 2*ordU + ordGU;         // ( (u·∇)u, v )
-  //   ords[1] =   ordU + ordGA + ordZ;  // (   z ∇A, v )
-  //   ords[2] =   ordU + ordGA + ordA;  // ( (u·∇A), B )
-  // }else{
+  if ( !_stab ){
+    ords[0] = 2*ordU + ordGU;         // ( (u·∇)u, v )
+    ords[1] =   ordU + ordGA + ordZ;  // (   z ∇A, v )
+    ords[2] =   ordU + ordGA + ordA;  // ( (u·∇A), B )
+  }else{
     ords[0] = 2*ordU + 2*ordGU;                  // ( (u·∇)u, (w·∇)v )
     ords[1] =   ordU +   ordGU +   ordGA + ordZ; // (   z ∇A, (w·∇)v )
-    ords[2] = 2*ordU           + 2*ordGA;        // ( (u·∇A),  w·∇B )    
-  // }
+    ords[2] = 2*ordU           + 2*ordGA;        // ( (u·∇A),  w·∇B  )    
+  }
 
 
 

@@ -432,15 +432,15 @@ const IntegrationRule& IncompressibleMHD2DTimeIntegrator::GetRule(const Array<co
 
   // I check every term in the equations, see which poly order is reached, and take the max
   Array<int> ords(3);
-  // if ( _stab ){
-  //   ords[0] = 2*ordU; // ( u, v )
-  //   ords[1] = 2*ordA; // ( A, B  )    
-  //   ords[2] = 0;
-  // }else{
+  if ( _stab ){
+    ords[0] = 2*ordU; // ( u, v )
+    ords[1] = 2*ordA; // ( A, B  )    
+    ords[2] = 0;
+  }else{
     ords[0] = 2*ordU + ordGU;        // ( u, (w·∇)v )
     ords[1] =   ordU + ordGP;        // ( u,    ∇q  )
     ords[2] =   ordU + ordGA + ordA; // ( A,  w·∇B  )    
-  // }
+  }
 
 
   // std::cout<<"Selecting integrator of order "<<ords.Max()<<std::endl;

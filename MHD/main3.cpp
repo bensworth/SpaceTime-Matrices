@@ -1,6 +1,7 @@
 //---------------------------------------------------------------------------
 #include "mfem.hpp"
 #include "petsc.h"
+#include "testcases.hpp"
 #include "imhd2dstoperatorassembler.hpp"
 #include "blockUpperTriangularPreconditioner.hpp"
 #include "operatorssequence.hpp"
@@ -9,7 +10,6 @@
 #include <iostream>
 #include <experimental/filesystem>
 #include <limits>
-#include <cmath>
 //---------------------------------------------------------------------------
 #ifndef MFEM_USE_PETSC
 #error This example requires that MFEM is built with MFEM_USE_PETSC=YES
@@ -18,155 +18,7 @@
 using namespace std;
 using namespace mfem;
 //---------------------------------------------------------------------------
-// PB parameters pre-definition:
-// - simple cooked-up pb with analytical solution
-void   uFun_ex_an0( const Vector & x, const double t, Vector & u );
-double pFun_ex_an0( const Vector & x, const double t             );
-double zFun_ex_an0( const Vector & x, const double t             );
-double aFun_ex_an0( const Vector & x, const double t             );
-void   fFun_an0(    const Vector & x, const double t, Vector & f );
-void   nFun_an0(    const Vector & x, const double t, Vector & f );
-double gFun_an0(    const Vector & x, const double t             );
-double hFun_an0(    const Vector & x, const double t             );
-double mFun_an0(    const Vector & x, const double t             );
-void   wFun_an0(    const Vector & x, const double t, Vector & w );
-double qFun_an0(    const Vector & x, const double t             );
-double cFun_an0(    const Vector & x, const double t             );
-double yFun_an0(    const Vector & x, const double t             );
-void   uFun_ex_an1( const Vector & x, const double t, Vector & u );
-double pFun_ex_an1( const Vector & x, const double t             );
-double zFun_ex_an1( const Vector & x, const double t             );
-double aFun_ex_an1( const Vector & x, const double t             );
-void   fFun_an1(    const Vector & x, const double t, Vector & f );
-void   nFun_an1(    const Vector & x, const double t, Vector & f );
-double gFun_an1(    const Vector & x, const double t             );
-double hFun_an1(    const Vector & x, const double t             );
-double mFun_an1(    const Vector & x, const double t             );
-void   wFun_an1(    const Vector & x, const double t, Vector & w );
-double qFun_an1(    const Vector & x, const double t             );
-double cFun_an1(    const Vector & x, const double t             );
-double yFun_an1(    const Vector & x, const double t             );
-void   uFun_ex_an2( const Vector & x, const double t, Vector & u );
-double pFun_ex_an2( const Vector & x, const double t             );
-double zFun_ex_an2( const Vector & x, const double t             );
-double aFun_ex_an2( const Vector & x, const double t             );
-void   fFun_an2(    const Vector & x, const double t, Vector & f );
-void   nFun_an2(    const Vector & x, const double t, Vector & f );
-double gFun_an2(    const Vector & x, const double t             );
-double hFun_an2(    const Vector & x, const double t             );
-double mFun_an2(    const Vector & x, const double t             );
-void   wFun_an2(    const Vector & x, const double t, Vector & w );
-double qFun_an2(    const Vector & x, const double t             );
-double cFun_an2(    const Vector & x, const double t             );
-double yFun_an2(    const Vector & x, const double t             );
-void   uFun_ex_an3( const Vector & x, const double t, Vector & u );
-double pFun_ex_an3( const Vector & x, const double t             );
-double zFun_ex_an3( const Vector & x, const double t             );
-double aFun_ex_an3( const Vector & x, const double t             );
-void   fFun_an3(    const Vector & x, const double t, Vector & f );
-void   nFun_an3(    const Vector & x, const double t, Vector & f );
-double gFun_an3(    const Vector & x, const double t             );
-double hFun_an3(    const Vector & x, const double t             );
-double mFun_an3(    const Vector & x, const double t             );
-void   wFun_an3(    const Vector & x, const double t, Vector & w );
-double qFun_an3(    const Vector & x, const double t             );
-double cFun_an3(    const Vector & x, const double t             );
-double yFun_an3(    const Vector & x, const double t             );
-void   uFun_ex_an4( const Vector & x, const double t, Vector & u );
-double pFun_ex_an4( const Vector & x, const double t             );
-double zFun_ex_an4( const Vector & x, const double t             );
-double aFun_ex_an4( const Vector & x, const double t             );
-void   fFun_an4(    const Vector & x, const double t, Vector & f );
-void   nFun_an4(    const Vector & x, const double t, Vector & f );
-double gFun_an4(    const Vector & x, const double t             );
-double hFun_an4(    const Vector & x, const double t             );
-double mFun_an4(    const Vector & x, const double t             );
-void   wFun_an4(    const Vector & x, const double t, Vector & w );
-double qFun_an4(    const Vector & x, const double t             );
-double cFun_an4(    const Vector & x, const double t             );
-double yFun_an4(    const Vector & x, const double t             );
-// Kelvin-Helmholtz instability
-void   uFun_ex_KHI( const Vector & x, const double t, Vector & u );
-double pFun_ex_KHI( const Vector & x, const double t             );
-double zFun_ex_KHI( const Vector & x, const double t             );
-double aFun_ex_KHI( const Vector & x, const double t             );
-void   fFun_KHI(    const Vector & x, const double t, Vector & f );
-void   nFun_KHI(    const Vector & x, const double t, Vector & f );
-double gFun_KHI(    const Vector & x, const double t             );
-double hFun_KHI(    const Vector & x, const double t             );
-double mFun_KHI(    const Vector & x, const double t             );
-void   wFun_KHI(    const Vector & x, const double t, Vector & w );
-double qFun_KHI(    const Vector & x, const double t             );
-double cFun_KHI(    const Vector & x, const double t             );
-double yFun_KHI(    const Vector & x, const double t             );
-// Island coalescing
-void   uFun_ex_island( const Vector & x, const double t, Vector & u );
-double pFun_ex_island( const Vector & x, const double t             );
-double zFun_ex_island( const Vector & x, const double t             );
-double aFun_ex_island( const Vector & x, const double t             );
-void   fFun_island(    const Vector & x, const double t, Vector & f );
-void   nFun_island(    const Vector & x, const double t, Vector & f );
-double gFun_island(    const Vector & x, const double t             );
-double hFun_island(    const Vector & x, const double t             );
-double mFun_island(    const Vector & x, const double t             );
-void   wFun_island(    const Vector & x, const double t, Vector & w );
-double qFun_island(    const Vector & x, const double t             );
-double cFun_island(    const Vector & x, const double t             );
-double yFun_island(    const Vector & x, const double t             );
-// Modified Hartmann flow
-void   uFun_ex_hartmann( const Vector & x, const double t, Vector & u );
-double pFun_ex_hartmann( const Vector & x, const double t             );
-double zFun_ex_hartmann( const Vector & x, const double t             );
-double aFun_ex_hartmann( const Vector & x, const double t             );
-void   fFun_hartmann(    const Vector & x, const double t, Vector & f );
-void   nFun_hartmann(    const Vector & x, const double t, Vector & f );
-double gFun_hartmann(    const Vector & x, const double t             );
-double hFun_hartmann(    const Vector & x, const double t             );
-double mFun_hartmann(    const Vector & x, const double t             );
-void   wFun_hartmann(    const Vector & x, const double t, Vector & w );
-double qFun_hartmann(    const Vector & x, const double t             );
-double cFun_hartmann(    const Vector & x, const double t             );
-double yFun_hartmann(    const Vector & x, const double t             );
-// Cavity flow
-void   uFun_ex_cavity( const Vector & x, const double t, Vector & u );
-double pFun_ex_cavity( const Vector & x, const double t             );
-double zFun_ex_cavity( const Vector & x, const double t             );
-double aFun_ex_cavity( const Vector & x, const double t             );
-void   fFun_cavity(    const Vector & x, const double t, Vector & f );
-void   nFun_cavity(    const Vector & x, const double t, Vector & f );
-double gFun_cavity(    const Vector & x, const double t             );
-double hFun_cavity(    const Vector & x, const double t             );
-double mFun_cavity(    const Vector & x, const double t             );
-void   wFun_cavity(    const Vector & x, const double t, Vector & w );
-double qFun_cavity(    const Vector & x, const double t             );
-double cFun_cavity(    const Vector & x, const double t             );
-double yFun_cavity(    const Vector & x, const double t             );
-// // - poiseuille flow
-// void   uFun_ex_poiseuille( const Vector & x, const double t, Vector & u );
-// double pFun_ex_poiseuille( const Vector & x, const double t             );
-// void   fFun_poiseuille(    const Vector & x, const double t, Vector & f );
-// void   nFun_poiseuille(    const Vector & x, const double t, Vector & f );
-// double gFun_poiseuille(    const Vector & x, const double t             );
-// void   uFun_ex_poiseuilleC(const Vector & x, const double t, Vector & u );  // constant-in-time counterpart
-// double pFun_ex_poiseuilleC(const Vector & x, const double t             );
-// void   fFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
-// void   nFun_poiseuilleC(   const Vector & x, const double t, Vector & f );
-// double gFun_poiseuilleC(   const Vector & x, const double t             );
-// // - flow over step
-// void   uFun_ex_step( const Vector & x, const double t, Vector & u );
-// double pFun_ex_step( const Vector & x, const double t             );
-// void   fFun_step(    const Vector & x, const double t, Vector & f );
-// void   nFun_step(    const Vector & x, const double t, Vector & f );
-// double gFun_step(    const Vector & x, const double t             );
-// // - double-glazing problem
-// void   uFun_ex_glazing( const Vector & x, const double t, Vector & u );
-// double pFun_ex_glazing( const Vector & x, const double t             );
-// void   fFun_glazing(    const Vector & x, const double t, Vector & f );
-// void   nFun_glazing(    const Vector & x, const double t, Vector & f );
-// void   wFun_glazing(    const Vector & x, const double t, Vector & f );
-// double gFun_glazing(    const Vector & x, const double t             );
-//---------------------------------------------------------------------------
-// Handy function for monitoring quantities of interest - predefinition
+// Handy functions for monitoring quantities of interest - predefinition
 struct UPErrorMonitorCtx{// Context of function to monitor actual error
   int lenghtU;
   int lenghtP;
@@ -192,56 +44,61 @@ struct UPSplitResidualMonitorCtx{// Context of function to monitor actual error
 PetscErrorCode UPSplitResidualMonitorDestroy( void ** mctx );
 PetscErrorCode UPSplitResidualMonitor( KSP ksp, PetscInt n, PetscReal rnorm, void *mctx );
 //---------------------------------------------------------------------------
-// Handy functions for assembling single components of the preconditioner
-void assembleLub( const Operator* Y,   const Operator* Fui,
+// Handy functions for assembling single factors of the preconditioner
+void AssembleLub( const Operator* Y,   const Operator* Fui,
                   const Operator* Z1,  const Operator* Mzi, BlockLowerTriangularPreconditioner* Lub );
-void assembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi, const Operator* K,
+void AssembleUub( const Operator* Z1,  const Operator* Z2, const Operator* Mzi, const Operator* K,
                   const Operator* aSi, BlockUpperTriangularPreconditioner* Uub );
-void assembleLup( const Operator* Fui, const Operator* B,   BlockLowerTriangularPreconditioner* Lup );
-void assembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup );
+void AssembleLup( const Operator* Fui, const Operator* B,   BlockLowerTriangularPreconditioner* Lup );
+void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* X1, const Operator* X2,
+                  const Operator* pSi, BlockUpperTriangularPreconditioner* Uup );
+//---------------------------------------------------------------------------
+// Misc
+void computeBlockedNorm( const BlockVector& u, Vector& norm );
+
 //---------------------------------------------------------------------------
 int main(int argc, char *argv[]){
+
+  //*************************************************************************
+  // Initialise
+  //*************************************************************************
 
   // for now, assume no spatial parallelisation: each processor handles a time-step
   int numProcs, myid;
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &numProcs);
   MPI_Comm_rank(MPI_COMM_WORLD, &myid);
-  double Tend = 1.;
 
-  bool anSolution = false;
 
-  // Initialise problem parameters
-  int ordU = 2;
-  int ordP = 1;
+  // - discretisation
+  int ordU = 4;
+  int ordP = 3;
   int ordZ = 1;
   int ordA = 2;
   int ref_levels = 4;
-  const char *petscrc_file = "rc_SpaceTimeIMHD2D_SingAp";
-  int verbose = 0;
-  int precType = 1;
+  double Tend = 1.;
+  double dt;    // will be initialised after Tend is parsed
+  // - solver
+  bool stab = false;
+  const char *petscrc_file = "rc_SpaceTimeIMHD2D";
+  int precType     = 2;
   int STSolveTypeU = 0;
-  int STSolveTypeA = 0;
-  int pbType = 1;   
-  string pbName = "";
-  int output = 2;
-  // these tag each boundary to identify dirichlet BC for u, p and A
-  Array<int> essTagsU(0); // - the domain MUST be rectangular, and the tags for its 4 sides MUST be, respectively:
-  Array<int> essTagsV(0); //    north=1 east=2 south=3 west=4  
-  Array<int> essTagsP(0); 
-  Array<int> essTagsA(0); 
-  
-  // - stop criteria for newton iterations (only used in NS: changed in the switch pbtype later on)
-  double newtonTol = 1e-8;
-  int maxNewtonIt  = 4;
+  int STSolveTypeA = 2;
+  const int   maxNewtonIt  = 10;
+  const double  newtonRTol = 0;     //1e-5;
+  const double  newtonATol = 1e-10; //0.;  
+  // - misc
+  int pbType  = 6;
+  int output  = 2;
+  int verbose = 0;
 
 
-  // -parse parameters
+  // Parse parameters *******************************************************
   OptionsParser args(argc, argv);
   args.AddOption(&ordU, "-oU", "--orderU",
-                "Finite element order (polynomial degree) for velocity field (default: 2)");
+                "Finite element order (polynomial degree) for velocity field (default: 4)");
   args.AddOption(&ordP, "-oP", "--orderP",
-                "Finite element order (polynomial degree) for pressure field (default: 1)");
+                "Finite element order (polynomial degree) for pressure field (default: 3)");
   args.AddOption(&ordZ, "-oZ", "--orderZ",
                 "Finite element order (polynomial degree) for Laplacian of vector potential (default: 1)");
   args.AddOption(&ordA, "-oA", "--orderA",
@@ -262,14 +119,20 @@ int main(int argc, char *argv[]){
                 "                        1-Space-time Cyr et al simplified: Uupi*Lupi*Uubi (default)\n"
                 "                        2-Space-time Cyr et al uber simplified: Uupi*Uubi\n"
         );
+  args.AddOption(&stab, "-S", "--stab", "-noS", "--noStab",
+                "Stabilise via SUPG (default: false)\n"
+        );
   args.AddOption(&STSolveTypeU, "-STU", "--spacetimesolveU",
                 "Type of solver for velocity space-time matrix: 0-time stepping (default)\n"
+        // "                                                             1-boomerAMG (AIR)\n"
+        // "                                                             2-GMRES+boomerAMG (AIR)\n"
+        // "                                                             3-Parareal (not fully tested)\n"
         "                                                       9-Sequential time-stepping for whole ST system - ignores many other options\n"
         );
   args.AddOption(&STSolveTypeA, "-STA", "--spacetimesolveA",
-                "Type of solver for potential wave space-time matrix: 0-time stepping - implicit leapfrog (default)\n"
+                "Type of solver for potential wave space-time matrix: 0-time stepping - implicit leapfrog\n"
                 "                                                     1-time stepping - explicit leapfrog\n"
-                "                                                     2-time stepping on full Fa*Mai*Fa+|B|/mu*Aa matrix\n"
+                "                                                     2-time stepping on full Fa*Mai*Fa+|B|/mu*Aa matrix (default)\n"
         // "                                                             1-boomerAMG (AIR)\n"
         // "                                                             2-GMRES+boomerAMG (AIR)\n"
         // "                                                             3-Parareal (not fully tested)\n"
@@ -306,12 +169,27 @@ int main(int argc, char *argv[]){
     return 1;
   }
 
-  // -initialise remaining parameters
-  double dt  = Tend / numProcs;
-  double mu  = 1.;
-  double eta = 1.;
-  double mu0 = 1.;
+  // - initialise petsc
+  MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
 
+  // - initialise last parameter
+  dt  = Tend / numProcs;
+
+
+
+  // Define problem *********************************************************
+  std::string pbName;
+  std::string mesh_file;
+  // - tags for identifying dirichlet BC for u, p (only used in precon) and A
+  Array<int> essTagsU(0);
+  Array<int> essTagsV(0);
+  Array<int> essTagsP(0);
+  Array<int> essTagsA(0);
+  // - problem parameters
+  double mu  = 0.;
+  double eta = 0.;
+  double mu0 = 0.;
+  // - problem data
   void(  *uFun)( const Vector & x, const double t, Vector & u );
   double(*pFun)( const Vector & x, const double t             );
   double(*zFun)( const Vector & x, const double t             );
@@ -325,330 +203,56 @@ int main(int argc, char *argv[]){
   double(*qFun)( const Vector & x, const double t             );
   double(*yFun)( const Vector & x, const double t             );
   double(*cFun)( const Vector & x, const double t             );
-  std::string mesh_file;
+  // - fetch relevant details for selected problem
+  MHDTestCaseSelector( pbType, 
+                       uFun, pFun, zFun, aFun,
+                       fFun, gFun, hFun, nFun, mFun,
+                       wFun, qFun, yFun, cFun,
+                       mu, eta, mu0,
+                       pbName, mesh_file,
+                       essTagsU, essTagsV, essTagsP, essTagsA );
 
-  switch (pbType){
-    // analytical test-case
-    case 0:{
-      mesh_file = "./meshes/tri-square-testAn.mesh";
-      uFun = uFun_ex_an0;
-      pFun = pFun_ex_an0;
-      zFun = zFun_ex_an0;
-      aFun = aFun_ex_an0;
-      fFun = fFun_an0;
-      gFun = gFun_an0;
-      hFun = hFun_an0;
-      nFun = nFun_an0;
-      mFun = mFun_an0;
-      wFun = wFun_an0;
-      yFun = yFun_an0;
-      cFun = cFun_an0;
-      pbName = "An0";
-      anSolution = true;
-      break;
-    }
-    // analytical test-case
-    case 1:{
-      mesh_file = "./meshes/tri-square-testAn.mesh";
-      uFun = uFun_ex_an1;
-      pFun = pFun_ex_an1;
-      zFun = zFun_ex_an1;
-      aFun = aFun_ex_an1;
-      fFun = fFun_an1;
-      gFun = gFun_an1;
-      hFun = hFun_an1;
-      nFun = nFun_an1;
-      mFun = mFun_an1;
-      wFun = wFun_an1;
-      qFun = qFun_an1;
-      yFun = yFun_an1;
-      cFun = cFun_an1;
-      // Set BC:
-      // - Dirichlet on u everywhere but on E
-      // - Dirichlet on p on E (outflow, used only in precon)
-      // - Dirichlet on A on W
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2; // E
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      pbName = "An1";
-      anSolution = true;
-      break;
-    }
-    // analytical test-case
-    case 2:{
-      mesh_file = "./meshes/tri-square-testAn.mesh";
-      uFun = uFun_ex_an2;
-      pFun = pFun_ex_an2;
-      zFun = zFun_ex_an2;
-      aFun = aFun_ex_an2;
-      fFun = fFun_an2;
-      gFun = gFun_an2;
-      hFun = hFun_an2;
-      nFun = nFun_an2;
-      mFun = mFun_an2;
-      wFun = wFun_an2;
-      qFun = qFun_an2;
-      yFun = yFun_an2;
-      cFun = cFun_an2;
-      // Set BC:
-      // - Dirichlet on u everywhere but on E
-      // - Dirichlet on p on E (outflow, used only in precon)
-      // - Dirichlet on A on W
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2; // E
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      pbName = "An2";
-      anSolution = true;
-      break;
-    }
-    // analytical test-case
-    case 3:{
-      mesh_file = "./meshes/tri-square-testAn.mesh";
-      uFun = uFun_ex_an3;
-      pFun = pFun_ex_an3;
-      zFun = zFun_ex_an3;
-      aFun = aFun_ex_an3;
-      fFun = fFun_an3;
-      gFun = gFun_an3;
-      hFun = hFun_an3;
-      nFun = nFun_an3;
-      mFun = mFun_an3;
-      wFun = wFun_an3;
-      qFun = qFun_an3;
-      yFun = yFun_an3;
-      cFun = cFun_an3;
-      // Set BC:
-      // - Dirichlet on u everywhere but on E
-      // - Dirichlet on p on E (outflow, used only in precon)
-      // - Dirichlet on A on W
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2; // E
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      pbName = "An3";
-      anSolution = true;
-      break;
-    }
-    // analytical test-case
-    case 4:{
-      mesh_file = "./meshes/tri-square-testAn.mesh";
-      uFun = uFun_ex_an4;
-      pFun = pFun_ex_an4;
-      zFun = zFun_ex_an4;
-      aFun = aFun_ex_an4;
-      fFun = fFun_an4;
-      gFun = gFun_an4;
-      hFun = hFun_an4;
-      nFun = nFun_an4;
-      mFun = mFun_an4;
-      wFun = wFun_an4;
-      qFun = qFun_an4;
-      yFun = yFun_an4;
-      cFun = cFun_an4;
-      // Set BC:
-      // - Dirichlet on u everywhere but on E
-      // - Dirichlet on p on E (outflow, used only in precon)
-      // - Dirichlet on A on W
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, w
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2; // E
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      pbName = "An4";
-      anSolution = true;
-      break;
-    }
-    // Kelvin-Helmholtz instability
-    case 5:{
-      mesh_file = "./meshes/tri-rect-KHI.mesh";
-      uFun = uFun_ex_KHI;
-      pFun = pFun_ex_KHI;
-      zFun = zFun_ex_KHI;
-      aFun = aFun_ex_KHI;
-      fFun = fFun_KHI;
-      gFun = gFun_KHI;
-      hFun = hFun_KHI;
-      nFun = nFun_KHI;
-      mFun = mFun_KHI;
-      wFun = wFun_KHI;
-      qFun = qFun_KHI;
-      yFun = yFun_KHI;
-      cFun = cFun_KHI;
-      // Set BC:
-      // Top+bottom=1 topLeft+botRight=2 botLeft+topRight=3
-      // - Dirichlet on u,v on top left and bottom right
-      // - Dirichlet on v   on top and bottom
-      // - Dirichlet on v   on top right and bottom left
-      // - No stress on normal component (u) on top right and bottom left
-      // - No stress on tangential component (u) top and bottom
-      // - Dirichlet on p on top right and bottom left (outflow, used only in precon)
-      // - Dirichlet on A on top and bottom
-      essTagsU.SetSize(1); essTagsU[0] = 2; //essTagsU[1] = 1;
-      essTagsV.SetSize(3); essTagsV[0] = 1; essTagsV[1] = 2; essTagsV[2] = 3;
-      essTagsP.SetSize(1); essTagsP[0] = 3;
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      // Set parameters: Re = Lu = ~ 1e3
-      //  - normal derivatives m and n are 0, so no need to rescale those
-      // mu  = 1.5 * 1e-3;
-      // eta = 1e-3;
-
-      pbName = "KHI";
-      break;
-    }
-    // Island coalescence
-    case 6:{
-      mesh_file = "./meshes/tri-rect-island.mesh";
-      uFun = uFun_ex_island;
-      pFun = pFun_ex_island;
-      zFun = zFun_ex_island;
-      aFun = aFun_ex_island;
-      fFun = fFun_island;
-      gFun = gFun_island;
-      hFun = hFun_island;
-      nFun = nFun_island;
-      mFun = mFun_island;
-      wFun = wFun_island;
-      qFun = qFun_island;
-      yFun = yFun_island;
-      cFun = cFun_island;
-      // Set BC:
-      // Top+bottom=1 Left+Right=2
-      // - Dirichlet on u on left and right
-      // - Dirichlet on v on top and bottom
-      // - No stress on tangential component (u) top and bottom
-      // - No stress on tangential component (v) left and right
-      // - Dirichlet on p on top and bottom (outflow, used only in precon)
-      // - Dirichlet on A on top and bottom
-      essTagsU.SetSize(1); essTagsU[0] = 2;
-      essTagsV.SetSize(1); essTagsV[0] = 1;
-      essTagsP.SetSize(1); essTagsP[0] = 1;
-      essTagsA.SetSize(1); essTagsA[0] = 1;
-      pbName = "IslandCoalescence";
-      mu  = 1e-4;
-      eta = 1e-4;
-      break;
-    }
-    // Modified Hartmann flow
-    case 7:{
-      mesh_file = "./meshes/tri-square-hartmann.mesh";
-      uFun = uFun_ex_hartmann;
-      pFun = pFun_ex_hartmann;
-      zFun = zFun_ex_hartmann;
-      aFun = aFun_ex_hartmann;
-      fFun = fFun_hartmann;
-      gFun = gFun_hartmann;
-      hFun = hFun_hartmann;
-      nFun = nFun_hartmann;
-      mFun = mFun_hartmann;
-      wFun = wFun_hartmann;
-      qFun = qFun_hartmann;
-      yFun = yFun_hartmann;
-      cFun = cFun_hartmann;
-      // Set BC:
-      essTagsU.SetSize(3); essTagsU[0] = 1; essTagsU[1] = 3; essTagsU[2] = 4; // N, S, W
-      essTagsV = essTagsU;
-      essTagsP.SetSize(1); essTagsP[0] = 2; // E
-      essTagsA.SetSize(1); essTagsA[0] = 4; //essTagsA[1] = 3; // W
-      pbName = "Hartmann";
-      anSolution = true;
-      break;
-    }
-    // Driven cavity flow
-    case 11:{
-      mesh_file = "./meshes/tri-square-cavity.mesh";
-      uFun = uFun_ex_cavity;
-      pFun = pFun_ex_cavity;
-      zFun = zFun_ex_cavity;
-      aFun = aFun_ex_cavity;
-      fFun = fFun_cavity;
-      gFun = gFun_cavity;
-      hFun = hFun_cavity;
-      nFun = nFun_cavity;
-      mFun = mFun_cavity;
-      wFun = wFun_cavity;
-      qFun = qFun_cavity;
-      yFun = yFun_cavity;
-      cFun = cFun_cavity;
-      // Set BC:
-      essTagsU.SetSize(4); essTagsU[0] = 1; essTagsU[1] = 2; essTagsU[2] = 3; essTagsU[3] = 4;
-      essTagsV = essTagsU;
-      essTagsP.SetSize(0);
-      essTagsA.SetSize(0);
-      pbName = "Cavity";
-      mu = 1;
-      break;
-    }
-    // // Island coalescence - periodic in x
-    // case 7:{
-    //   mesh_file = "./meshes/tri-rect-island-xper.mesh";
-    //   uFun = uFun_ex_island;
-    //   pFun = pFun_ex_island;
-    //   zFun = zFun_ex_island;
-    //   aFun = aFun_ex_island;
-    //   fFun = fFun_island;
-    //   gFun = gFun_island;
-    //   hFun = hFun_island;
-    //   nFun = nFun_island;
-    //   mFun = mFun_island;
-    //   wFun = wFun_island;
-    //   yFun = yFun_island;
-    //   cFun = cFun_island;
-    //   // Set BC:
-    //   // TODO!!!
-    //   essTagsU.SetSize(2); essTagsU[0] = 1; essTagsU[1] = 3;
-    //   essTagsV = essTagsU;
-    //   essTagsA.SetSize(2); essTagsA[0] = 1; essTagsA[1] = 3; // N S
-    //   pbName = "IslandCoalescenceXPer";
-    //   mu0 = 1e-4;
-    //   eta = 1e-4;
-    //   break;
-    // }
-
-    default:
-      std::cerr<<"ERROR: Problem type "<<pbType<<" not recognised."<<std::endl;
-  }
 
 
 
   if(myid == 0){
     args.PrintOptions(cout);
     std::cout<<"   --np "<<numProcs<<std::endl;
-    std::cout<<"   --dt "<<Tend/numProcs<<std::endl;
+    std::cout<<"   --mu "<<mu<<std::endl;
+    std::cout<<"   --eta "<<eta<<std::endl;
+    std::cout<<"   --mu0 "<<mu0<<std::endl;
     std::cout<<"   --Pb "<<pbName<<std::endl;
+    std::cout<<"   --mesh "<<mesh_file<<std::endl;
+    std::cout<<"   --dt "<<Tend/numProcs<<std::endl;
   }
 
 
-  // - initialise petsc
-  MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
 
 
 
-  // ASSEMBLE OPERATORS -----------------------------------------------------
+  //*************************************************************************
+  // Assemble operators
+  //*************************************************************************
   IMHD2DSTOperatorAssembler *mhdAssembler = new IMHD2DSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP, ordZ, ordA,
                                                                            dt, mu, eta, mu0, fFun, gFun, hFun, nFun, mFun,
                                                                            wFun, qFun, yFun, cFun,
                                                                            uFun, pFun, zFun, aFun, 
-                                                                           essTagsU, essTagsV, essTagsP, essTagsA, verbose );
+                                                                           essTagsU, essTagsV, essTagsP, essTagsA, stab, verbose );
 
 
-  Operator *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *ZZZ1, *ZZZ2, *KKK, *YYY;
+  ParBlockLowTriOperator *FFFu, *MMMz, *FFFa, *BBB, *BBBt, *CCCs, *ZZZ1, *ZZZ2, *XXX1, *XXX2, *KKK, *YYY;
   Vector   fres,   gres,  zres,  hres,  U0,  P0,  Z0,  A0;
   // Vector   *uEx, *pEx, *zEx, *aEx;
 
+  // For the system *********************************************************
   if( myid == 0 && verbose > 0 ){
     std::cout << "Assembling operators for system ***************************\n";
   }
 
-  // Assemble the system
-  mhdAssembler->AssembleSystem( FFFu, MMMz, FFFa,
-                                BBB,  ZZZ1, ZZZ2,
-                                KKK,  YYY,
+  mhdAssembler->AssembleSystem( FFFu, MMMz, FFFa, BBB,  BBBt, CCCs,
+                                ZZZ1, ZZZ2, XXX1, XXX2, KKK,  YYY,
                                 fres, gres, zres, hres,
                                 U0,   P0,   Z0,   A0  );
-
-  BBBt = new TransposeOperator( BBB );
-
   Array<int> offsets(5);
   offsets[0] = 0;
   offsets[1] = FFFu->NumRows();
@@ -656,28 +260,27 @@ int main(int argc, char *argv[]){
   offsets[3] = MMMz->NumRows();
   offsets[4] = FFFa->NumRows();
   offsets.PartialSum();
-
-  // - assemble matrix
+  // - assemble original matrix
   BlockOperator *MHDOp = new BlockOperator( offsets );
   MHDOp->SetBlock(0, 0, FFFu);
-  MHDOp->SetBlock(2, 2, MMMz);
-  MHDOp->SetBlock(3, 3, FFFa);
   MHDOp->SetBlock(0, 1, BBBt);
   MHDOp->SetBlock(0, 2, ZZZ1);
   MHDOp->SetBlock(0, 3, ZZZ2);
   MHDOp->SetBlock(1, 0,  BBB);
+  MHDOp->SetBlock(1, 1, CCCs);
+  MHDOp->SetBlock(1, 2, XXX1);
+  MHDOp->SetBlock(1, 3, XXX2);
+  MHDOp->SetBlock(2, 2, MMMz);
   MHDOp->SetBlock(2, 3,  KKK);
   MHDOp->SetBlock(3, 0,  YYY);
-
-
+  MHDOp->SetBlock(3, 3, FFFa);
   // - assemble the original residual
   BlockVector res(offsets);
   res.GetBlock(0) = fres;
   res.GetBlock(1) = gres;
   res.GetBlock(2) = zres;
   res.GetBlock(3) = hres;
-
-  // - assemble solution (IG)
+  // - assemble initial guess on solution
   BlockVector sol(offsets);
   sol.GetBlock(0) = U0;
   sol.GetBlock(1) = P0;
@@ -685,85 +288,85 @@ int main(int argc, char *argv[]){
   sol.GetBlock(3) = A0;
 
 
+
+
+  // For the preconditioner *************************************************
   if( myid == 0 && verbose > 0 ){
     std::cout << "Assembling operators for preconditioner *******************\n";
   }
-
+  // - recover block-operators
   Operator *FFui, *MMzi, *pSi, *aSi;
   mhdAssembler->AssemblePreconditioner( FFui, MMzi, pSi, aSi, STSolveTypeU, STSolveTypeA );
 
-  // Define preconditioner
-  Solver *MHDPr;
-
-  // - assemble single factors
+  // - recover factors
   BlockUpperTriangularPreconditioner *Uub = new BlockUpperTriangularPreconditioner( offsets ),
                                      *Uup = new BlockUpperTriangularPreconditioner( offsets );
   BlockLowerTriangularPreconditioner *Lub = new BlockLowerTriangularPreconditioner( offsets ),
                                      *Lup = new BlockLowerTriangularPreconditioner( offsets );
-  assembleLub( YYY, FFui, ZZZ1, MMzi, Lub );
-  assembleUub( ZZZ1,  ZZZ2, MMzi, KKK, aSi, Uub );
-  assembleLup( FFui, BBB,  Lup );
-  assembleUup( FFui, BBBt, pSi, Uup );
+  AssembleLub( YYY,  FFui, ZZZ1, MMzi,      Lub );
+  AssembleUub( ZZZ1, ZZZ2, MMzi, KKK,  aSi, Uub );
+  AssembleLup( FFui, BBB,                   Lup );
+  AssembleUup( FFui, BBBt, XXX1, XXX2, pSi, Uup );
 
-
-  switch(precType){
+  // - combine them together
+  Array<const Operator*> precOps;
+  Array<bool>            precOwn;
+  switch (precType){
+    // full Preconditioner Uupi*Lupi*Uubi*Lubi
     case 0:{
-      // Uup^-1 Lup^-1 Uub^-1 Lub^-1
-      Array<const Operator*> precOps(4);
-      Array<bool>      precOwn(4);
+      precOps.SetSize(4);
+      precOwn.SetSize(4);
       precOps[0] = Lub;  precOwn[0] = true;
       precOps[1] = Uub;  precOwn[1] = true;
       precOps[2] = Lup;  precOwn[2] = true;
       precOps[3] = Uup;  precOwn[3] = true;
-
-      OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
-
-      // -and store
-      MHDPr = temp;
-
       break;
     }
-
+    // simplified: Uupi*Lupi*Uubi
     case 1:{
-      // Uup^-1 Lup^-1 Uub^-1
-      Array<const Operator*> precOps(3);
-      Array<bool>            precOwn(3);
+      precOps.SetSize(3);
+      precOwn.SetSize(3);
       precOps[0] = Uub;  precOwn[0] = true;
       precOps[1] = Lup;  precOwn[1] = true;
       precOps[2] = Uup;  precOwn[2] = true;
-
-      OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
-
-      // --and store
-      MHDPr = temp;
-
       break;
     }
-
+    // uber simplified: Uupi*Uubi
     case 2:{
-      // Uup^-1 Uub^-1
-      Array<const Operator*> precOps(2);
-      Array<bool>            precOwn(2);
+      precOps.SetSize(2);
+      precOwn.SetSize(2);
       precOps[0] = Uub;  precOwn[0] = true;
       precOps[1] = Uup;  precOwn[1] = true;
-
-      OperatorsSequence* temp = new OperatorsSequence( precOps, precOwn );
-
-      // --and store
-      MHDPr = temp;
-
       break;
     }
-    default:{
-      if ( myid == 0 ){
-        std::cerr<<"ERROR: Option for preconditioner "<<precType<<" not recognised"<<std::endl;
-      }
-      break;
-    }
+    default:
+    std::cerr<<"ERROR: Preconditioner type "<<pbType<<" not recognised."<<std::endl;
   }
+  // - define preconditioner
+  OperatorsSequence *MHDPr = new OperatorsSequence( precOps, precOwn );
 
 
-  // Initialise folder where to store convergence results
+
+  // -- Actually disregard prescribed initial guess for z, and instead set it so that it matches the discrete laplacian of A
+  if ( myid == 0 ){
+    std::cout<<"Warning: considering IG on z as discrete laplacian of A (ie, disregarding analytical solution)"<<std::endl;
+  }
+  BlockVector tempSol(sol), tempRes(offsets);
+  tempSol.GetBlock(0) = 0.;
+  tempSol.GetBlock(1) = 0.;
+  tempSol.GetBlock(2) = 0.; // only keep A
+  mhdAssembler->ApplyOperator( tempSol, tempRes );     // this contains the rhs (particularly, zrhs - KA in block 2)
+  MMzi->Mult( tempRes.GetBlock(2), sol.GetBlock(2) );  // solve for z and overwrite solution
+  // sol.GetBlock(2).Neg();
+  mhdAssembler->UpdateLinearisedOperators( sol );     // update operators evaluating them at the new IG
+  mhdAssembler->ApplyOperator( sol, res );            // update residual
+  res.GetBlock(2) = 0.;                               // should be basically zero anyway
+
+
+
+
+
+  // Initialise output folders **********************************************
   string convPath = string("./results/") + "Pb" + to_string(pbType)
                          + "_Prec" + to_string(precType) + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
                          + "_oU"   + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
@@ -790,37 +393,16 @@ int main(int argc, char *argv[]){
 
 
 
-  // // FOR TESTING PURPOSES ---------------------------------------------------
-  // // - Print out matrices for matlab import
-  // string path = string("./results/operators/") + "Pb" + to_string(pbType)
-  //                        + "_Prec" + to_string(precType) + "_STsolveU" + to_string(STSolveTypeU) + "_STsolveA" + to_string(STSolveTypeA)
-  //                        + "_oU"   + to_string(ordU) + "_oP" + to_string(ordP) + "_oZ" + to_string(ordZ) + "_oA" + to_string(ordA)
-  //                        + "_"     + petscrc_file + "/" + "NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)
-  //                        + "/";
-  // if (!std::experimental::filesystem::exists( path ) && myid == 0){
-  //   std::experimental::filesystem::create_directories( path );
-  // }
-  // MPI_Barrier(MPI_COMM_WORLD);  // to wait for master to have created folder?
-  // path += "Nit" + to_string(newtonIt) + "_";
-  // mhdAssembler->PrintMatrices( path );
-
-
-  // // - Print out rhs (that's the vector which will be used for testing)
-  // ofstream myfile;
-  // myfile.precision(std::numeric_limits< double >::max_digits10);
-  // myfile.open( path+"rhs"+to_string(myid)+".dat" );
-  // res.Print(myfile,1);
-  // myfile.close();
 
 
 
 
-  // SOLVE SYSTEM -----------------------------------------------------------
+  //*************************************************************************
+  // Solve system
+  //*************************************************************************
   if( myid == 0 && verbose > 0 ){
     std::cout << "SOLVE! ****************************************************\n";
   }
-
-
 
   // In this case, just solve the system normally, via time-stepping
   if ( STSolveTypeU == 9 || STSolveTypeA == 9 ){
@@ -829,43 +411,48 @@ int main(int argc, char *argv[]){
     }
 
     // - solve via time-stepping
-    mhdAssembler->TimeStep( res, sol, innerConvpath, output );
-
-
-
+    mhdAssembler->TimeStep( res, sol, convPath, ref_levels, precType, output );
 
   // otherwise, things get serious
   }else{
 
-
     // - compute norm of residual at zeroth-iteration
-    double newtonRes = res.Norml2();    // it's a bit annoying that HyperParVector doesn't overwrite the norml2 function...
-    newtonRes*= newtonRes;
-    MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-    newtonRes  = sqrt(newtonRes);
+    Vector newtonBlockRes, newtonBlockErrWRTPrevIt;
+    computeBlockedNorm( res, newtonBlockRes );
+    double newtonRes  = newtonBlockRes(4);
     double newtonRes0 = newtonRes;
-    double newtonErrWRTPrevIt = newtonTol;
+    double newtonErrWRTPrevIt = newtonATol;
     int newtonIt = 0;
     int GMRESits = 0;
+    int GMRESNoConv = 0;
     double totGMRESit = 0.; //leave it as double, so that when I'll average it, it won't round-off
 
     if( myid == 0 ){
       std::cout << "***********************************************************\n";
-      std::cout << "Newton iteration "<<newtonIt<<", residual "<< newtonRes <<std::endl;
+      std::cout << "Newton iteration "<<newtonIt<<", initial residual "<< newtonRes
+                << ", (u,p,z,A) = ("<< newtonBlockRes(0) <<","
+                                    << newtonBlockRes(1) <<","
+                                    << newtonBlockRes(2) <<","
+                                    << newtonBlockRes(3) <<")" << std::endl;
       std::cout << "***********************************************************\n";
       if ( output>0 ){
         string filename = innerConvpath +"NEWTconv.txt";
         ofstream myfile;
         myfile.open( filename, std::ios::app );
-        myfile << "#It"    <<"\t"<< "Res norm"<<"\t"<< "Rel res norm"       <<"\t"<< "Norm of update\tInner converged\tInner res\tInner its"  <<std::endl;
-        myfile << newtonIt <<"\t"<< newtonRes <<"\t"<< newtonRes/newtonRes0 <<"\t"<< 0.0         <<"\t"<< false   <<"\t"<<0.0<<"\t"<<GMRESits <<std::endl;
+        myfile << "#It\t"        << "Res_norm_tot\t"        
+                << "Res_norm_u\t"          << "Res_norm_p\t"          << "Res_norm_z\t"          << "Res_norm_a\t"
+                << "Rel_res_norm\t"        << "Norm of update\t"
+                <<"Inner converged\t"<<"Inner res\t"<<"Inner its"<<std::endl;
+        myfile << newtonIt <<"\t"<< newtonRes <<"\t"
+                << newtonBlockRes(0) <<"\t"<< newtonBlockRes(1) <<"\t"<< newtonBlockRes(2) <<"\t"<< newtonBlockRes(3) <<"\t"
+                << newtonRes/newtonRes0 <<"\t"<< 0.0 <<"\t"
+                << false       <<"\t"<< 0.0   <<"\t"<<GMRESits   <<std::endl;
         myfile.close();
       }
     }
     if( output > 3 ){
       string filename = innerOperPath + "Nit" + to_string(newtonIt) + "_";
       mhdAssembler->PrintMatrices( filename );
-
       // - Print out rhs (that's the vector which will be used for testing)
       ofstream myfile;
       myfile.precision(std::numeric_limits< double >::max_digits10);
@@ -876,12 +463,16 @@ int main(int argc, char *argv[]){
 
 
 
-    // - stop if:       max it reached                 residual small enough        relative residual small enough       //     difference wrt prev it small enough
-    bool stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol );  // || ( newtonErrWRTPrevIt < newtonTol );
-
-
-
+    //***********************************************************************
+    // NEWTON ITERATIONS
+    //***********************************************************************
+    // - stop if:       
+    bool stopNewton = ( newtonIt >= maxNewtonIt )                // max it reached
+                   || ( newtonRes < newtonATol )                 // residual small enough
+                   || ( newtonRes/newtonRes0 < newtonRTol );     // relative residual small enough
+                   // || ( newtonErrWRTPrevIt < newtonATol );    // difference wrt prev it small enough
     while(!stopNewton){
+
     
       // Define inner solver
       PetscLinearSolver solver(MPI_COMM_WORLD, "solver_");
@@ -906,7 +497,7 @@ int main(int argc, char *argv[]){
         PetscViewerAndFormatCreate( viewer, PETSC_VIEWER_DEFAULT, &vf );
         PetscViewerDestroy( &viewer );
   
-        if( anSolution ){
+        if( pbType<=4 ){
           if ( myid == 0 ){
             std::cout<<"Warning: we're printing the error wrt the analytical solution at each iteration."<<std::endl
                      <<"         This is bound to slow down GMRES *a lot*, so leave this code only for testing purposes!"<<std::endl;
@@ -934,7 +525,8 @@ int main(int argc, char *argv[]){
           // mctx.path = path + "/ParaView/NP" + to_string(numProcs) + "_r"  + to_string(ref_levels)+"/";
           UPSplitResidualMonitorCtx* mctxptr = &mctx;
           KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))UPSplitResidualMonitor, mctxptr, NULL );
-          // KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,   vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
+          // KSPMonitorSet( ksp, (PetscErrorCode (*)(KSP,PetscInt,PetscReal,void*))KSPMonitorDefault,
+          //                vf, (PetscErrorCode (*)(void**))PetscViewerAndFormatDestroy );
         }
       }
 
@@ -969,15 +561,11 @@ int main(int argc, char *argv[]){
       // -- apply operator
       mhdAssembler->ApplyOperator( sol, res );
       // -- compute residual norm
-      newtonRes = res.Norml2();
-      newtonRes*= newtonRes;
-      MPI_Allreduce( MPI_IN_PLACE, &newtonRes, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-      newtonRes = sqrt(newtonRes);
+      computeBlockedNorm( res, newtonBlockRes );
+      newtonRes  = newtonBlockRes(4);
       // -- compute norm of newton update
-      newtonErrWRTPrevIt = deltaSol.Norml2();
-      newtonErrWRTPrevIt*= newtonErrWRTPrevIt;
-      MPI_Allreduce( MPI_IN_PLACE, &newtonErrWRTPrevIt, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
-      newtonErrWRTPrevIt = sqrt(newtonErrWRTPrevIt);
+      computeBlockedNorm( deltaSol, newtonBlockErrWRTPrevIt );
+      newtonErrWRTPrevIt = newtonBlockErrWRTPrevIt(4);
       
       // Output relevant measurements
       newtonIt++;
@@ -988,23 +576,35 @@ int main(int argc, char *argv[]){
           std::cout << "Inner solver converged in ";
         }else{
           std::cout << "Inner solver *DID NOT* converge in ";
+          GMRESNoConv++;
         }
         std::cout<< GMRESits << " iterations. Residual "<<solver.GetFinalNorm()<<std::endl;
         if( output>0 ){
           string filename = innerConvpath +"NEWTconv.txt";
           ofstream myfile;
           myfile.open( filename, std::ios::app );
-          myfile << newtonIt << "\t" << newtonRes << "\t" << newtonRes/newtonRes0 << "\t" << newtonErrWRTPrevIt << "\t"
-                 << solver.GetConverged() << "\t" << solver.GetFinalNorm() << "\t" << GMRESits<<std::endl;
+          myfile << newtonIt <<"\t"<< newtonRes <<"\t"
+                  << newtonBlockRes(0) <<"\t"<< newtonBlockRes(1) <<"\t"<< newtonBlockRes(2) <<"\t"<< newtonBlockRes(3) <<"\t"
+                  << newtonRes/newtonRes0 <<"\t"<< newtonErrWRTPrevIt << "\t"
+                  << solver.GetConverged() <<"\t"<< solver.GetFinalNorm() <<"\t"<<GMRESits <<std::endl;
           myfile.close();
         }      
         std::cout << "***********************************************************\n";
-        std::cout << "Newton iteration "<<newtonIt<<", residual "<< newtonRes <<std::endl;
+        std::cout << "Newton iteration "<< newtonIt <<", residual "<< newtonRes
+                  << ", (u,p,z,A) = ("<< newtonBlockRes(0) <<","
+                                      << newtonBlockRes(1) <<","
+                                      << newtonBlockRes(2) <<","
+                                      << newtonBlockRes(3) <<")" << std::endl;
         std::cout << "***********************************************************\n";
       }
 
+
+
       // Check stopping criterion
-      stopNewton = ( newtonIt >= maxNewtonIt ) || ( newtonRes < newtonTol ) || ( newtonRes/newtonRes0 < newtonTol ) || ( newtonErrWRTPrevIt < 1e-12 );
+      stopNewton = ( newtonIt >= maxNewtonIt )                // max it reached
+                || ( newtonRes < newtonATol )                 // residual small enough
+                || ( newtonRes/newtonRes0 < newtonRTol );     // relative residual small enough
+                // || ( newtonErrWRTPrevIt < newtonATol );    // difference wrt prev it small enough
       // - and eventually update the operators
       if( !stopNewton ){
         if( myid == 0 && verbose > 0 ){
@@ -1041,11 +641,12 @@ int main(int argc, char *argv[]){
 
       // - eventually store info on newton convergence
       if( output>0 ){
-        string filename = convPath + "Newton_convergence_results_NP" + to_string(numProcs) + "_r"  + to_string(ref_levels) + ".txt";
+        string filename = convPath + "Newton_convergence_results.txt";
         ofstream myfile;
         myfile.open( filename, std::ios::app );
-        myfile << Tend     << ",\t" << dt         << ",\t" << numProcs   << ",\t" << ref_levels << ",\t"
-               << newtonIt << ",\t" << totGMRESit/newtonIt << ",\t" << newtonRes << std::endl;
+        myfile << Tend       << ",\t" << dt                  << ",\t" << numProcs    << ",\t" << ref_levels << ",\t"
+               << newtonIt   << ",\t" << totGMRESit/newtonIt << ",\t" << GMRESNoConv << ",\t"
+               << newtonRes0 << ",\t" << newtonRes           << std::endl;
         myfile.close();
       }    
     }
@@ -1082,7 +683,7 @@ int main(int argc, char *argv[]){
 
     mhdAssembler->SaveSolution( uh, ph, zh, ah, outFilePath, outFileName );
 
-    if ( anSolution ){
+    if ( pbType<=4 ){
       mhdAssembler->SaveError( uh, ph, zh, ah, outFilePath, outFileName+"_err" );
     }
   }
@@ -1324,17 +925,19 @@ PetscErrorCode UPSplitResidualMonitor( KSP ksp, PetscInt n, PetscReal rnorm, voi
 
 
 
-// Assembles lower factor of LU factorisation of velocity/magnetic field part of preconditioner
-//       ⌈    I                          ⌉
-// Lub = |         I                     |
-//       |                   I           |
-//       ⌊ Y*Fu^-1   -Y*Fu^-1*Z1*Mz^-1 I ⌋
-void assembleLub( const Operator* Y,  const Operator* Fui,
-                  const Operator* Z1, const Operator* Mzi,
-                  BlockLowerTriangularPreconditioner* Lub ){
 
-  // std::cout<<"Size of operators: "<<std::endl
-  //          <<"Fui  "<< Fui->NumRows() <<","<< Fui->NumCols() <<std::endl
+
+
+//*************************************************************************
+// ASSEMBLE BLOCK OPERATORS
+//*************************************************************************
+// Assembles lower factor of LU factorisation of velocity/magnetic field part of preconditioner
+//       ⌈ I                       ⌉
+// Lub = |       I                 |
+//       |          I              |
+//       ⌊ Y*Fui   -Y*Fui*Z1*Mzi I ⌋
+void AssembleLub( const Operator* Y,  const Operator* Fui, const Operator* Z1, const Operator* Mzi,
+                  BlockLowerTriangularPreconditioner* Lub ){
 
   Array<const Operator*> YFuiOps(2);
   YFuiOps[0] = Fui;
@@ -1357,15 +960,15 @@ void assembleLub( const Operator* Y,  const Operator* Fui,
 }
 
 
-
 // Assembles modified upper factor of LU factorisation of velocity/magnetic field part of preconditioner
-//     ⌈ Fu^-1       ⌉   ⌈ I   Z1 Z2 ⌉
-// Uub*|       I     | = |   I       |
-//     |         I   |   |     Mz K  |
-//     ⌊           I ⌋   ⌊        aS ⌋
-void assembleUub( const Operator* Z1, const Operator* Z2, const Operator* Mzi, const Operator* K,
-                  const Operator* aSi, BlockUpperTriangularPreconditioner* Uub ){
+//     ⌈ Fui       ⌉   ⌈ I   Z1 Z2 ⌉
+// Uub*|     I     | = |   I       |
+//     |       I   |   |     Mz K  |
+//     ⌊         I ⌋   ⌊        aS ⌋
+void AssembleUub( const Operator* Z1, const Operator* Z2, const Operator* Mzi, const Operator* K, const Operator* aSi,
+                  BlockUpperTriangularPreconditioner* Uub ){
   Uub->iterative_mode = false;
+
   Uub->SetBlock( 0, 2, Z1  );
   Uub->SetBlock( 0, 3, Z2  );
   Uub->SetBlock( 2, 2, Mzi );
@@ -1375,13 +978,12 @@ void assembleUub( const Operator* Z1, const Operator* Z2, const Operator* Mzi, c
 }
 
 
-
 // Assembles lower factor of LU factorisation of velocity/pressure part of preconditioner
 //       ⌈    I          ⌉
 // Lup = | B*Fu^-1 I     |
 //       |           I   |
 //       ⌊             I ⌋
-void assembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPreconditioner* Lup ){
+void AssembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPreconditioner* Lup ){
 
   Array<const Operator*> BFuiOps(2);
   BFuiOps[0] = Fui;
@@ -1394,17 +996,19 @@ void assembleLup( const Operator* Fui, const Operator* B, BlockLowerTriangularPr
 }
 
 
-
 // Assembles upper factor of LU factorisation of velocity/pressure part of preconditioner
-//       ⌈ Fu Bt     ⌉
-// Uup = |    pS     |
-//       |       I   |
-//       ⌊         I ⌋
-void assembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, BlockUpperTriangularPreconditioner* Uup ){
+//       ⌈ Fu Bt       ⌉
+// Uup = |    pS X1 X2 |
+//       |       I     |
+//       ⌊          I  ⌋
+void AssembleUup( const Operator* Fui, const Operator* Bt, const Operator* X1, const Operator* X2,
+                  const Operator* pSi, BlockUpperTriangularPreconditioner* Uup ){
   Uup->iterative_mode = false;
   Uup->SetBlock( 0, 0, Fui );
   Uup->SetBlock( 0, 1, Bt  );
   Uup->SetBlock( 1, 1, pSi );
+  Uup->SetBlock( 1, 2, X1  );
+  Uup->SetBlock( 1, 3, X2  );
   Uup->owns_blocks = false;
 }
 
@@ -1412,1065 +1016,27 @@ void assembleUup( const Operator* Fui, const Operator* Bt, const Operator* pSi, 
 
 
 
+//*************************************************************************
+// MISC
+//*************************************************************************
+// Returns norm of each block (norm(0-3)) and total norm (norm(4)) of a given a shared block space-time vector
+void computeBlockedNorm( const BlockVector& u, Vector& norm ){
+  norm.SetSize(5);
+  double temp = 0.;
 
-
-
-
-
-//***************************************************************************
-// ANALYTICAL TEST CASES
-//***************************************************************************
-// - define a perturbation to dirty initial guess
-double perturbation(const Vector & x, const double t){
-  double epsilon = 1.;
-  double xx(x(0));
-  double yy(x(1));
-  return( t * epsilon * 0.25*( ( cos(2*M_PI*xx)-1 )*(cos(2*M_PI*yy)-1) ) );
-}
-// All-zero solution --------------------------------------------------------
-// - null velocity
-void uFun_ex_an0(const Vector & x, const double t, Vector & u){
-  u = 0.;
-}
-// - null pressure
-double pFun_ex_an0(const Vector & x, const double t ){
-  return 0.;
-}
-// - null laplacian of vector potential
-double zFun_ex_an0(const Vector & x, const double t ){
-  return 0.;
-}
-// - null vector potential
-double aFun_ex_an0(const Vector & x, const double t ){
-  return 0.;
-}
-// - null rhs of velocity
-void fFun_an0(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - null normal derivative of velocity
-void nFun_an0(const Vector & x, const double t, Vector & n){
-  n = 0.;
-}
-// - null rhs of pressure
-double gFun_an0(const Vector & x, const double t ){
-  return 0.;
-}
-// - null rhs of vector potential
-double hFun_an0( const Vector & x, const double t ){
-  return 0.;
-}
-// - null normal derivative of vector potential
-double mFun_an0( const Vector & x, const double t ){
-  return 0.;
-}
-// - define null IG for every linearised variable
-void wFun_an0(const Vector & x, const double t, Vector & w){
-  w = 0.;
-}
-double qFun_an0(  const Vector & x, const double t ){
-  return 0.;
-}
-double yFun_an0(  const Vector & x, const double t ){
-  return 0.;
-}
-double cFun_an0(  const Vector & x, const double t ){
-  return 0.;
-}
-
-
-
-
-// Only velocity ------------------------------------------------------------
-// - Pick a div-free field
-void uFun_ex_an1(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) =   t * xx*xx*yy;
-  u(1) = - t * xx*yy*yy;
-}
-// - null pressure
-double pFun_ex_an1(const Vector & x, const double t ){
-  return 0.;
-}
-// - null laplacian of vector potential
-double zFun_ex_an1(const Vector & x, const double t ){
-  return 0.;
-}
-// - null vector potential
-double aFun_ex_an1(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of velocity counteracts action of every term
-void fFun_an1(const Vector & x, const double t, Vector & f){
-  double xx(x(0));
-  double yy(x(1));
-  //      dt u     + u Grad(u)            - mu Lap(u)
-  f(0) =  xx*xx*yy + t*t * xx*xx*xx*yy*yy - t * 2*yy;
-  f(1) = -xx*yy*yy + t*t * xx*xx*yy*yy*yy + t * 2*xx;
-}
-// - normal derivative of velocity
-void nFun_an1(const Vector & x, const double t, Vector & n){
-  double xx(x(0));
-  double yy(x(1));
-  n = 0.;
-  // if ( yy == 0. ){ //S
-  //   n(0) = -xx*xx;
-  //   n(1) = 0.;
-  // }
-  // if ( xx == 0. ){ //W
-  //   n(0) = 0.;
-  //   n(1) = yy*yy;
-  // }
-  // if ( yy == 1. ){ //N
-  //   n(0) =  xx*xx;
-  //   n(1) = -2*xx;
-  // }
-  if ( xx == 1. ){ //E
-    n(0) = 2*yy;
-    n(1) = - yy*yy;
+  for ( int i = 0; i < 4; ++i ){
+    temp = u.GetBlock(i).Norml2();
+    temp*= temp;
+    MPI_Allreduce( MPI_IN_PLACE, &temp, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
+    norm(i) = sqrt(temp);
   }
 
-  n *= t;
-}
-// - null rhs of pressure
-double gFun_an1(const Vector & x, const double t ){
-  return 0.;
-}
-// - null rhs of vector potential
-double hFun_an1( const Vector & x, const double t ){
-  return 0.;
-}
-// - null normal derivative of vector potential
-double mFun_an1( const Vector & x, const double t ){
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_an1(const Vector & x, const double t, Vector & w){
-  uFun_ex_an1(x,t,w);
-  double ds = perturbation(x,t);
-  w(0) = w(0) + ds;
-  w(1) = w(1) - ds;
-}
-double qFun_an1(  const Vector & x, const double t ){
-  // double ds = perturbation(x,t);
-  // return ( zFun_ex_an1(x,t) + ds );
-  return 0.;
-}
-double yFun_an1(  const Vector & x, const double t ){
-  // double ds = perturbation(x,t);
-  // return ( zFun_ex_an1(x,t) + ds );
-  return 0.;
-}
-double cFun_an1(  const Vector & x, const double t ){
-  // double ds = perturbation(x,t);
-  // return ( aFun_ex_an1(x,t) + ds );
-  return 0.;
-}
-
-
-
-
-
-// Velocity and pressure -----------------------------------------------
-// - Pick a div-free field
-void uFun_ex_an2(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) =   t * xx*xx*yy;
-  u(1) = - t * xx*yy*yy;
-}
-// - Pick a pressure which is null on boundaries
-double pFun_ex_an2(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( t * sin(M_PI*xx)*sin(M_PI*yy) );
-}
-// - null laplacian of vector potential
-double zFun_ex_an2(const Vector & x, const double t ){
-  return 0.;
-}
-// - null vector potential
-double aFun_ex_an2(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of velocity counteracts action of every term
-void fFun_an2(const Vector & x, const double t, Vector & f){
-  double xx(x(0));
-  double yy(x(1));
-  //      dt u     + u Grad(u)            - mu Lap(u) + Grad(p)
-  f(0) =  xx*xx*yy + t*t * xx*xx*xx*yy*yy - t * 2*yy  + t * M_PI*cos(M_PI*xx)*sin(M_PI*yy);
-  f(1) = -xx*yy*yy + t*t * xx*xx*yy*yy*yy + t * 2*xx  + t * M_PI*sin(M_PI*xx)*cos(M_PI*yy);
-}
-// - normal derivative of velocity
-void nFun_an2(const Vector & x, const double t, Vector & n){
-  double xx(x(0));
-  double yy(x(1));
-  n = 0.;
-  // if ( yy == 0. ){ //S
-  //   n(0) = -xx*xx;
-  //   n(1) = 0.;
-  // }
-  // if ( xx == 0. ){ //W
-  //   n(0) = 0.;
-  //   n(1) = yy*yy;
-  // }
-  // if ( yy == 1. ){ //N
-  //   n(0) =  xx*xx;
-  //   n(1) = -2*xx;
-  // }
-  if ( xx == 1. ){ //E
-    n(0) = 2*yy;
-    n(1) = - yy*yy;
-  }
-
-  n *= t;
-}
-// - null rhs of pressure
-double gFun_an2(const Vector & x, const double t ){
-  return 0.;
-}
-// - null rhs of vector potential
-double hFun_an2( const Vector & x, const double t ){
-  return 0.;
-}
-// - null normal derivative of vector potential
-double mFun_an2( const Vector & x, const double t ){
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_an2(const Vector & x, const double t, Vector & w){
-  uFun_ex_an2(x,t,w);
-  double ds = perturbation(x,t);
-  w(0) = w(0) + ds;
-  w(1) = w(1) - ds;
-}
-double qFun_an2(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( pFun_ex_an2(x,t) + ds );
-}
-double yFun_an2(  const Vector & x, const double t ){
-  // double ds = perturbation(x,t);
-  // return ( zFun_ex_an1(x,t) + ds );
-  return 0.;
-}
-double cFun_an2(  const Vector & x, const double t ){
-  // double ds = perturbation(x,t);
-  // return ( aFun_ex_an1(x,t) + ds );
-  return 0.;
-}
-
-
-
-// Velocity, pressure and Vector potential ----------------------------------
-// - Pick a div-free field
-void uFun_ex_an3(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) =   t * xx*xx*yy;
-  u(1) = - t * xx*yy*yy;
-}
-// - Pick a pressure which is null on boundaries
-double pFun_ex_an3(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( t * sin(M_PI*xx)*sin(M_PI*yy) );
-}
-// - null laplacian of vector potential
-double zFun_ex_an3(const Vector & x, const double t ){
-  return 0.;
-}
-// - constant (in space) vector potential
-double aFun_ex_an3(const Vector & x, const double t ){
-  return t;
-}
-// - rhs of velocity counteracts action of every term
-void fFun_an3(const Vector & x, const double t, Vector & f){
-  double xx(x(0));
-  double yy(x(1));
-  //      dt u     + u Grad(u)            - mu Lap(u) + Grad(p)
-  f(0) =  xx*xx*yy + t*t * xx*xx*xx*yy*yy - t * 2*yy  + t * M_PI*cos(M_PI*xx)*sin(M_PI*yy);
-  f(1) = -xx*yy*yy + t*t * xx*xx*yy*yy*yy + t * 2*xx  + t * M_PI*sin(M_PI*xx)*cos(M_PI*yy);
-}
-// - normal derivative of velocity
-void nFun_an3(const Vector & x, const double t, Vector & n){
-  double xx(x(0));
-  double yy(x(1));
-  n = 0.;
-  // if ( yy == 0. ){ //S
-  //   n(0) = -xx*xx;
-  //   n(1) = 0.;
-  // }
-  // if ( xx == 0. ){ //W
-  //   n(0) = 0.;
-  //   n(1) = yy*yy;
-  // }
-  // if ( yy == 1. ){ //N
-  //   n(0) =  xx*xx;
-  //   n(1) = -2*xx;
-  // }
-  if ( xx == 1. ){ //E
-    n(0) = 2*yy;
-    n(1) = - yy*yy;
-  }
-
-  n *= t;
-}
-// - null rhs of pressure
-double gFun_an3(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential counteracts time-derivative
-double hFun_an3( const Vector & x, const double t ){
-  return 1.;
-}
-// - null normal derivative of vector potential
-double mFun_an3( const Vector & x, const double t ){
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_an3(const Vector & x, const double t, Vector & w){
-  uFun_ex_an3(x,t,w);
-  double ds = perturbation(x,t);
-  w(0) = w(0) + ds;
-  w(1) = w(1) - ds;
-}
-double qFun_an3(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( pFun_ex_an3(x,t) + ds );
-}
-double yFun_an3(  const Vector & x, const double t ){
-  // double ds = perturbation(x,t);
-  // return ( zFun_ex_an1(x,t) + ds );
-  return 0.;
-}
-double cFun_an3(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( aFun_ex_an3(x,t) + ds );
-}
-
-
-
-
-// Velocity, pressure, vector potential and laplacian of vector potential ---
-// - Pick a div-free field
-void uFun_ex_an4(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) =   t * xx*xx*yy;
-  u(1) = - t * xx*yy*yy;
-}
-// - Pick a pressure which is null on boundaries
-double pFun_ex_an4(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( t * sin(M_PI*xx)*sin(M_PI*yy) );
-}
-// - laplacian of vector potential
-double zFun_ex_an4(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( -t * 2*M_PI*M_PI*cos(M_PI*xx)*cos(M_PI*yy) );
-}
-// - vector potential with null normal derivative
-double aFun_ex_an4(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  return ( t * cos(M_PI*xx)*cos(M_PI*yy) );
-}
-// - rhs of velocity counteracts action of every term
-void fFun_an4(const Vector & x, const double t, Vector & f){
-  double xx(x(0));
-  double yy(x(1));
-  //      dt u     + u Grad(u)            - mu Lap(u) + Grad(p)                            + z grad(A) / mu0
-  f(0) =  xx*xx*yy + t*t * xx*xx*xx*yy*yy - t * 2*yy  + t * M_PI*cos(M_PI*xx)*sin(M_PI*yy) + zFun_ex_an4(x,t) * (-t*M_PI*sin(M_PI*xx)*cos(M_PI*yy));
-  f(1) = -xx*yy*yy + t*t * xx*xx*yy*yy*yy + t * 2*xx  + t * M_PI*sin(M_PI*xx)*cos(M_PI*yy) + zFun_ex_an4(x,t) * (-t*M_PI*cos(M_PI*xx)*sin(M_PI*yy));
-}
-// - normal derivative of velocity
-void nFun_an4(const Vector & x, const double t, Vector & n){
-  double xx(x(0));
-  double yy(x(1));
-  n = 0.;
-  // if ( yy == 0. ){ //S
-  //   n(0) = -xx*xx;
-  //   n(1) = 0.;
-  // }
-  // if ( xx == 0. ){ //W
-  //   n(0) = 0.;
-  //   n(1) = yy*yy;
-  // }
-  // if ( yy == 1. ){ //N
-  //   n(0) =  xx*xx;
-  //   n(1) = -2*xx;
-  // }
-  if ( xx == 1. ){ //E
-    n(0) = 2*yy;
-    n(1) = - yy*yy;
-  }
-
-  n *= t;
-}
-// - null rhs of pressure
-double gFun_an4(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential counteracts every term
-double hFun_an4( const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  Vector u(2);
-  uFun_ex_an4(x,t,u);
-  double ugradA = u(0)*(-t*M_PI*sin(M_PI*xx)*cos(M_PI*yy))
-                + u(1)*(-t*M_PI*cos(M_PI*xx)*sin(M_PI*yy));
-  //       dtA                       + u Grad(A) - eta/mu0 lap(A)
-  return ( cos(M_PI*xx)*cos(M_PI*yy) + ugradA    - zFun_ex_an4(x,t) );
-}
-// - null normal derivative of vector potential
-double mFun_an4( const Vector & x, const double t ){
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_an4(const Vector & x, const double t, Vector & w){
-  uFun_ex_an4(x,t,w);
-  double ds = perturbation(x,t);
-  w(0) = w(0) + ds;
-  w(1) = w(1) - ds;
-}
-double qFun_an4(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( pFun_ex_an4(x,t) + ds );
-}
-double yFun_an4(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( zFun_ex_an4(x,t) + ds );
-}
-double cFun_an4(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return ( aFun_ex_an4(x,t) + ds );
-}
-
-
-
-
-
-
-
-
-//***************************************************************************
-//TEST CASES OF SOME ACTUAL RELEVANCE
-//***************************************************************************
-// Kelvin-Helmholtz instability
-namespace KHIData{
-  const double delta = 0.07957747154595;
-};
-
-// - top velocity of 1.5, bottom velocity of -1.5
-void uFun_ex_KHI(const Vector & x, const double t, Vector & u){
-  u(0) = 0.;
-  u(1) = 0.;
-
-  if ( x(1) >= 0.5 ){
-    u(0) =  1.5;
-  }else{
-    u(0) = -1.5;
-  }
-}
-// - pressure - unused
-double pFun_ex_KHI(const Vector & x, const double t ){
-  return 0.;
-}
-// - laplacian of vector potential - unused
-double zFun_ex_KHI(const Vector & x, const double t ){
-  const double delta = KHIData::delta;
-  double yy(x(1));
-  return ( 1./ ( delta * cosh( yy/delta ) * cosh( yy/delta ) ) );
-}
-// - vector potential
-double aFun_ex_KHI(const Vector & x, const double t ){
-  const double delta = KHIData::delta;
-  double yy(x(1));
-  return ( delta * log( cosh( yy/delta ) ) );
-}
-// - rhs of velocity - unused
-void fFun_KHI(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - normal derivative of velocity
-void nFun_KHI(const Vector & x, const double t, Vector & n){
-  n = 0.;
-}
-// - rhs of pressure - unused
-double gFun_KHI(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential - unused
-double hFun_KHI( const Vector & x, const double t ){
-  return 0.;
-}
-// - normal derivative of vector potential
-double mFun_KHI( const Vector & x, const double t ){
-  double yy(x(1));
-  const double delta = KHIData::delta;
-
-  if( yy ==  1.0 ){
-    return   sinh(yy/delta) / cosh(yy/delta);
-  }else if( yy ==  0.0 ){
-    return - sinh(yy/delta) / cosh(yy/delta);
-  }
-
-  return 0.;
-}
-// - define IG for every linearised variable -> set them to initial conditions
-void wFun_KHI(const Vector & x, const double t, Vector & w){
-  uFun_ex_KHI(x,t,w);
-}
-double qFun_KHI(  const Vector & x, const double t ){
-  return pFun_ex_KHI(x,t);
-}
-double yFun_KHI(  const Vector & x, const double t ){
-  return zFun_ex_KHI(x,t);
-}
-double cFun_KHI(  const Vector & x, const double t ){
-  return aFun_ex_KHI(x,t);
-}
-
-
-
-
-
-// Island coalescence
-namespace IslandCoalescenceData{
-  const double delta = 1./(2.*M_PI);
-  const double P0 = 1.;
-  const double epsilon = 0.4;
-};
-
-void uFun_ex_island(const Vector & x, const double t, Vector & u){
-  u = 0.;
-}
-// - pressure
-double pFun_ex_island(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  const double delta   = IslandCoalescenceData::delta;
-  const double P0      = IslandCoalescenceData::P0;
-  const double epsilon = IslandCoalescenceData::epsilon;
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
-
-  return ( P0 + ( 1. - epsilon*epsilon ) / ( 2.*temp*temp ) );
-}
-// - laplacian of vector potential
-double zFun_ex_island(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  const double delta   = IslandCoalescenceData::delta;
-  const double epsilon = IslandCoalescenceData::epsilon;
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
-
-  return ( ( 1. - epsilon*epsilon ) / ( delta * temp*temp ) );
-}
-// - vector potential
-double aFun_ex_island(const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  const double delta   = IslandCoalescenceData::delta;
-  const double epsilon = IslandCoalescenceData::epsilon;
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);
-
-  return ( delta * log( temp ) );
-}
-// - rhs of velocity - unused
-void fFun_island(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - normal derivative of velocity
-void nFun_island(const Vector & x, const double t, Vector & n){
-  n = 0.;
-}
-// - rhs of pressure - unused
-double gFun_island(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential - unused
-double hFun_island( const Vector & x, const double t ){
-  return 0.;
-}
-// - normal derivative of vector potential
-double mFun_island( const Vector & x, const double t ){
-  double xx(x(0));
-  double yy(x(1));
-  const double delta   = IslandCoalescenceData::delta;
-  const double epsilon = IslandCoalescenceData::epsilon;
-
-  double temp = cosh(yy/delta) + epsilon*cos(xx/delta);  
-
-  if(xx == 1.0){
-    return - epsilon*sin(xx/delta) / temp;
-  }else if( xx == 0.0 ){
-    return   epsilon*sin(xx/delta) / temp;
-  }else if( yy ==  1.0 ){
-    return   sinh(yy/delta) / temp;
-  }else if( yy == -1.0 ){
-    return - sinh(yy/delta) / temp;
-  }
-
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_island(const Vector & x, const double t, Vector & w){
-  uFun_ex_island(x,t,w);
-}
-double qFun_island(  const Vector & x, const double t ){
-  return pFun_ex_island(x,t);
-}
-double yFun_island(  const Vector & x, const double t ){
-  return zFun_ex_island(x,t);
-}
-double cFun_island(  const Vector & x, const double t ){
-  return aFun_ex_island(x,t);
-}
-
-
-
-
-
-// Hartmann flow
-namespace HartmannData{
-  const double G0  = 1.0;
-  const double B0  = 1.0;
-};
-// - velocity
-void uFun_ex_hartmann(const Vector & x, const double t, Vector & u){
-  const double G0  = HartmannData::G0;
-  const double B0  = HartmannData::B0;
-
-  u = 0.;
-
-  u(0) = G0/B0 * ( cosh(1.) - cosh(x(1)) )/sinh(1.);
-}
-// - pressure
-double pFun_ex_hartmann(const Vector & x, const double t ){
-  const double G0  = HartmannData::G0;
-  return -G0*( x(0) + 1.0 );    // zero at outflow (x=-1)
-}
-// - laplacian of vector potential - unused
-double zFun_ex_hartmann(const Vector & x, const double t ){
-  const double G0  = HartmannData::G0;
-  const double B0  = HartmannData::B0;
-
-  return -G0/B0 * ( 1. - cosh(x(1))/sinh(1.) );
-}
-// - vector potential
-double aFun_ex_hartmann(const Vector & x, const double t ){
-  const double G0  = HartmannData::G0;
-  const double B0  = HartmannData::B0;
-
-  return -B0*x(0) - G0/B0 * ( x(1)*x(1)/2. - cosh(x(1))/sinh(1.) );
-}
-// - rhs of velocity - unused
-void fFun_hartmann(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// - normal derivative of velocity
-void nFun_hartmann(const Vector & x, const double t, Vector & n){
-  const double yy(x(1));
-  const double G0  = HartmannData::G0;
-  const double B0  = HartmannData::B0;
-
-  n = 0.;
-
-  if ( yy== 1. ){
-    n(1) = -G0/B0 * sinh(yy)/sinh(1.);
-  }
-  if ( yy==-1. ){
-    n(1) =  G0/B0 * sinh(yy)/sinh(1.);
-  }
-}
-// - rhs of pressure - unused
-double gFun_hartmann(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential
-double hFun_hartmann( const Vector & x, const double t ){
-  const double G0  = HartmannData::G0;
-  const double B0  = HartmannData::B0;
-
-  return - G0/B0 * ( cosh(1.)/sinh(1.) - 1. );
-}
-// - normal derivative of vector potential
-double mFun_hartmann( const Vector & x, const double t ){
-  const double xx(x(0));
-  const double yy(x(1));
-  const double G0  = HartmannData::G0;
-  const double B0  = HartmannData::B0;
-
-  if ( yy==1. || yy == -1. ){
-    return yy*( -G0/B0 * ( yy - sinh(yy)/sinh(1.) ) );
-  }
-  if ( xx==1. || xx == -1. ){
-    return -B0*xx;
-  }
-  return 0.;
-}
-// - define perturbed IG for every linearised variable
-void wFun_hartmann(const Vector & x, const double t, Vector & w){
-  uFun_ex_hartmann(x,t,w);
-  double ds = perturbation(x,t);
-  w(0) = w(0) + ds;
-  w(1) = w(1) - ds;
+  temp = u.Norml2();
+  temp*= temp;
+  MPI_Allreduce( MPI_IN_PLACE, &temp, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD );
+  norm(4) = sqrt(temp);
 
 }
-double qFun_hartmann(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return pFun_ex_hartmann(x,t) + ds;
-}
-double yFun_hartmann(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return zFun_ex_hartmann(x,t) + ds;
-}
-double cFun_hartmann(  const Vector & x, const double t ){
-  double ds = perturbation(x,t);
-  return aFun_ex_hartmann(x,t) + ds;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Driven cavity flow (speed ramping up)-------------------------------------
-// Exact solution (velocity) - only for BC
-void uFun_ex_cavity(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u = 0.;
-
-  if( yy==1.0 ){
-    u(0) = t * 8*xx*(1-xx)*(2.*xx*xx-2.*xx+1.);   // regularised (1-x^4 mapped from -1,1 to 0,1)
-    // u(0) = t;                      // leaky
-    // if( xx > 1.0 && xx < 1.0 )
-    //   u(0) = t;                    // watertight
-  }
-}
-// Exact solution (pressure) - unused
-double pFun_ex_cavity(const Vector & x, const double t ){
-  return 0.;
-}
-// - laplacian of vector potential - unused
-double zFun_ex_cavity(const Vector & x, const double t ){
-  return 0.;
-}
-// - vector potential
-double aFun_ex_cavity(const Vector & x, const double t ){
-  return 0.;
-}
-// Rhs (velocity) - no forcing
-void fFun_cavity(const Vector & x, const double t, Vector & f){
-  f = 0.;
-}
-// Normal derivative of velocity - unused
-void nFun_cavity(const Vector & x, const double t, Vector & n){
-  n = 0.;
-}
-// Rhs (pressure) - unused
-double gFun_cavity(const Vector & x, const double t ){
-  return 0.;
-}
-// - rhs of vector potential
-double hFun_cavity( const Vector & x, const double t ){
-  return 0.;
-}
-// - normal derivative of vector potential
-double mFun_cavity( const Vector & x, const double t ){
-  return 0.;
-}
-// - define IG for every linearised variable
-void wFun_cavity(const Vector & x, const double t, Vector & w){
-  uFun_ex_cavity(x,t,w);
-}
-double qFun_cavity(  const Vector & x, const double t ){
-  return pFun_ex_cavity(x,t);
-}
-double yFun_cavity(  const Vector & x, const double t ){
-  return zFun_ex_cavity(x,t);
-}
-double cFun_cavity(  const Vector & x, const double t ){
-  return aFun_ex_cavity(x,t);
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// Driven cavity flow (constant speed) --------------------------------------
-// Exact solution (velocity) - only for BC
-void uFun_ex_cavityC(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) = 0.0;
-  u(1) = 0.0;
-
-  if( yy==1.0 ){
-    u(0) = 8*xx*(1-xx)*(2.*xx*xx-2.*xx+1.);   // regularised (1-x^4 mapped from -1,1 to 0,1)
-    // u(0) = 1.0;                      // leaky
-    // if( xx > 0. && xx < 1.0 )
-    //   u(0) = 1.0;                    // watertight
-  }
-}
-
-// Exact solution (pressure) - unused
-double pFun_ex_cavityC(const Vector & x, const double t ){
-  return 0.0;
-}
-
-// Rhs (velocity) - no forcing
-void fFun_cavityC(const Vector & x, const double t, Vector & f){
-  f(0) = 0.0;
-  f(1) = 0.0;
-}
-
-// Normal derivative of velocity - unused
-void nFun_cavityC(const Vector & x, const double t, Vector & n){
-  n(0) = 0.0;
-  n(1) = 0.0;
-}
-
-// Rhs (pressure) - unused
-double gFun_cavityC(const Vector & x, const double t ){
-  return 0.0;
-}
-
-
-
-
-
-
-// Poiseuille flow (speed ramping up)----------------------------------------
-// Exact solution (velocity)
-void uFun_ex_poiseuille(const Vector & x, const double t, Vector & u){
-  double yy(x(1));
-  u(0) = t * 4.*yy*(1.-yy);
-  u(1) = 0.0;
-}
-
-// Exact solution (pressure)
-double pFun_ex_poiseuille(const Vector & x, const double t ){
-  double xx(x(0));
-  return -8.*t*(xx-8.);   // pressure is zero at outflow (xx=8)- this way we can use the same function for both the long [0,8]x[0,1] and short [7,8]x[0,1] domains
-}
-
-// Rhs (velocity) - counterbalance dt term
-void fFun_poiseuille(const Vector & x, const double t, Vector & f){
-  double yy(x(1));
-  f(0) = 4.*yy*(1.-yy);
-  f(1) = 0.0;
-}
-
-// Normal derivative of velocity - used only at outflow
-void nFun_poiseuille(const Vector & x, const double t, Vector & n){
-  n(0) = 0.0;
-  n(1) = 0.0;
-}
-
-// Rhs (pressure) - unused
-double gFun_poiseuille(const Vector & x, const double t ){
-  return 0.0;
-}
-
-
-
-
-
-// Poiseuille flow (constant speed) ----------------------------------------
-// Exact solution (velocity)
-void uFun_ex_poiseuilleC(const Vector & x, const double t, Vector & u){
-  double yy(x(1));
-  u(0) = 4.*yy*(1.-yy);
-  u(1) = 0.0;
-}
-
-// Exact solution (pressure)
-double pFun_ex_poiseuilleC(const Vector & x, const double t ){
-  double xx(x(0));
-  return -8.*(xx-8.);   // pressure is zero at outflow (xx=8)
-}
-
-// Rhs (velocity) - no source
-void fFun_poiseuilleC(const Vector & x, const double t, Vector & f){
-  f(0) = 0.0;
-  f(1) = 0.0;
-}
-
-// Normal derivative of velocity - used only at outflow
-void nFun_poiseuilleC(const Vector & x, const double t, Vector & n){
-  n(0) = 0.0;
-  n(1) = 0.0;
-}
-
-// Rhs (pressure) - unused
-double gFun_poiseuilleC(const Vector & x, const double t ){
-  return 0.0;
-}
-
-
-
-
-// Poiseuille flow (opposite velocity flow) ---------------------------------
-// Exact solution (velocity)
-void uFun_ex_poiseuilleM(const Vector & x, const double t, Vector & u){
-  double yy(x(1));
-  u(0) = - t * 4.*yy*(1.-yy);
-  u(1) = 0.0;
-}
-
-// Exact solution (pressure)
-double pFun_ex_poiseuilleM(const Vector & x, const double t ){
-  double xx(x(0));
-  return 8.*t*(xx-7.);   // pressure is zero at outflow (xx=7)
-}
-
-// Rhs (velocity) - counterbalance dt term
-void fFun_poiseuilleM(const Vector & x, const double t, Vector & f){
-  double yy(x(1));
-  f(0) = - 4.*yy*(1.-yy);
-  f(1) = 0.0;
-}
-
-// Normal derivative of velocity - used only at outflow
-void nFun_poiseuilleM(const Vector & x, const double t, Vector & n){
-  n(0) = 0.0;
-  n(1) = 0.0;
-}
-
-// Rhs (pressure) - unused
-double gFun_poiseuilleM(const Vector & x, const double t ){
-  return 0.0;
-}
-
-
-
-
-
-
-
-// Flow over step (speed ramping up)----------------------------------------
-// Exact solution (velocity) - only for BC
-void uFun_ex_step(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) = 0.0;
-  u(1) = 0.0;
-
-  if( xx==0.0 ){
-    u(0) = t * 4.*yy*(1.-yy);
-  }
-}
-
-// Exact solution (pressure) - unused
-double pFun_ex_step(const Vector & x, const double t ){
-  return 0.0;
-}
-
-// Rhs (velocity) - no forcing
-void fFun_step(const Vector & x, const double t, Vector & f){
-  f(0) = 0.0;
-  f(1) = 0.0;
-}
-
-// Normal derivative of velocity - used only at outflow
-// - setting both this and the pressure to zero imposes zero average p at outflow
-void nFun_step(const Vector & x, const double t, Vector & n){
-  n(0) = 0.0;
-  n(1) = 0.0;
-}
-
-// Rhs (pressure) - unused
-double gFun_step(const Vector & x, const double t ){
-  return 0.0;
-}
-
-
-
-
-
-
-// Double-glazing problem (speed ramping up)--------------------------------
-// Exact solution (velocity) - only for BC
-void uFun_ex_glazing(const Vector & x, const double t, Vector & u){
-  double xx(x(0));
-  double yy(x(1));
-  u(0) = 0.0;
-  u(1) = 0.0;
-
-  // just like cavity flow
-  if( yy==1.0 ){
-    u(0) = t * 8*xx*(1-xx)*(2.*xx*xx-2.*xx+1.);   // regularised (1-x^4 mapped from -1,1 to 0,1)
-    // u(0) = 1.0;                      // leaky
-    // if( xx > 0. && xx < 1.0 )
-    //   u(0) = 1.0;                    // watertight
-  }
-
-  // if( xx==1.0 ){
-  //   u(1) = -t * (1.-yy*yy*yy*yy);   // regularised
-  //   // u(1) = -t;                      // leaky
-  //   // if( yy > -1. && yy < 1.0 )
-  //   //   u(1) = -t;                    // watertight
-  // }
-}
-
-// Exact solution (pressure) - unused
-double pFun_ex_glazing(const Vector & x, const double t ){
-  return 0.0;
-}
-
-// Rhs (velocity) - no forcing
-void fFun_glazing(const Vector & x, const double t, Vector & f){
-  f(0) = 0.0;
-  f(1) = 0.0;
-}
-
-// Normal derivative of velocity - unused
-void nFun_glazing(const Vector & x, const double t, Vector & n){
-  n(0) = 0.0;
-  n(1) = 0.0;
-}
-
-// velocity field
-void wFun_glazing(const Vector & x, const double t, Vector & w){
-  double xx(x(0));
-  double yy(x(1));
-  w(0) = - t * 2.*(2*yy-1)*(4*xx*xx-4*xx+1); // (-t*2.*yy*(1-xx*xx) mapped from -1,1 to 0,1)
-  w(1) =   t * 2.*(2*xx-1)*(4*yy*yy-4*yy+1); // ( t*2.*xx*(1-yy*yy) mapped from -1,1 to 0,1)
-}
-
-// Rhs (pressure) - unused
-double gFun_glazing(const Vector & x, const double t ){
-  return 0.0;
-}
-
 
 
 

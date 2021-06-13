@@ -9,7 +9,124 @@
 
 namespace mfem{
 
-// Analytical test case 4
+// Constant in space
+namespace ConstantTData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+  const double _mu   = 1.;
+  const double _eta  = 1.;
+  const double _mu0  = 1.;
+  const std::string _pbName   = "ConstantT";
+  const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+
+// // Linear in space, constant in time
+// namespace LinearData{
+//   void   uFun_ex( const Vector & x, const double t, Vector & u );
+//   double pFun_ex( const Vector & x, const double t             );
+//   double zFun_ex( const Vector & x, const double t             );
+//   double aFun_ex( const Vector & x, const double t             );
+//   void   fFun(    const Vector & x, const double t, Vector & f );
+//   void   nFun(    const Vector & x, const double t, Vector & f );
+//   double gFun(    const Vector & x, const double t             );
+//   double hFun(    const Vector & x, const double t             );
+//   double mFun(    const Vector & x, const double t             );
+//   void   wFun(    const Vector & x, const double t, Vector & w );
+//   double qFun(    const Vector & x, const double t             );
+//   double cFun(    const Vector & x, const double t             );
+//   double yFun(    const Vector & x, const double t             );
+//   const double _mu   = 1.;
+//   const double _eta  = 1.;
+//   const double _mu0  = 1.;
+//   const std::string _pbName   = "Linear";
+//   const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+//   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+// };
+
+// Quadratic in space, constant in time
+namespace QuadraticData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+  const double _mu   = 1.;
+  const double _eta  = 1.;
+  const double _mu0  = 1.;
+  const std::string _pbName   = "Quadratic";
+  const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+// Cubic in space, constant in time
+namespace CubicData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+  const double _mu   = 1.;
+  const double _eta  = 1.;
+  const double _mu0  = 1.;
+  const std::string _pbName   = "Cubic";
+  const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+// Cubic in space, Linear in time
+namespace CubicTData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+  const double _mu   = 1.;
+  const double _eta  = 1.;
+  const double _mu0  = 1.;
+  const std::string _pbName   = "CubicT";
+  const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+
+// Non-polynomial
 namespace Analytical4Data{
   void   uFun_ex( const Vector & x, const double t, Vector & u );
   double pFun_ex( const Vector & x, const double t             );
@@ -80,8 +197,8 @@ namespace KHIData{
   double cFun(    const Vector & x, const double t             );
   double yFun(    const Vector & x, const double t             );
   const double _delta = 0.07957747154595;
-  const double _mu   = 1.;
-  const double _eta  = 1.;
+  const double _mu   = 1e-3;
+  const double _eta  = 1e-3;
   const double _mu0  = 1.;
   const std::string _pbName   = "KHI";
   const std::string _meshFile ="./meshes/tri-rect-KHI.mesh";
@@ -109,8 +226,8 @@ namespace IslandCoalescenceData{
   const double _beta  = 1e-3;
   const double _P0    = 1.;
   const double _eps   = 0.2;
-  const double _mu    = 1e-2;
-  const double _eta   = 1e-2;
+  const double _mu    = 1.;
+  const double _eta   = 1.;
   const double _mu0   = 1.;
   const std::string _pbName   = "IslandCoalescence";
   const std::string _meshFile ="./meshes/tri-square-island.mesh";
@@ -166,14 +283,63 @@ namespace TearingModeData{
   double yFun(    const Vector & x, const double t             );
   const double _lambda = 5.;
   const double _Lx     = 3.;
-  const double _beta   = 1e-3;
-  const double _mu     = 1e-2;
-  const double _eta    = 1e-2;
+  const double _beta   = 1.;
+  const double _mu     = 1.;
+  const double _eta    = 1;
   const double _mu0    = 1.;
+  const double _P0     = tanh(_lambda/2.)/_lambda;  // to ensure zero-averaged pressure at equilibrium
   const std::string _pbName   = "TearingMode";
-  // const std::string _meshFile ="./meshes/quad-rect-tearing-xper.mesh";
-  // const std::string _meshFile ="./meshes/tri-rect-tearing-sym.mesh";
   const std::string _meshFile ="./meshes/tri-rect-tearing.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+// Tearing mode (exploiting symmetry)
+namespace TearingModeSymData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+  const double _lambda = TearingModeData::_lambda;
+  const double _Lx     = TearingModeData::_Lx;
+  const double _beta   = TearingModeData::_beta;
+  const double _mu     = TearingModeData::_mu;
+  const double _eta    = TearingModeData::_eta;
+  const double _mu0    = TearingModeData::_mu0;
+  const double _P0     = TearingModeData::_P0;
+  const std::string _pbName   = "TearingModeSym";
+  const std::string _meshFile ="./meshes/tri-rect-tearing-sym.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+// Tearing mode (whole domain, periodic in x)
+namespace TearingModePerData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+  const double _mu  = TearingModeData::_mu; //NB: reuse data from original problem, as I'm using its functions, too!
+  const double _eta = TearingModeData::_eta;
+  const double _mu0 = TearingModeData::_mu0;
+  const std::string _pbName   = "TearingModePer";
+  const std::string _meshFile ="./meshes/quad-rect-tearing-xper.mesh";
   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
 };
 
@@ -193,12 +359,10 @@ namespace TearingModeFlippedData{
   double qFun(    const Vector & x, const double t             );
   double cFun(    const Vector & x, const double t             );
   double yFun(    const Vector & x, const double t             );
-  const double _mu     = TearingModeData::_mu;
+  const double _mu     = TearingModeData::_mu; //NB: reuse data from original problem, as I'm using its functions, too!
   const double _eta    = TearingModeData::_eta;
   const double _mu0    = TearingModeData::_mu0;
-  const std::string _pbName   = "TearingModeFlipped";
-  // const std::string _meshFile ="./meshes/quad-rect-tearing-xper.mesh";
-  // const std::string _meshFile ="./meshes/tri-rect-tearing-sym.mesh";
+  const std::string _pbName   = "TearingModeFlip";
   const std::string _meshFile ="./meshes/tri-rect-tearing-flip.mesh";
   void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
 };
@@ -263,16 +427,82 @@ namespace CavityDrivenData{
 
 
 
+// Analytical test case for Navier-Stokes
+namespace AnalyticalNS0Data{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+
+  void   guFun_ex(const Vector & x, const double t, Vector & u );
+  void   gvFun_ex(const Vector & x, const double t, Vector & u );
+  void   gaFun_ex(const Vector & x, const double t, Vector & u );
+
+  const double _mu  = 1e-2;
+  const double _eta = 1.;
+  const double _mu0 = 1.;
+  const std::string _pbName   = "AnalyticalNS0";
+  const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
+
+
+
+// Analytical test case for "separated" NS - magnetic field
+namespace AnalyticalMagSepData{
+  void   uFun_ex( const Vector & x, const double t, Vector & u );
+  double pFun_ex( const Vector & x, const double t             );
+  double zFun_ex( const Vector & x, const double t             );
+  double aFun_ex( const Vector & x, const double t             );
+  void   fFun(    const Vector & x, const double t, Vector & f );
+  void   nFun(    const Vector & x, const double t, Vector & f );
+  double gFun(    const Vector & x, const double t             );
+  double hFun(    const Vector & x, const double t             );
+  double mFun(    const Vector & x, const double t             );
+  void   wFun(    const Vector & x, const double t, Vector & w );
+  double qFun(    const Vector & x, const double t             );
+  double cFun(    const Vector & x, const double t             );
+  double yFun(    const Vector & x, const double t             );
+
+  void   guFun_ex(const Vector & x, const double t, Vector & u );
+  void   gvFun_ex(const Vector & x, const double t, Vector & u );
+  void   gaFun_ex(const Vector & x, const double t, Vector & u );
+
+  const double _mu  = AnalyticalNS0Data::_mu; // reuse the fluid part from the NS test
+  const double _eta = 1e18; // the magnetic diffusion coefficient is given by eta/mu0
+  const double _mu0 = 1e20; // by making mu0 *very* large, we're basically sending to 0 the lorentz term: this is a bit of a hack to reduce interdependence
+  const std::string _pbName   = "AnalyticalMagSep";
+  const std::string _meshFile = "./meshes/tri-square-testAn.mesh";
+  void setEssTags( Array<int>& essTagsU, Array<int>& essTagsV, Array<int>& essTagsP, Array<int>& essTagsA );
+};
 
 
 
 
 
+// handy functors type
+typedef void(  *VecFuncPtr_t)( const Vector & x, const double t, Vector & u );
+typedef double(   *FuncPtr_t)( const Vector & x, const double t             );
 
 
-
-
-
+// handy function to perform problem initialisation
+void MHDTestCaseSelector( int pbId, 
+                          VecFuncPtr_t & uFun,         FuncPtr_t & pFun, FuncPtr_t & zFun,    FuncPtr_t & aFun,
+                          VecFuncPtr_t & fFun,         FuncPtr_t & gFun, FuncPtr_t & hFun, VecFuncPtr_t & nFun,   FuncPtr_t & mFun,
+                          VecFuncPtr_t & wFun,         FuncPtr_t & qFun, FuncPtr_t & yFun,    FuncPtr_t & cFun,
+                          double & mu, double & eta, double & mu0,
+                          std::string & pbName, std::string & meshFile,
+                          Array<int> & essTagsU, Array<int> & essTagsV, Array<int> & essTagsP, Array<int> & essTagsA,
+                          VecFuncPtr_t *guFun=NULL, VecFuncPtr_t *gvFun=NULL,              VecFuncPtr_t *gaFun=NULL );
 
 
 
