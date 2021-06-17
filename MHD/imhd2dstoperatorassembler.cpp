@@ -1583,10 +1583,18 @@ void IMHD2DSTOperatorAssembler::ComputeDomainArea( ){
 //   -- Cp <->    ( A, C )
 //   -- C0 <-> -2*( A, C ) + dt^2*B/mu_0 ( ∇A, ∇C )
 //   -- Cm <->    ( A, C )
-//  - Full term Fa Ma^-1 Fa + |B0|/mu0 Aa
-//   -- Cp <->    Fa Ma^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
+//  - Full term Fa Ma^-1 Fa + |B0|/mu0 Aa (discType=2)
+//   -- Cp <->    Fa diag(Ma)^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
 //   -- C0 <-> - ( Fa{t} + Fa{t+1} )
 //   -- Cm <->    Ma
+//  - Term Fa Ma^-1 Fa + |B0|/mu0 Aa with diag(Ma) everywhere (discType=3)
+//   -- Cp <->    Fa diag(Ma)^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
+//   -- C0 <-> - ( Ma diag(Ma)^-1 Fa{t} + Fa{t+1} diag(Ma)^-1 Ma)
+//   -- Cm <->    Ma diag(Ma)^-1 Ma
+//  - Term Fa Ma^-1 Fa + |B0|/mu0 Aa but only on diagonal (discType=4)
+//   -- Cp <->    Fa diag(Ma)^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
+//   -- C0 <->   0
+//   -- Cm <->   0
 //  where B = ||B_0||_2, with B_0 being a space(-time) average of the magnetic field
 //  while Wa is the spatial part of the Fa = Ma + dt Wa operatr
 void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
@@ -1677,6 +1685,9 @@ void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
 
 
     // - FULL OPERATOR Fa Ma^-1 Fa + |B|K
+
+    case 3:
+    case 4:
     case 2:{
       // - get inverse of collapsed mass matrix (only diagonal considered)
       Vector MDiagInv;
@@ -1688,94 +1699,87 @@ void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
 
       // - assemble the various block-diagonals
       // -- Main diagonal: Fa*Ma^-1*Fa + dt^2 B/mu0 Aa
-      SparseMatrix *MiF  = Mult(MaLinv,_Fa);
-      SparseMatrix *FMiF = Mult(_Fa,*MiF);
-      _Cp = *FMiF;
-      delete MiF;
-      delete FMiF;
+      SparseMatrix *dMiF  = Mult(MaLinv,_Fa);
+      SparseMatrix *FdMiF = Mult(_Fa,*dMiF);
+      _Cp = *FdMiF;
+      // delete dMiF; // deleted afterwards
+      delete FdMiF;
       _Cp.Add( _dt*_dt*B0norm2/_mu0, _Aa );
 
-      // -- First subdiagonal: -( Fa{t}+Fa{t+1} )
-      // --- send Fa to previous processor
-      // ---- first tell it how many nonzero elems to expect
-      // int numNZNext = 0;
-      // if ( _myRank > 0 ){
-      //   int numNZmine = _Fa.NumNonZeroElems();
-      //   MPI_Send( &numNZmine, 1, MPI_INT, _myRank-1, 4* _myRank,    _comm );        
-      // }
-      // if ( _myRank < _numProcs-1 ){
-      //   MPI_Recv( &numNZNext, 1, MPI_INT, _myRank+1, 4*(_myRank+1), _comm, MPI_STATUS_IGNORE );        
-      // }
-      // // ---- then send the actual matrix data
-      // //       this could probably be avoided, as all procs have shared memory, but MPI doesnt make this assumption
-      // if ( _myRank > 0 ){
-      //   MPI_Send( _Fa.GetI(),    _Fa.NumRows()+1,       MPI_INT,    _myRank-1, 4* _myRank   +1, _comm );        
-      //   MPI_Send( _Fa.GetJ(),    _Fa.NumNonZeroElems(), MPI_INT,    _myRank-1, 4* _myRank   +2, _comm );        
-      //   MPI_Send( _Fa.GetData(), _Fa.NumNonZeroElems(), MPI_DOUBLE, _myRank-1, 4* _myRank   +3, _comm );    
-      // }
-      // if ( _myRank < _numProcs-1 ){
-      //   int    iiNext[_Fa.NumRows()+1];
-      //   int    jjNext[numNZNext];
-      //   double ddNext[numNZNext];
-      //   MPI_Recv( iiNext,        _Fa.NumRows()+1,       MPI_INT,    _myRank+1, 4*(_myRank+1)+1, _comm, MPI_STATUS_IGNORE );        
-      //   MPI_Recv( jjNext,        numNZNext,             MPI_INT,    _myRank+1, 4*(_myRank+1)+2, _comm, MPI_STATUS_IGNORE );        
-      //   MPI_Recv( ddNext,        numNZNext,             MPI_DOUBLE, _myRank+1, 4*(_myRank+1)+3, _comm, MPI_STATUS_IGNORE );        
-      //   // ---- reassemble here operator Fa{t+1}
-      //   SparseMatrix FaNext( iiNext, jjNext, ddNext, _Fa.NumRows(), _Fa.NumCols(), false, false, true ); // don't own! otherwise youd be deleting twice!
 
-      //   // --- finally assemble subdiagonal
-      //   SparseMatrix *temp = Add( FaNext, _Fa );
-      //   _C0 = *temp;
-      //   delete temp;
-      //   _C0 *= -1.;
+      if ( _ASTSolveType == 4 ){  // set subdiagonals to 0
+        SparseMatrix temp( MDiagInv.Size(), MDiagInv.Size(), 0 );
+        _C0 = temp;
+        _Cm = temp;
 
-      // }else{
-      //   // this shouldn't be necessary, but oh well;
-      //   _C0  = _Fa;
-      //   _C0 *= -2.;
-      // }
-      // --- alternatively, have previous processor assemble Fa at next timestep by itself
-      // ---- first send it its linearisation of u
-      GridFunction wFuncCoeffNext( _UhFESpace );
-      if ( _myRank > 0 ){
-        MPI_Send(    _wGridFunc.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank-1, _myRank,   _comm );        
+      }else{  // must assemble subdiags
+
+        // --- have previous processor assemble Fa at next timestep by itself
+        // ---- first send it its linearisation of u
+        GridFunction wFuncCoeffNext( _UhFESpace );
+        if ( _myRank > 0 ){
+          MPI_Send(    _wGridFunc.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank-1, _myRank,   _comm );        
+        }
+        if ( _myRank < _numProcs-1 ){
+          MPI_Recv( wFuncCoeffNext.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank+1, _myRank+1, _comm, MPI_STATUS_IGNORE );        
+          // ---- reassemble here operator Fa{t+1}      
+          const IntegrationRule *ir = &( GetRule() );
+          // ----- assemble bilinear form
+          ConstantCoefficient one( 1.0 );
+          ConstantCoefficient dt( _dt );
+          VectorGridFunctionCoefficient wNextCoeff( &wFuncCoeffNext );
+          BilinearForm aavarf( _AhFESpace );
+          aavarf.AddDomainIntegrator(new MassIntegrator( one ));                          // <A,B>
+          aavarf.AddDomainIntegrator(new DiffusionIntegrator( dt ));                      // dt*<∇A,∇B>
+          aavarf.AddDomainIntegrator(new ConvectionIntegrator( wNextCoeff, _dt ));        // dt*<(u·∇)A,B>
+          aavarf.GetDBFI()->operator[](0)->SetIntRule(ir);
+          aavarf.GetDBFI()->operator[](1)->SetIntRule(ir);
+          aavarf.GetDBFI()->operator[](2)->SetIntRule(ir);
+          aavarf.Assemble();
+          aavarf.Finalize();
+          SparseMatrix FaNext;
+          FaNext.MakeRef( aavarf.SpMat() );
+          
+          // --- finally assemble subdiagonal
+          if ( _ASTSolveType == 2 ){  // use inverse of whole Ma
+            // -- First subdiagonal: - (Fa + FaNext)
+            SparseMatrix *temp = Add( FaNext, _Fa );
+            _C0 = *temp;
+            delete temp;
+            _C0 *= -1.;
+            // _C0 = _Fa;
+            // _C0.Add( FaNext );
+            // _C0 *= -1.;
+            // -- Second subdiagonal: Ma
+            _Cm  = _MaNoZero;   
+          }else{  // use inverse of diag(Ma)
+            // -- First subdiagonal: - (Ma dMi Fa + FaNext dMi Ma)
+            SparseMatrix *dMiMa    = Mult(MaLinv,_MaNoZero);
+            SparseMatrix *FaNdMiMa = Mult(FaNext,*dMiMa);
+            SparseMatrix *MadMiFa  = Mult(_MaNoZero,*dMiF);
+            SparseMatrix *temp     = Add( *MadMiFa, *FaNdMiMa );
+            _C0 = *temp;
+            _C0 *= -1.;
+            // -- Second subdiagonal: Ma dMi Ma
+            SparseMatrix *MadMiMa = Mult(_MaNoZero,*dMiMa);
+            _Cm  = *MadMiMa;   
+            delete dMiMa;
+            delete FaNdMiMa;
+            delete MadMiFa;
+            delete MadMiMa;
+            delete temp;
+          }
+        }else{
+          // this shouldn't be necessary, but oh well;
+          // -- First subdiagonal: - 2Fa
+          _C0  = _Fa;
+          _C0 *= -2.;
+          // -- Second subdiagonal: Ma
+          _Cm  = _MaNoZero;   
+        }
       }
-      if ( _myRank < _numProcs-1 ){
-        MPI_Recv( wFuncCoeffNext.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank+1, _myRank+1, _comm, MPI_STATUS_IGNORE );        
-        // ---- reassemble here operator Fa{t+1}      
-        const IntegrationRule *ir = &( GetRule() );
-        // ----- assemble bilinear form
-        ConstantCoefficient one( 1.0 );
-        ConstantCoefficient dt( _dt );
-        VectorGridFunctionCoefficient wNextCoeff( &wFuncCoeffNext );
-        BilinearForm aavarf( _AhFESpace );
-        aavarf.AddDomainIntegrator(new MassIntegrator( one ));                          // <A,B>
-        aavarf.AddDomainIntegrator(new DiffusionIntegrator( dt ));                      // dt*<∇A,∇B>
-        aavarf.AddDomainIntegrator(new ConvectionIntegrator( wNextCoeff, _dt ));        // dt*<(u·∇)A,B>
-        aavarf.GetDBFI()->operator[](0)->SetIntRule(ir);
-        aavarf.GetDBFI()->operator[](1)->SetIntRule(ir);
-        aavarf.GetDBFI()->operator[](2)->SetIntRule(ir);
-        aavarf.Assemble();
-        aavarf.Finalize();
-        SparseMatrix FaNext;
-        FaNext.MakeRef( aavarf.SpMat() );
-        
-        // --- finally assemble subdiagonal
-        SparseMatrix *temp = Add( FaNext, _Fa );
-        _C0 = *temp;
-        delete temp;
-        _C0 *= -1.;
 
-      }else{
-        // this shouldn't be necessary, but oh well;
-        _C0  = _Fa;
-        _C0 *= -2.;
-      }
- 
-
-
-      // -- Second subdiagonal: Ma
-      _Cm  = _MaNoZero;
+      delete dMiF;
 
       // - impose Dirichlet BC
       _Cp.EliminateCols( colsA );
@@ -2368,6 +2372,8 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
     }
 
     // Use full operator assembly Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
+    case 3:
+    case 4:
     case 2:{
       AssembleCCaBlocks();
 
@@ -3687,7 +3693,9 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
       // Update matrices in CCainv
       case 0:
       case 1:
-      case 2:{
+      case 2:
+      case 3:
+      case 4:{
         _CpAssembled = false;
         _C0Assembled = false;
         _CmAssembled = false;

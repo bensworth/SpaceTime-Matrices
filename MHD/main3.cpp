@@ -644,8 +644,8 @@ int main(int argc, char *argv[]){
         string filename = convPath + "Newton_convergence_results.txt";
         ofstream myfile;
         myfile.open( filename, std::ios::app );
-        myfile << Tend       << ",\t" << dt                  << ",\t" << numProcs    << ",\t" << ref_levels << ",\t"
-               << newtonIt   << ",\t" << totGMRESit/newtonIt << ",\t" << GMRESNoConv << ",\t"
+        myfile << Tend       << ",\t" << dt                  << ",\t" << numProcs            << ",\t" << ref_levels << ",\t"
+               << newtonIt   << ",\t" << totGMRESit/newtonIt << ",\t" << totGMRESit/numProcs << ",\t" << GMRESNoConv << ",\t"
                << newtonRes0 << ",\t" << newtonRes           << std::endl;
         myfile.close();
       }    
