@@ -1,5 +1,14 @@
 # Add any directories, files, or patterns you don't want to be tracked by version control
+MHD/ParaView/
+MHD/uga
+MHD/testLaplacianA
+MHD/testGradient
+MHD/testIntegrator
+MHD/testSystem
+MHD/testTimeStep
+MHD/testTimeStepReduced
 
+stokes/
 *.mm
 *DS_Store
 *.o
@@ -23,3 +32,10 @@ spacetime.pdf
 notes.pdf
 disc_notes.pdf
 
+*.dat
+*.txt
+test
+*.nfs*
+main
+main2
+*.P
