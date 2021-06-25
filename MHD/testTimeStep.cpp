@@ -1160,10 +1160,14 @@ int main(int argc, char *argv[]){
     bool newtConv = (newtonIt < maxNewtonIt);
 
     std::cout   << "Newton outer solver for time-step " << tt;
-    if( newtConv ){
+    if( newtConv && newtonIt > 0 ){
       std::cout << " converged in "                     << newtonIt;
     }else{
-      std::cout << " *DID NOT* converge in "            << maxNewtonIt;
+      if(newtonIt > 0){
+        std::cout << " *DID NOT* converge in "          << maxNewtonIt;
+      }else{
+        std::cout << " *HAS STALLED*: converges in  "   << newtonIt;
+      }
       newtNonConv++;
     }
     std::cout   << " iterations. Residual norm is "     << newtonRes;
