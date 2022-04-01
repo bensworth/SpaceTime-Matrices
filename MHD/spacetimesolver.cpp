@@ -8,8 +8,8 @@ using namespace mfem;
 
 
 SpaceTimeSolver::SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F, const SparseMatrix* M,
-                                  const Array<int>& essVhTDOF, bool timeDep, int verbose ):
-  _comm(comm), _timeDep(timeDep), _F(NULL), _M(NULL), _Fsolve(NULL), _essVhTDOF(essVhTDOF), _X(NULL), _Y(NULL), _verbose(verbose){
+                                  const Array<int>& essVhTDOF, const std::string& solverOpt, bool timeDep, int verbose ):
+  _comm(comm), _timeDep(timeDep), _F(NULL), _M(NULL), _Fsolve(NULL), _essVhTDOF(essVhTDOF), _solverOpt(solverOpt), _X(NULL), _Y(NULL), _verbose(verbose){
 
   if( F != NULL ) SetF(F);
   if( M != NULL ) SetM(M);
@@ -58,7 +58,7 @@ void SpaceTimeSolver::SetFSolve(){
   delete _Fsolve;
 
   if ( _timeDep || _myRank == 0 ){
-    _Fsolve = new PetscLinearSolver( *_F, "VSolver_" );
+    _Fsolve = new PetscLinearSolver( *_F, _solverOpt );
 
     // PetscBool set;
     // PetscErrorCode ierr;

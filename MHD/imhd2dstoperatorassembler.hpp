@@ -162,8 +162,12 @@ private:
   ParBlockLowTriOperator _XX2;             // space-time Lorentz block for stabilisation in pressure 2
   ParBlockLowTriOperator _KK;              // space-time mixed Laplacian block
   ParBlockLowTriOperator _YY;              // space-time magnetic convection block
-  // HYPRE_IJMatrix _FFu;                     // Space-time velocity block
-  // HypreParMatrix *_FFFu;                   // Space-time velocity block (ref)
+  HypreParMatrix *_FFuHypre;               // Space-time velocity block - hypre format
+  HypreParMatrix *_FFaHypre;               // Space-time vector potential block - hypre format
+  HypreParMatrix *_CCaHypre;               // Space-time mag Schur block - hypre format
+  HYPRE_IJMatrix _FFuIJHypre;              // Space-time velocity block - hypre IJ format
+  HYPRE_IJMatrix _FFaIJHypre;              // Space-time vector potential block - hypre IJ format
+  HYPRE_IJMatrix _CCaIJHypre;              // Space-time mag Schur block - hypre IJ format
   // HYPRE_IJMatrix _MMz;                     // Space-time Laplacian of vector potential block
   // HypreParMatrix *_MMMz;                   // Space-time Laplacian of vector potential block (ref)
   // HYPRE_IJMatrix _FFa;                     // Space-time vector potential block
@@ -173,8 +177,9 @@ private:
   // HYPRE_IJMatrix _ZZ2;                     // space-time Lorentz block 2
   // HYPRE_IJMatrix _KK;                      // space-time mixed Laplacian block
   // HYPRE_IJMatrix _YY;                      // space-time magnetic convection block
-  OseenSTPressureSchurComplement  *_pSinv; // Approximation to space-time pressure Schur complement inverse
-  IMHD2DSTMagneticSchurComplement *_aSinv; // Approximation to space-time magnetic Schur complement inverse
+  OseenSTPressureSchurComplement *_pSinv;  // Approximation to space-time pressure Schur complement inverse
+  Solver                         *_aSinv;  // Approximation to space-time magnetic Schur complement inverse
+	Solver                         *_aSinvPrec;//- with its preconditioner, in case
   Solver *_FFuinv;                         // Space-time velocity block solver
   Solver *_FFuinvPrec;                     //  - with its preconditioner, in case
   Solver *_MMzinv;                         // Space-time Laplacian of vector potential solver
@@ -194,6 +199,9 @@ private:
   bool _KKAssembled;
 	bool _pSAssembled;
 	bool _aSAssembled;
+	bool _FFuHypreAssembled;
+	bool _FFaHypreAssembled;
+	bool _CCaHypreAssembled;
 	bool _FFuinvAssembled;
 	bool _MMzinvAssembled;
 	bool _CCainvAssembled;
@@ -282,8 +290,7 @@ public:
 	void SaveExactSolution( const std::string& path, const std::string& filename ) const;
 	void PrintMatrices( const std::string& filename ) const;
 	void GetDirichletIdx( Array<int>& essUhTDOF, Array<int>& essPhTDOF,	Array<int>& essAhTDOF ) const;
-	// TODO:
-	void TimeStep( const BlockVector& x, BlockVector& y, const std::string &convpath, int refLvl, int precType, int output );
+	void TimeStep( const BlockVector& x, BlockVector& y, const std::string &convpath, int refLvl, int precType, int output, StopWatch& stopwatch );
 
 
 private:
@@ -335,9 +342,14 @@ private:
 	void AssembleFFuinv();
 	void AssembleMMzinv();
 	void AssembleCCainv();
+	void AssembleFFuHypre();
+	void AssembleFFaHypre();
+	void AssembleCCaHypre();
 
 
-	void SetUpBoomerAMG( HYPRE_Solver& FFuinv, const int maxiter=15 );
+	void SetUpBoomerAMGFFu( HYPRE_Solver& FFuinv, const int maxiter=15 );
+	void SetUpBoomerAMGFFa( HYPRE_Solver& FFainv, const int maxiter=15 );
+	void SetUpBoomerAMGCCa( HYPRE_Solver& CCainv, const int maxiter=15 );
 
 	
 	void SetEverythingUnassembled();

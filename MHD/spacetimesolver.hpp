@@ -38,6 +38,9 @@ private:
   // dirichlet dofs (unused?)
  	const Array<int> _essVhTDOF;
 
+  // name of solver (to look for PETSc options)
+  const std::string _solverOpt;
+
   mutable HypreParVector* _X;
   mutable HypreParVector* _Y;
 
@@ -47,7 +50,7 @@ private:
 public:
 
 	SpaceTimeSolver( const MPI_Comm& comm, const SparseMatrix* F=NULL, const SparseMatrix* M=NULL,
-		               const Array<int>& essVhTDOF=Array<int>(), bool timeDependent = true, int verbose=0);
+		               const Array<int>& essVhTDOF=Array<int>(), const std::string& solverOpt="VSolver_", bool timeDependent = true, int verbose=0);
 
   void Mult( const Vector& x, Vector& y ) const;
 

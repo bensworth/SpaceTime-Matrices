@@ -71,10 +71,10 @@ int main(int argc, char *argv[]){
 
 
   // - discretisation
-  int ordU = 4;
-  int ordP = 3;
+  int ordU = 3;
+  int ordP = 2;
   int ordZ = 1;
-  int ordA = 2;
+  int ordA = 1;
   int ref_levels = 4;
   double Tend = 1.;
   double dt;    // will be initialised after Tend is parsed
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]){
   const char *petscrc_file = "rc_SpaceTimeIMHD2D";
   int precType     = 2;
   int STSolveTypeU = 0;
-  int STSolveTypeA = 2;
+  int STSolveTypeA = 3;
   const int   maxNewtonIt  = 10;
   const double  newtonRTol = 0;     //1e-5;
   const double  newtonATol = 1e-10; //0.;  
@@ -96,68 +96,72 @@ int main(int argc, char *argv[]){
   // Parse parameters *******************************************************
   OptionsParser args(argc, argv);
   args.AddOption(&ordU, "-oU", "--orderU",
-                "Finite element order (polynomial degree) for velocity field (default: 4)");
+                "Finite element order (polynomial degree) for velocity field (default: 3)");
   args.AddOption(&ordP, "-oP", "--orderP",
-                "Finite element order (polynomial degree) for pressure field (default: 3)");
+                "Finite element order (polynomial degree) for pressure field (default: 2)");
   args.AddOption(&ordZ, "-oZ", "--orderZ",
                 "Finite element order (polynomial degree) for Laplacian of vector potential (default: 1)");
   args.AddOption(&ordA, "-oA", "--orderA",
-                "Finite element order (polynomial degree) for vector potential field (default: 2)");
+                "Finite element order (polynomial degree) for vector potential field (default: 1)");
   args.AddOption(&ref_levels, "-r", "--rlevel",
                 "Refinement level (default: 4)");
   args.AddOption(&Tend, "-T", "--Tend",
                 "Final time (default: 1.0)");
   args.AddOption(&pbType, "-Pb", "--problem",
-                "Problem: 1 to 4-Analytical test cases\n"
-                "              5-Kelvin-Helmholtz instability\n"
-                "              6-Island coalescensce\n"
-                "              7-Modified Hartmann flow\n"
-                "             11-Driven cavity flow\n"
+                "Problem: 0 to 4-Analytical test cases\n"
+                "              5-Kelvin-Helmholtz instability (UNTESTED)\n"
+                "              6-Island coalescence (xy sym) (default)\n"
+                "              7-Tearing mode (xy sym)\n"
+                "              9-Tearing mode (full domain)\n"
+                "             11-Driven cavity flow (NS only)\n"
         );
   args.AddOption(&precType, "-P", "--preconditioner",
                 "Type of preconditioner: 0-Space-time Cyr et al: Uupi*Lupi*Uubi*Lubi\n"
-                "                        1-Space-time Cyr et al simplified: Uupi*Lupi*Uubi (default)\n"
-                "                        2-Space-time Cyr et al uber simplified: Uupi*Uubi\n"
+                "                        1-Space-time Cyr et al simplified: Uupi*Lupi*Uubi\n"
+                "                        2-Space-time Cyr et al uber simplified: Uupi*Uubi (default)\n"
         );
   args.AddOption(&stab, "-S", "--stab", "-noS", "--noStab",
-                "Stabilise via SUPG (default: false)\n"
+                "Stabilise via SUPG (default: false) - UNTESTED!\n"
         );
   args.AddOption(&STSolveTypeU, "-STU", "--spacetimesolveU",
                 "Type of solver for velocity space-time matrix: 0-time stepping (default)\n"
-        // "                                                             1-boomerAMG (AIR)\n"
-        // "                                                             2-GMRES+boomerAMG (AIR)\n"
-        // "                                                             3-Parareal (not fully tested)\n"
-        "                                                       9-Sequential time-stepping for whole ST system - ignores many other options\n"
+                // "                                               1-boomerAMG (AIR)\n"
+                "                                               5-GMRES+boomerAMG (AIR)\n"
+                // "                                               3-Parareal (not fully tested)\n"
+                "                                               9-Sequential time-stepping for whole ST system - ignores many other options\n"
         );
   args.AddOption(&STSolveTypeA, "-STA", "--spacetimesolveA",
-                "Type of solver for potential wave space-time matrix: 0-time stepping - implicit leapfrog\n"
-                "                                                     1-time stepping - explicit leapfrog\n"
-                "                                                     2-time stepping on full Fa*Mai*Fa+|B|/mu*Aa matrix (default)\n"
-        // "                                                             1-boomerAMG (AIR)\n"
-        // "                                                             2-GMRES+boomerAMG (AIR)\n"
-        // "                                                             3-Parareal (not fully tested)\n"
-        "                                                             9-Sequential time-stepping for whole ST system - ignores many other options\n"
+                "Type of solver for potential wave space-time matrix: 0 -time stepping - implicit leapfrog\n"
+                " (Ca, appearing inside the magnetic Schur comp)      1 -time stepping - explicit leapfrog\n"
+                "                                                     2 -time stepping on Fa*Mai*Fa+|B|/mu*Aa matrix (uses dMai on main diag of CCa, Mai on subdiag)\n"
+                "                                                     3 -time stepping on   Ma  Fai (Fa*d(Ma)i*Fa+|B|/mu*Aa) matrix (uses dMai on all diags of CCa) (default)\n"
+                "                                                     4 -time stepping on d(Ma) Fai (Fa*d(Ma)i*Fa+|B|/mu*Aa) matrix (uses dMai everywhere)\n"
+                "                                                     5 -GMRES+boomerAMG (AIR) - Schur as in 4\n"
+                "                                                     6 -GMRES+boomerAMG (AIR) - Schur as in 8\n"
+                "                                                     8 -time-stepping on Fa only (simplify the whole Schur complement Sa->Fa)\n"
+                "                                                     9 -sequential time-stepping for whole ST system (Schur as in 3)- ignores many other options\n"
+                "                                                     10-sequential time-stepping for whole ST system (Schur as in 8)- ignores many other options\n"
         );
   args.AddOption(&petscrc_file, "-petscopts", "--petscopts",
-                "PetscOptions file to use: rc_STMHD         TODO! (direct (LU) solvers - remember to flag _SingAp if Ap is singular))\n"
-        "                                  rc_STMHD_approx2 (MG solvers for Ap,Fu, Cheb for Mp)\n"
-        "                                  rc_STMHD_FGMRES  (use FGMRES rather than GMRES for outer solver (useful if ST=2))");
+                "PetscOptions file to use: rc_SpaceTimeIMHD2D         (direct (LU) solvers - The code handles singular Ap by adding a zero-mean constraint now,"
+                "                                                                             so no need to flag it)\n"
+                "                          rc_SpaceTimeIMHD2D_approx  (FGMRES + AMG solver for Ap, AIR for FFu and FFa/CCa, Cheb for Mp, Mz and Ma )");
   args.AddOption(&verbose, "-V", "--verbose",
                 "Control how much info to print to terminal:(=-1   print large block matrices, and trigger eigs analysis - bit of a hack)\n"
-        "                                                    >0    basic info\n"
-        "                                                    >1   +info on large (space-time) block assembly\n"
-        "                                                    >5   +info on small (single time-step) blocks assembly\n"
-        "                                                    >10  +more details on single time-step assembly\n"
-        "                                                    >20  +details on each iteration\n"
-        "                                                    >50  +prints matrices (careful of memory usage!)\n"
-        "                                                    >100 +prints partial vector results from each iteration\n"
+                "                                            >0    basic info\n"
+                "                                            >1   +info on large (space-time) block assembly\n"
+                "                                            >5   +info on small (single time-step) blocks assembly\n"
+                "                                            >10  +more details on single time-step assembly\n"
+                "                                            >20  +details on each iteration\n"
+                "                                            >50  +prints matrices (careful of memory usage!)\n"
+                "                                            >100 +prints partial vector results from each iteration\n"
         );
   args.AddOption(&output, "-out", "--outputsol",
                 "Choose how much info to store on disk: 0  nothing\n"
-        "                                               1 +#it to convergence\n"
-        "                                               2 +residual evolution (default)\n"
-        "                                               3 +paraview plot of exact (if available) and approximate solution (careful of memory usage!)\n"
-        "                                               4 +operators and intermediate vector results at each Newton iteration (VERY careful of memory usage!)\n"
+                "                                       1 +#it to convergence\n"
+                "                                       2 +residual evolution and timing info (default)\n"
+                "                                       3 +paraview plot of exact (if available) and approximate solution (careful of memory usage!)\n"
+                "                                       4 +operators and intermediate vector results at each Newton iteration (VERY careful of memory usage!)\n"
         );
   args.Parse();
   if(!args.Good()){
@@ -169,11 +173,31 @@ int main(int argc, char *argv[]){
     return 1;
   }
 
+  // adjust solver selection for the global time-stepping case
+  if ( STSolveTypeA == 9 || STSolveTypeA == 10 ){
+    if ( myid == 0 && STSolveTypeU != 9 ){
+      std::cout<<"Warning: Global time-stepping selected for A, but not for U: adjusting settings to -STU 9."<<std::endl;
+    }
+    STSolveTypeU = 9;
+  }else if ( STSolveTypeU == 9 ){
+    if ( myid == 0 ){
+      std::cout<<"Warning: Global time-stepping selected for U, but not for A: adjusting settings to -STA 9."<<std::endl;
+    }
+    STSolveTypeA = 9;  // defaults to using Cyr's preconditioner rather than Fa
+  }
+
+
   // - initialise petsc
   MFEMInitializePetsc(NULL,NULL,petscrc_file,NULL);
 
   // - initialise last parameter
   dt  = Tend / numProcs;
+
+  // - initialise time counter
+  StopWatch assemblyStopwatch;
+  StopWatch solverStopwatch;
+  double totAssemblyTime = 0.;
+  double totSolverTime   = 0.;
 
 
 
@@ -233,6 +257,8 @@ int main(int argc, char *argv[]){
   //*************************************************************************
   // Assemble operators
   //*************************************************************************
+  MPI_Barrier(MPI_COMM_WORLD);
+  assemblyStopwatch.Start();
   IMHD2DSTOperatorAssembler *mhdAssembler = new IMHD2DSTOperatorAssembler( MPI_COMM_WORLD, mesh_file, ref_levels, ordU, ordP, ordZ, ordA,
                                                                            dt, mu, eta, mu0, fFun, gFun, hFun, nFun, mFun,
                                                                            wFun, qFun, yFun, cFun,
@@ -363,7 +389,9 @@ int main(int argc, char *argv[]){
   res.GetBlock(2) = 0.;                               // should be basically zero anyway
 
 
-
+  MPI_Barrier(MPI_COMM_WORLD);
+  assemblyStopwatch.Stop();
+  totAssemblyTime += assemblyStopwatch.RealTime();
 
 
   // Initialise output folders **********************************************
@@ -407,18 +435,22 @@ int main(int argc, char *argv[]){
   // In this case, just solve the system normally, via time-stepping
   if ( STSolveTypeU == 9 || STSolveTypeA == 9 ){
     if( myid == 0 && verbose > 0 ){
-      std::cout << "USING CLASSIC TIME-STEPPING *******************************\n";
+      std::cout << "USING CLASSICAL TIME-STEPPING *****************************\n";
     }
 
     // - solve via time-stepping
-    mhdAssembler->TimeStep( res, sol, convPath, ref_levels, precType, output );
+    mhdAssembler->TimeStep( res, sol, convPath, ref_levels, precType, output, assemblyStopwatch );
 
   // otherwise, things get serious
   }else{
 
     // - compute norm of residual at zeroth-iteration
+    MPI_Barrier(MPI_COMM_WORLD);
+    assemblyStopwatch.Start();
     Vector newtonBlockRes, newtonBlockErrWRTPrevIt;
     computeBlockedNorm( res, newtonBlockRes );
+    MPI_Barrier(MPI_COMM_WORLD);
+    assemblyStopwatch.Stop();
     double newtonRes  = newtonBlockRes(4);
     double newtonRes0 = newtonRes;
     double newtonErrWRTPrevIt = newtonATol;
@@ -433,20 +465,21 @@ int main(int argc, char *argv[]){
                 << ", (u,p,z,A) = ("<< newtonBlockRes(0) <<","
                                     << newtonBlockRes(1) <<","
                                     << newtonBlockRes(2) <<","
-                                    << newtonBlockRes(3) <<")" << std::endl;
+                                    << newtonBlockRes(3) <<")" << std::endl
+                << "Pre - Assembly took: "<< assemblyStopwatch.RealTime() << "s" <<std::endl;
       std::cout << "***********************************************************\n";
       if ( output>0 ){
         string filename = innerConvpath +"NEWTconv.txt";
         ofstream myfile;
         myfile.open( filename, std::ios::app );
-        myfile << "#It\t"        << "Res_norm_tot\t"        
-                << "Res_norm_u\t"          << "Res_norm_p\t"          << "Res_norm_z\t"          << "Res_norm_a\t"
-                << "Rel_res_norm\t"        << "Norm of update\t"
-                <<"Inner converged\t"<<"Inner res\t"<<"Inner its"<<std::endl;
+        myfile <<  "#It\t"           << "Res_norm_tot\t"        
+                << "Res_norm_u\t"    << "Res_norm_p\t"    << "Res_norm_z\t"      << "Res_norm_a\t"
+                << "Rel_res_norm\t"  << "Update_norm\t"   << "Inner_converged\t" <<"Inner_res\t"   <<"Inner_its\t"
+                << "Solve_time\t"    << "Assembly_time\t" << std::endl;
         myfile << newtonIt <<"\t"<< newtonRes <<"\t"
                 << newtonBlockRes(0) <<"\t"<< newtonBlockRes(1) <<"\t"<< newtonBlockRes(2) <<"\t"<< newtonBlockRes(3) <<"\t"
-                << newtonRes/newtonRes0 <<"\t"<< 0.0 <<"\t"
-                << false       <<"\t"<< 0.0   <<"\t"<<GMRESits   <<std::endl;
+                << newtonRes/newtonRes0 <<"\t"<< 0.0 <<"\t" << false <<"\t"<< 0.0 <<"\t"<<GMRESits <<"\t"
+                << 0.0 <<"\t"<< assemblyStopwatch.RealTime() <<std::endl;
         myfile.close();
       }
     }
@@ -461,6 +494,9 @@ int main(int argc, char *argv[]){
       myfile.close();
     }
 
+    totAssemblyTime += assemblyStopwatch.RealTime();
+    assemblyStopwatch.Clear();
+
 
 
     //***********************************************************************
@@ -474,7 +510,11 @@ int main(int argc, char *argv[]){
     while(!stopNewton){
 
     
+      solverStopwatch.Clear();
+
       // Define inner solver
+      MPI_Barrier(MPI_COMM_WORLD);
+      solverStopwatch.Start();
       PetscLinearSolver solver(MPI_COMM_WORLD, "solver_");
       bool isIterative = true;
       solver.iterative_mode = isIterative;
@@ -482,6 +522,9 @@ int main(int argc, char *argv[]){
       // - register operator and preconditioner with the solver
       solver.SetPreconditioner(*MHDPr);
       solver.SetOperator(*MHDOp);
+      MPI_Barrier(MPI_COMM_WORLD);
+      solverStopwatch.Stop();
+
       // - eventually register viewer to print to file residual evolution for inner iterations
       if ( output>1 ){
         string filename = innerConvpath +"GMRESconv_Nit" + to_string(newtonIt) + ".txt";
@@ -534,6 +577,8 @@ int main(int argc, char *argv[]){
 
 
       // Define initial guess for update to solution (all zero)
+      MPI_Barrier(MPI_COMM_WORLD);
+      solverStopwatch.Start();
       BlockVector deltaSol(offsets);
       deltaSol.GetBlock(0) = 0.;
       deltaSol.GetBlock(1) = 0.;
@@ -542,23 +587,17 @@ int main(int argc, char *argv[]){
 
       // Solve for current linearisation
       solver.Mult( res, deltaSol );
-
-      if( output > 3 ){
-        string filename = innerOperPath + "Nit" + to_string(newtonIt) + "_";
-        // - Print out solution
-        ofstream myfile;
-        myfile.precision(std::numeric_limits< double >::max_digits10);
-        myfile.open( filename+"deltaSol"+to_string(myid)+".dat" );
-        deltaSol.Print(myfile,1);
-        myfile.close();
-      }
+      sol += deltaSol;
+      MPI_Barrier(MPI_COMM_WORLD);
+      solverStopwatch.Stop();
 
 
       // Update relevant quantities
-      // - solution
-      sol += deltaSol;
+      // - solution (include this into assembly time)
       // - residual
       // -- apply operator
+      MPI_Barrier(MPI_COMM_WORLD);
+      assemblyStopwatch.Start();
       mhdAssembler->ApplyOperator( sol, res );
       // -- compute residual norm
       computeBlockedNorm( res, newtonBlockRes );
@@ -566,6 +605,8 @@ int main(int argc, char *argv[]){
       // -- compute norm of newton update
       computeBlockedNorm( deltaSol, newtonBlockErrWRTPrevIt );
       newtonErrWRTPrevIt = newtonBlockErrWRTPrevIt(4);
+      MPI_Barrier(MPI_COMM_WORLD);
+      assemblyStopwatch.Stop();
       
       // Output relevant measurements
       newtonIt++;
@@ -578,7 +619,9 @@ int main(int argc, char *argv[]){
           std::cout << "Inner solver *DID NOT* converge in ";
           GMRESNoConv++;
         }
-        std::cout<< GMRESits << " iterations. Residual "<<solver.GetFinalNorm()<<std::endl;
+        std::cout<< GMRESits << " iterations. Residual "<<solver.GetFinalNorm() << std::endl
+                 << " - Assembly took: "<< assemblyStopwatch.RealTime() << "s"  << std::endl
+                 << " - Solver   took: "<<   solverStopwatch.RealTime() << "s"  << std::endl;
         if( output>0 ){
           string filename = innerConvpath +"NEWTconv.txt";
           ofstream myfile;
@@ -586,7 +629,8 @@ int main(int argc, char *argv[]){
           myfile << newtonIt <<"\t"<< newtonRes <<"\t"
                   << newtonBlockRes(0) <<"\t"<< newtonBlockRes(1) <<"\t"<< newtonBlockRes(2) <<"\t"<< newtonBlockRes(3) <<"\t"
                   << newtonRes/newtonRes0 <<"\t"<< newtonErrWRTPrevIt << "\t"
-                  << solver.GetConverged() <<"\t"<< solver.GetFinalNorm() <<"\t"<<GMRESits <<std::endl;
+                  << solver.GetConverged() <<"\t"<< solver.GetFinalNorm() <<"\t"<<GMRESits <<"\t"
+                  << solverStopwatch.RealTime() <<"\t"<< assemblyStopwatch.RealTime() <<std::endl;
           myfile.close();
         }      
         std::cout << "***********************************************************\n";
@@ -597,6 +641,21 @@ int main(int argc, char *argv[]){
                                       << newtonBlockRes(3) <<")" << std::endl;
         std::cout << "***********************************************************\n";
       }
+
+      if( output > 3 ){
+        string filename = innerOperPath + "Nit" + to_string(newtonIt) + "_";
+        // - Print out solution
+        ofstream myfile;
+        myfile.precision(std::numeric_limits< double >::max_digits10);
+        myfile.open( filename+"deltaSol"+to_string(myid)+".dat" );
+        deltaSol.Print(myfile,1);
+        myfile.close();
+      }
+
+      totSolverTime   += solverStopwatch.RealTime();
+      totAssemblyTime += assemblyStopwatch.RealTime();
+      solverStopwatch.Clear();
+      assemblyStopwatch.Clear();
 
 
 
@@ -610,7 +669,12 @@ int main(int argc, char *argv[]){
         if( myid == 0 && verbose > 0 ){
           std::cout << "Update operators ******************************************\n";
         }
+
+        MPI_Barrier(MPI_COMM_WORLD);
+        assemblyStopwatch.Start();
         mhdAssembler->UpdateLinearisedOperators( sol );
+        MPI_Barrier(MPI_COMM_WORLD);
+        assemblyStopwatch.Stop();
     
         if( output > 3 ){
           // - Print out updated operators
@@ -636,7 +700,9 @@ int main(int argc, char *argv[]){
         std::cout << "Newton outer solver *DID NOT* converge in " << maxNewtonIt;
       }
       std::cout   << " iterations. Residual norm is "             << newtonRes;
-      std::cout   << ", avg internal GMRES it are "               << totGMRESit/newtonIt  << ".\n";
+      std::cout   << ", avg internal GMRES it are "               << totGMRESit/newtonIt << "."<< std::endl;
+      std::cout   << "Solve took "                                << totSolverTime <<"s";
+      std::cout   << ", assembly took "                           << totAssemblyTime <<"s in total.\n";
       std::cout   << "***********************************************************\n";
 
       // - eventually store info on newton convergence
@@ -646,7 +712,7 @@ int main(int argc, char *argv[]){
         myfile.open( filename, std::ios::app );
         myfile << Tend       << ",\t" << dt                  << ",\t" << numProcs            << ",\t" << ref_levels << ",\t"
                << newtonIt   << ",\t" << totGMRESit/newtonIt << ",\t" << totGMRESit/numProcs << ",\t" << GMRESNoConv << ",\t"
-               << newtonRes0 << ",\t" << newtonRes           << std::endl;
+               << newtonRes0 << ",\t" << newtonRes           << ",\t" << totSolverTime       << ",\t" << totAssemblyTime << std::endl;
         myfile.close();
       }    
     }

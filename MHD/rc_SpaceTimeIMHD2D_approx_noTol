@@ -1,0 +1,81 @@
+# Config for outer solver (for global space-time matrix)
+-solver_ksp_type fgmres
+#- to actually monitor the *real* residual (requires one extra application of the precon)
+#-solver_ksp_monitor_true_residual
+-solver_ksp_converged_reason
+-solver_ksp_monitor_short
+# -solver_ksp_rtol   1e-2
+# -solver_ksp_atol   1e-14
+-solver_ksp_max_it 100
+-solver_ksp_gmres_restart 100	
+-solver_ksp_pc_side RIGHT
+-solver_ksp_initial_guess_nonzero TRUE
+-solver_ksp_gmres_modifiedgramschmidt
+
+# Solver for Velocity Block preconditioner (should use AIR)
+# - for some reason the manual states to use richardson as ksp rather than preonly if only boomeramg must be used
+-VSolver_ksp_type 	richardson
+-VSolver_ksp_rtol   0.0
+-VSolver_ksp_atol   0.0
+-VSolver_ksp_max_it 15
+-VSolver_pc_type hypre
+-VSolver_pc_hypre_type boomeramg
+-VSolver_pc_hypre_boomeramg_tol 0.0
+-VSolver_pc_hypre_boomeramg_max_iter 1
+-VSolver_pc_hypre_boomeramg_max_levels 8
+-VSolver_pc_hypre_boomeramg_cycle_type W
+
+# Solvers for Pressure Block preconditioner
+# - pressure 'laplacian'
+-PSolverLaplacian_ksp_type richardson
+# -- to make sure non-trivial kernel is taken care of
+# -PSolverLaplacian_ksp_constant_null_space TRUE
+-PSolverLaplacian_ksp_rtol   0.0
+-PSolverLaplacian_ksp_atol   0.0
+-PSolverLaplacian_ksp_max_it 15
+-PSolverLaplacian_pc_type hypre
+-PSolverLaplacian_pc_hypre_type boomeramg
+-PSolverLaplacian_pc_hypre_boomeramg_tol 0.0
+-PSolverLaplacian_pc_hypre_boomeramg_max_iter 1
+-PSolverLaplacian_pc_hypre_boomeramg_max_levels 8
+-PSolverLaplacian_pc_hypre_boomeramg_cycle_type W
+# - pressure mass matrix
+-PSolverMass_ksp_type chebyshev
+# - -for quadratic triangles
+-PSolverMass_ksp_chebyshev_eigenvalues 0.3924,2.0598
+-PSolverMass_ksp_rtol 0.0
+-PSolverMass_ksp_atol 0.0
+-PSolverMass_ksp_max_it 8
+-PSolverMass_pc_type jacobi
+
+# Solvers for Magnetic Block preconditioner
+# - vector potential
+-ASolverMass_ksp_type chebyshev
+# - -for linear triangles
+-ASolverMass_ksp_chebyshev_eigenvalues 0.5,2
+-ASolverMass_ksp_rtol 0.0
+-ASolverMass_ksp_atol 0.0
+-ASolverMass_ksp_max_it 8
+-ASolverMass_pc_type jacobi
+# - wave equation for vector potential (should use AIR)
+-AWaveSolver_ksp_type 	richardson
+-AWaveSolver_ksp_rtol   0.0
+-AWaveSolver_ksp_atol   0.0
+-AWaveSolver_ksp_max_it 15
+-AWaveSolver_pc_type hypre
+-AWaveSolver_pc_hypre_type boomeramg
+-AWaveSolver_pc_hypre_boomeramg_tol 0.0
+-AWaveSolver_pc_hypre_boomeramg_max_iter 1
+-AWaveSolver_pc_hypre_boomeramg_max_levels 8
+-AWaveSolver_pc_hypre_boomeramg_cycle_type W
+# - laplacian of vector potential
+-ZSolverMass_ksp_type chebyshev
+# - -for linear triangles
+-ZSolverMass_ksp_chebyshev_eigenvalues 0.5,2
+-ZSolverMass_ksp_rtol 0.0
+-ZSolverMass_ksp_atol 0.0
+-ZSolverMass_ksp_max_it 8
+-ZSolverMass_pc_type jacobi
+
+
+

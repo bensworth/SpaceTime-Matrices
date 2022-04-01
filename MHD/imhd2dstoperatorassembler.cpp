@@ -1027,16 +1027,16 @@ void IMHD2DSTOperatorAssembler::AssembleAp( ){
 
   _ApAssembled = true;
 
-  if( _essPhTDOF.Size() == 0 ){
-    if( _myRank == 0 ){
-      std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)."<<std::endl
-               <<"         Make sure to flag that in the petsc options prescribing:"<<std::endl
-               <<"         -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
-               <<"         -for direct solver: -PSolverLaplacian_pc_factor_shift_type NONZERO"<<std::endl
-               <<"                         and -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl
-               <<"                         (this will hopefully save us from 0 pivots in the singular mat)"<<std::endl;
-    }
-  }
+  // if( _essPhTDOF.Size() == 0 ){
+  //   if( _myRank == 0 ){
+  //     std::cout<<"Warning: the pressure 'laplacian' has non-trivial kernel (constant functions)."<<std::endl
+  //              <<"         Make sure to flag that in the petsc options prescribing:"<<std::endl
+  //              <<"         -for iterative solver: -PSolverLaplacian_ksp_constant_null_space TRUE"<<std::endl
+  //              <<"         -for direct solver: -PSolverLaplacian_pc_factor_shift_type NONZERO"<<std::endl
+  //              <<"                         and -PSolverLaplacian_pc_factor_shift_amount 1e-10"<<std::endl
+  //              <<"                         (this will hopefully save us from 0 pivots in the singular mat)"<<std::endl;
+  //   }
+  // }
 
 
 
@@ -1591,10 +1591,6 @@ void IMHD2DSTOperatorAssembler::ComputeDomainArea( ){
 //   -- Cp <->    Fa diag(Ma)^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
 //   -- C0 <-> - ( Ma diag(Ma)^-1 Fa{t} + Fa{t+1} diag(Ma)^-1 Ma)
 //   -- Cm <->    Ma diag(Ma)^-1 Ma
-//  - Term Fa Ma^-1 Fa + |B0|/mu0 Aa but only on diagonal (discType=4)
-//   -- Cp <->    Fa diag(Ma)^-1 Fa + dt^2 B/mu_0 ( ∇A, ∇C )
-//   -- C0 <->   0
-//   -- Cm <->   0
 //  where B = ||B_0||_2, with B_0 being a space(-time) average of the magnetic field
 //  while Wa is the spatial part of the Fa = Ma + dt Wa operatr
 void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
@@ -1686,9 +1682,14 @@ void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
 
     // - FULL OPERATOR Fa Ma^-1 Fa + |B|K
 
+    case 2:
     case 3:
     case 4:
-    case 2:{
+    case 5:{
+      if ( _stab && _myRank == 0 ){
+        std::cerr<<"When assembling CCai, I'm assuming Ma constant! But this can change if SUPG is on!"<<std::endl;
+      }
+
       // - get inverse of collapsed mass matrix (only diagonal considered)
       Vector MDiagInv;
       _MaNoZero.GetDiag( MDiagInv );
@@ -1702,84 +1703,89 @@ void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
       SparseMatrix *dMiF  = Mult(MaLinv,_Fa);
       SparseMatrix *FdMiF = Mult(_Fa,*dMiF);
       _Cp = *FdMiF;
-      // delete dMiF; // deleted afterwards
+      delete dMiF;
       delete FdMiF;
       _Cp.Add( _dt*_dt*B0norm2/_mu0, _Aa );
 
 
-      if ( _ASTSolveType == 4 ){  // set subdiagonals to 0
-        SparseMatrix temp( MDiagInv.Size(), MDiagInv.Size(), 0 );
-        _C0 = temp;
-        _Cm = temp;
+      // -- assemble subdiags
+      // ---- Here it gets a bit tricky: For _ASTSolveType=5, I need to make sure that each processor owns
+      //       the operators in the same ROW; for all the other options, they must instead own the same COL.
+      //       Now, in one case proc i must send info to proc i+1; in the other, proc i must send info to proc i-1
+      //       The code is very similar in both cases: it's mostly a matter of perspective change.
 
-      }else{  // must assemble subdiags
-
-        // --- have previous processor assemble Fa at next timestep by itself
-        // ---- first send it its linearisation of u
-        GridFunction wFuncCoeffNext( _UhFESpace );
-        if ( _myRank > 0 ){
-          MPI_Send(    _wGridFunc.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank-1, _myRank,   _comm );        
-        }
-        if ( _myRank < _numProcs-1 ){
-          MPI_Recv( wFuncCoeffNext.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank+1, _myRank+1, _comm, MPI_STATUS_IGNORE );        
-          // ---- reassemble here operator Fa{t+1}      
-          const IntegrationRule *ir = &( GetRule() );
-          // ----- assemble bilinear form
-          ConstantCoefficient one( 1.0 );
-          ConstantCoefficient dt( _dt );
-          VectorGridFunctionCoefficient wNextCoeff( &wFuncCoeffNext );
-          BilinearForm aavarf( _AhFESpace );
-          aavarf.AddDomainIntegrator(new MassIntegrator( one ));                          // <A,B>
-          aavarf.AddDomainIntegrator(new DiffusionIntegrator( dt ));                      // dt*<∇A,∇B>
-          aavarf.AddDomainIntegrator(new ConvectionIntegrator( wNextCoeff, _dt ));        // dt*<(u·∇)A,B>
-          aavarf.GetDBFI()->operator[](0)->SetIntRule(ir);
-          aavarf.GetDBFI()->operator[](1)->SetIntRule(ir);
-          aavarf.GetDBFI()->operator[](2)->SetIntRule(ir);
-          aavarf.Assemble();
-          aavarf.Finalize();
-          SparseMatrix FaNext;
-          FaNext.MakeRef( aavarf.SpMat() );
-          
-          // --- finally assemble subdiagonal
-          if ( _ASTSolveType == 2 ){  // use inverse of whole Ma
-            // -- First subdiagonal: - (Fa + FaNext)
-            SparseMatrix *temp = Add( FaNext, _Fa );
-            _C0 = *temp;
-            delete temp;
-            _C0 *= -1.;
-            // _C0 = _Fa;
-            // _C0.Add( FaNext );
-            // _C0 *= -1.;
-            // -- Second subdiagonal: Ma
-            _Cm  = _MaNoZero;   
-          }else{  // use inverse of diag(Ma)
-            // -- First subdiagonal: - (Ma dMi Fa + FaNext dMi Ma)
-            SparseMatrix *dMiMa    = Mult(MaLinv,_MaNoZero);
-            SparseMatrix *FaNdMiMa = Mult(FaNext,*dMiMa);
-            SparseMatrix *MadMiFa  = Mult(_MaNoZero,*dMiF);
-            SparseMatrix *temp     = Add( *MadMiFa, *FaNdMiMa );
-            _C0 = *temp;
-            _C0 *= -1.;
-            // -- Second subdiagonal: Ma dMi Ma
-            SparseMatrix *MadMiMa = Mult(_MaNoZero,*dMiMa);
-            _Cm  = *MadMiMa;   
-            delete dMiMa;
-            delete FaNdMiMa;
-            delete MadMiFa;
-            delete MadMiMa;
-            delete temp;
-          }
-        }else{
-          // this shouldn't be necessary, but oh well;
-          // -- First subdiagonal: - 2Fa
-          _C0  = _Fa;
-          _C0 *= -2.;
-          // -- Second subdiagonal: Ma
-          _Cm  = _MaNoZero;   
-        }
+      // ---- initialise linearisation of u to be received from other processor (next/prev)
+      GridFunction wFuncCoeffOther( _UhFESpace ); wFuncCoeffOther = _wGridFunc; // initialise to self, just to be on the safe side
+      // ---- send info appropriately
+      if ( _ASTSolveType == 5 ){  // i sends to i+1
+        if ( _myRank < _numProcs-1 )
+          MPI_Send(      _wGridFunc.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank+1, _myRank,   _comm );        
+        if ( _myRank > 0 )
+          MPI_Recv( wFuncCoeffOther.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank-1, _myRank-1, _comm, MPI_STATUS_IGNORE ); 
+      }else{                      // i sends to i-1
+        if ( _myRank > 0 )
+          MPI_Send(      _wGridFunc.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank-1, _myRank,   _comm );        
+        if ( _myRank < _numProcs-1 )
+          MPI_Recv( wFuncCoeffOther.GetData(), _wGridFunc.Size(), MPI_DOUBLE, _myRank+1, _myRank+1, _comm, MPI_STATUS_IGNORE ); 
       }
-
-      delete dMiF;
+      // ---- at this stage, each processor should have the correct info. Now we just need to reassemble Fa at the next/prev timestep
+      const IntegrationRule *ir = &( GetRule() );
+      // ----- assemble bilinear form
+      ConstantCoefficient one( 1.0 );
+      ConstantCoefficient dt( _dt );
+      VectorGridFunctionCoefficient wOtherCoeff( &wFuncCoeffOther );
+      BilinearForm aavarf( _AhFESpace );
+      aavarf.AddDomainIntegrator(new MassIntegrator( one ));                          // <A,B>
+      aavarf.AddDomainIntegrator(new DiffusionIntegrator( dt ));                      // dt*<∇A,∇B>
+      aavarf.AddDomainIntegrator(new ConvectionIntegrator( wOtherCoeff, _dt ));       // dt*<(u·∇)A,B>
+      aavarf.GetDBFI()->operator[](0)->SetIntRule(ir);
+      aavarf.GetDBFI()->operator[](1)->SetIntRule(ir);
+      aavarf.GetDBFI()->operator[](2)->SetIntRule(ir);
+      aavarf.Assemble();
+      aavarf.Finalize();
+      SparseMatrix FaOther;
+      FaOther.MakeRef( aavarf.SpMat() );
+        
+      // --- finally assemble subdiagonal
+      if ( _ASTSolveType == 2 ){  // use inverse of whole Ma on subdiags
+        // -- First subdiagonal: - (Fa + FaOther)
+        SparseMatrix *temp = Add( FaOther, _Fa );
+        _C0 = *temp;
+        delete temp;
+        _C0 *= -1.;
+        // _C0 = _Fa;
+        // _C0.Add( FaOther );
+        // _C0 *= -1.;
+        // -- Second subdiagonal: Ma
+        _Cm  = _MaNoZero;   
+      }else{  // use inverse of diag(Ma) on subdiags
+        SparseMatrix *dMiMa = Mult(MaLinv,_MaNoZero);
+        if ( _ASTSolveType == 5 ){
+          // -- First subdiagonal: - (Ma dMi FaOther + Fa dMi Ma)
+          SparseMatrix *FadMiMa  = Mult(_Fa,*dMiMa);
+          SparseMatrix *MadMiFaO = TransposeMult(*dMiMa,FaOther);   // this trick only works if Ma is symmetric! (so no _stab?)
+          SparseMatrix *temp     = Add( *MadMiFaO, *FadMiMa );
+          _C0 = *temp;
+          _C0 *= -1.;
+          delete FadMiMa;
+          delete MadMiFaO;
+          delete temp;
+        }else{
+          // -- First subdiagonal: - (Ma dMi Fa + FaOther dMi Ma)
+          SparseMatrix *FaOdMiMa = Mult(FaOther,*dMiMa);
+          SparseMatrix *MadMiFa  = TransposeMult(*dMiMa,_Fa);        // this trick only works if Ma is symmetric! (so no _stab?)
+          SparseMatrix *temp     = Add( *MadMiFa, *FaOdMiMa );
+          _C0 = *temp;
+          _C0 *= -1.;
+          delete FaOdMiMa;
+          delete MadMiFa;
+          delete temp;
+        }
+        // -- Second subdiagonal: Ma dMi Ma
+        SparseMatrix *MadMiMa = Mult(_MaNoZero,*dMiMa);
+        _Cm  = *MadMiMa;   
+        delete dMiMa;
+      }
 
       // - impose Dirichlet BC
       _Cp.EliminateCols( colsA );
@@ -1825,7 +1831,9 @@ void IMHD2DSTOperatorAssembler::AssembleCCaBlocks(){
 
 
     default:{
-      std::cerr<<"ERROR: Discretisation type for wave equation "<<_ASTSolveType<<" not recognised."<<std::endl;
+      if ( _myRank == 0 ){
+        std::cerr<<"ERROR: Discretisation type for wave equation "<<_ASTSolveType<<" not recognised."<<std::endl;
+      }
       return;
     }
 
@@ -2106,6 +2114,443 @@ void IMHD2DSTOperatorAssembler::AssembleSTBlockBiDiagonal( const SparseMatrix& F
 
 
 
+void IMHD2DSTOperatorAssembler::AssembleFFuHypre(){
+
+  if( !( _FuAssembled && _MuAssembled ) && _myRank == 0 ){
+    std::cerr<<"FATAL ERROR: Need to assemble its blocks before assembling FFu"<<std::endl;
+    return;
+  }
+
+
+  // Things get simpler if it's already assembled: I just need to update the main diagonal block
+  if( _FFuHypreAssembled ){
+    // - get info on matrix structure
+    const int blockSize = _Fu.NumRows();
+ 
+    Array<int> nnzPerRowD( blockSize );   // num of non-zero els per row in main (diagonal) block (for preallocation)
+    const int  *offIdxsD = _Fu.GetI(); // has size blockSize+1, contains offsets for data in J for each row
+    for ( int i = 0; i < blockSize; ++i ){
+      nnzPerRowD[i] = offIdxsD[i+1] - offIdxsD[i];
+    }
+  
+    // - re-initialize matrix
+    HYPRE_IJMatrixInitialize( _FFuIJHypre );
+
+    // - fill it with matrices assembled above
+    Array<int> rowsGlbIdxD( blockSize );
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdxD[i] = i + blockSize*_myRank;
+    }
+    Array<int> colsGlbIdxD( _Fu.NumNonZeroElems() );
+    for ( int i=0; i<_Fu.NumNonZeroElems(); i++ ) {
+      colsGlbIdxD[i] = _Fu.GetJ()[i] + blockSize*_myRank;
+    }
+    HYPRE_IJMatrixSetValues( _FFuIJHypre, blockSize, nnzPerRowD.GetData(),
+                             rowsGlbIdxD.GetData(), colsGlbIdxD.GetData(), _Fu.GetData() );     // setvalues *copies* the data
+
+    // - re-assemble
+    HYPRE_IJMatrixAssemble( _FFuIJHypre );
+
+    // _FFuHypre should still be holding a pointer to _FFuIJHypre, so the updates conducted here should automatically reflect on it
+
+    // // - convert to a MFEM operator
+    // HYPRE_ParCSRMatrix  FFref;
+    // HYPRE_IJMatrixGetObject( _FFuIJHypre, (void **) &FFref);
+    // _FFuHypre = new HypreParMatrix( FFref, true ); //"true" takes ownership of data
+
+
+
+  // Otherwise we need to assemble everything from scratch
+  }else{
+
+    // Create FFu block *******************************************************
+    // Initialize HYPRE matrix
+    // - get info on matrix structure
+    const int blockSize = _Fu.NumRows();
+   
+    Array<int> nnzPerRowD( blockSize );   // num of non-zero els per row in main (diagonal) block (for preallocation)
+    Array<int> nnzPerRowO( blockSize );   // ..and in off-diagonal block
+    const int  *offIdxsD = _Fu.GetI(); // has size blockSize+1, contains offsets for data in J for each row
+    const int  *offIdxsO = _Mu.GetI();
+    for ( int i = 0; i < blockSize; ++i ){
+      nnzPerRowD[i] = offIdxsD[i+1] - offIdxsD[i];
+      if ( _myRank > 0 ){
+        nnzPerRowO[i] = offIdxsO[i+1] - offIdxsO[i];
+      }else{
+        nnzPerRowO[i] = 0;  // first block only has elements on block-diag
+      }
+    }
+
+
+    // - initialise matrix
+    HYPRE_IJMatrixCreate( _comm, blockSize*_myRank, blockSize*(_myRank+1)-1,
+                                 blockSize*_myRank, blockSize*(_myRank+1)-1, &_FFuIJHypre );
+    HYPRE_IJMatrixSetObjectType( _FFuIJHypre, HYPRE_PARCSR );
+    HYPRE_IJMatrixSetDiagOffdSizes( _FFuIJHypre, nnzPerRowD.GetData(), nnzPerRowO.GetData() );    // this gives issues :/
+    HYPRE_IJMatrixInitialize( _FFuIJHypre );
+
+
+    // - fill it with matrices assembled above
+    // -- diagonal block
+    Array<int> rowsGlbIdxD( blockSize );
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdxD[i] = i + blockSize*_myRank;
+    }
+    Array<int> colsGlbIdxD( _Fu.NumNonZeroElems() );
+    for ( int i=0; i<_Fu.NumNonZeroElems(); i++ ) {
+      colsGlbIdxD[i] = _Fu.GetJ()[i] + blockSize*_myRank;
+    }
+    HYPRE_IJMatrixSetValues( _FFuIJHypre, blockSize, nnzPerRowD.GetData(),
+                             rowsGlbIdxD.GetData(), colsGlbIdxD.GetData(), _Fu.GetData() );     // setvalues *copies* the data
+
+    // -- off-diagonal block
+    Array<int> rowsGlbIdxO( blockSize );      // TODO: just use rowsGlbIdx once for both matrices?
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdxO[i] = i + blockSize*_myRank;
+    }
+    if ( _myRank > 0 ){
+      Array<int> colsGlbIdxO( _Mu.NumNonZeroElems() );
+      for ( int i=0; i<_Mu.NumNonZeroElems(); i++ ) {
+        colsGlbIdxO[i] = _Mu.GetJ()[i] + blockSize*(_myRank-1);
+      }
+      HYPRE_IJMatrixSetValues( _FFuIJHypre, blockSize, nnzPerRowO.GetData(),
+                               rowsGlbIdxO.GetData(), colsGlbIdxO.GetData(), _Mu.GetData() );
+    }
+
+
+    // - assemble
+    HYPRE_IJMatrixAssemble( _FFuIJHypre );
+
+    // - convert to a MFEM operator
+    HYPRE_ParCSRMatrix  FFref;
+    HYPRE_IJMatrixGetObject( _FFuIJHypre, (void **) &FFref);
+    _FFuHypre = new HypreParMatrix( FFref, true ); //"true" takes ownership of data
+
+    // - flag it as assembled
+    _FFuHypreAssembled = true;
+
+  }
+}
+
+
+
+
+void IMHD2DSTOperatorAssembler::AssembleFFaHypre(){
+
+  if( !( _FaAssembled && _MaAssembled ) && _myRank == 0 ){
+    std::cerr<<"FATAL ERROR: Need to assemble its blocks before assembling FFa"<<std::endl;
+    return;
+  }
+
+
+  // Things get simpler if it's already assembled: I just need to update the main diagonal block
+  if( _FFaHypreAssembled ){
+    // - get info on matrix structure
+    const int blockSize = _Fa.NumRows();
+ 
+    Array<int> nnzPerRowD( blockSize );   // num of non-zero els per row in main (diagonal) block (for preallocation)
+    const int  *offIdxsD = _Fa.GetI(); // has size blockSize+1, contains offsets for data in J for each row
+    for ( int i = 0; i < blockSize; ++i ){
+      nnzPerRowD[i] = offIdxsD[i+1] - offIdxsD[i];
+    }
+  
+    // - re-initialize matrix
+    HYPRE_IJMatrixInitialize( _FFaIJHypre );
+
+    // - fill it with matrices assembled above
+    Array<int> rowsGlbIdxD( blockSize );
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdxD[i] = i + blockSize*_myRank;
+    }
+    Array<int> colsGlbIdxD( _Fa.NumNonZeroElems() );
+    for ( int i=0; i<_Fa.NumNonZeroElems(); i++ ) {
+      colsGlbIdxD[i] = _Fa.GetJ()[i] + blockSize*_myRank;
+    }
+    HYPRE_IJMatrixSetValues( _FFaIJHypre, blockSize, nnzPerRowD.GetData(),
+                             rowsGlbIdxD.GetData(), colsGlbIdxD.GetData(), _Fa.GetData() );     // setvalues *copies* the data
+
+    // - re-assemble
+    HYPRE_IJMatrixAssemble( _FFaIJHypre );
+
+    // _FFaHypre should still be holding a pointer to _FFaIJHypre, so the updates conducted here should automatically reflect on it
+
+    // // - convert to a MFEM operator
+    // HYPRE_ParCSRMatrix  FFref;
+    // HYPRE_IJMatrixGetObject( FFaTemp, (void **) &FFref);
+    // _FFaHypre = new HypreParMatrix( FFref, true ); //"true" takes ownership of data
+
+
+
+  // Otherwise we need to assemble everything from scratch
+  }else{ 
+    // Create FFa block *******************************************************
+    // Initialize HYPRE matrix
+    // - get info on matrix structure
+    const int blockSize = _Fa.NumRows();
+   
+    Array<int> nnzPerRowD( blockSize );   // num of non-zero els per row in main (diagonal) block (for preallocation)
+    Array<int> nnzPerRowO( blockSize );   // ..and in off-diagonal block
+    const int  *offIdxsD = _Fa.GetI(); // has size blockSize+1, contains offsets for data in J for each row
+    const int  *offIdxsO = _Ma.GetI();
+    for ( int i = 0; i < blockSize; ++i ){
+      nnzPerRowD[i] = offIdxsD[i+1] - offIdxsD[i];
+      if ( _myRank > 0 ){
+        nnzPerRowO[i] = offIdxsO[i+1] - offIdxsO[i];
+      }else{
+        nnzPerRowO[i] = 0;  // first block only has elements on block-diag
+      }
+    }
+
+
+    // - initialise matrix
+    HYPRE_IJMatrixCreate( _comm, blockSize*_myRank, blockSize*(_myRank+1)-1,
+                                 blockSize*_myRank, blockSize*(_myRank+1)-1, &_FFaIJHypre );
+    HYPRE_IJMatrixSetObjectType( _FFaIJHypre, HYPRE_PARCSR );
+    HYPRE_IJMatrixSetDiagOffdSizes( _FFaIJHypre, nnzPerRowD.GetData(), nnzPerRowO.GetData() );    // this gives issues :/
+    HYPRE_IJMatrixInitialize( _FFaIJHypre );
+
+
+    // - fill it with matrices assembled above
+    // -- diagonal block
+    Array<int> rowsGlbIdxD( blockSize );
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdxD[i] = i + blockSize*_myRank;
+    }
+    Array<int> colsGlbIdxD( _Fa.NumNonZeroElems() );
+    for ( int i=0; i<_Fa.NumNonZeroElems(); i++ ) {
+      colsGlbIdxD[i] = _Fa.GetJ()[i] + blockSize*_myRank;
+    }
+    HYPRE_IJMatrixSetValues( _FFaIJHypre, blockSize, nnzPerRowD.GetData(),
+                             rowsGlbIdxD.GetData(), colsGlbIdxD.GetData(), _Fa.GetData() );     // setvalues *copies* the data
+
+    // -- off-diagonal block
+    Array<int> rowsGlbIdxO( blockSize );      // TODO: just use rowsGlbIdx once for both matrices?
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdxO[i] = i + blockSize*_myRank;
+    }
+    if ( _myRank > 0 ){
+      Array<int> colsGlbIdxO( _Ma.NumNonZeroElems() );
+      for ( int i=0; i<_Ma.NumNonZeroElems(); i++ ) {
+        colsGlbIdxO[i] = _Ma.GetJ()[i] + blockSize*(_myRank-1);
+      }
+      HYPRE_IJMatrixSetValues( _FFaIJHypre, blockSize, nnzPerRowO.GetData(),
+                               rowsGlbIdxO.GetData(), colsGlbIdxO.GetData(), _Ma.GetData() );
+    }
+
+
+    // - assemble
+    HYPRE_IJMatrixAssemble( _FFaIJHypre );
+
+    // - convert to a MFEM operator
+    HYPRE_ParCSRMatrix  FFref;
+    HYPRE_IJMatrixGetObject( _FFaIJHypre, (void **) &FFref);
+    _FFaHypre = new HypreParMatrix( FFref, true ); //"true" takes ownership of data
+
+    // - flag it as assembled
+    _FFaHypreAssembled = true;
+
+  }
+}
+
+
+
+void IMHD2DSTOperatorAssembler::AssembleCCaHypre(){
+
+
+  if( !( _CCsAssembled ) && _myRank == 0 ){
+    std::cerr<<"FATAL ERROR: Need to assemble its blocks before assembling CCa"<<std::endl;
+    return;
+  }
+
+
+  // Things get simpler if it's already assembled: I just need to update the main and first sub-diagonal blocks
+  if( _CCaHypreAssembled ){
+    // - get info on matrix structure
+    const int blockSize = _Cp.NumRows();
+
+    // Notice here I'm assuming each processor contains the Cp, C0, Cm block on the same ROW
+    Array<int> nnzPerRowD( blockSize );   // num of non-zero els per row in main (diagonal) block (for preallocation)
+    Array<int> nnzPerRowO( blockSize );   // ..and in off-diagonal block
+    const int  *offIdxsCp = _Cp.GetI();    // has size blockSize+1, contains offsets for data in J for each row
+    const int  *offIdxsC0 = _C0.GetI();
+    for ( int i = 0; i < blockSize; ++i ){
+      nnzPerRowD[i] = offIdxsCp[i+1] - offIdxsCp[i];
+      nnzPerRowO[i] = 0;
+      if ( _myRank > 0 ){ // first block only has elements on block diag
+        nnzPerRowO[i] += offIdxsC0[i+1] - offIdxsC0[i];
+      }
+    }
+
+    // - initialise matrix
+    HYPRE_IJMatrixInitialize( _CCaIJHypre );
+    // - fill it with matrices assembled before
+    // -- diagonal block
+    Array<int> rowsGlbIdx( blockSize );
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdx[i] = i + blockSize*_myRank;
+    }
+    Array<int> colsGlbIdxD( _Cp.NumNonZeroElems() );
+    for ( int i=0; i<_Cp.NumNonZeroElems(); i++ ) {
+      colsGlbIdxD[i] = _Cp.GetJ()[i] + blockSize*_myRank;
+    }
+    HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowD.GetData(),
+                             rowsGlbIdx.GetData(), colsGlbIdxD.GetData(), _Cp.GetData() );     // setvalues *copies* the data
+
+    // TODO: another huge hack. Since the Cm block is constant, I only need to update the C0 block on the subdiagonal!
+    //       This simplifies things quite a bit - I just hope HYPRE won't complain?
+    // -- off-diagonal block
+    if ( _myRank > 0 ){
+      Array<int> colsGlbIdxO( _C0.NumNonZeroElems() );
+      for ( int i=0; i<_C0.NumNonZeroElems(); i++ ) {
+        colsGlbIdxO[i] = _C0.GetJ()[i] + blockSize*(_myRank-1);
+      }
+      HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowO.GetData(),
+                               rowsGlbIdx.GetData(), colsGlbIdxO.GetData(), _C0.GetData() );
+    }
+
+    // if ( _myRank == 1 ){
+    //   // --- if there's only one, including it is straightforward
+    //   Array<int> colsGlbIdxO( _C0.NumNonZeroElems() );
+    //   for ( int i=0; i<_C0.NumNonZeroElems(); i++ ) {
+    //     colsGlbIdxO[i] = _C0.GetJ()[i] + blockSize*(_myRank-1);
+    //   }
+    //   HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowO.GetData(),
+    //                            rowsGlbIdx.GetData(), colsGlbIdxO.GetData(), _C0.GetData() );
+    // }
+    // if ( _myRank > 1 ){
+    //   // --- if there's two, first I need to collate them (side-by-side)
+    //   Array<int>    CCaOffjj( _Cm.NumNonZeroElems() + _C0.NumNonZeroElems() );
+    //   Array<double> CCaOffdd( _Cm.NumNonZeroElems() + _C0.NumNonZeroElems() );
+    //   for ( int ii = 0; ii < blockSize; ++ii ){
+    //     int offset = _Cm.GetI()[ii]   + _C0.GetI()[ii];
+    //     int dOffm  = _Cm.GetI()[ii+1] - _Cm.GetI()[ii];
+    //     int dOff0  = _C0.GetI()[ii+1] - _C0.GetI()[ii];
+    //     for ( int jj = 0; jj < dOffm; ++jj ){
+    //       CCaOffjj[ offset         + jj ] = _Cm.GetJ()[    _Cm.GetI()[ii] + jj ] + blockSize*(_myRank-2);
+    //       CCaOffdd[ offset         + jj ] = _Cm.GetData()[ _Cm.GetI()[ii] + jj ];
+    //     }
+    //     for ( int jj = 0; jj < dOff0; ++jj ){
+    //       CCaOffjj[ offset + dOffm + jj ] = _C0.GetJ()[    _C0.GetI()[ii] + jj ] + blockSize;
+    //       CCaOffdd[ offset + dOffm + jj ] = _C0.GetData()[ _C0.GetI()[ii] + jj ];
+    //     }
+    //   }
+    //   // --- and then I can include them
+    //   HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowO.GetData(),
+    //                            rowsGlbIdx.GetData(), CCaOffjj.GetData(), CCaOffdd.GetData() );
+    // }
+
+    // - assemble
+    HYPRE_IJMatrixAssemble( _CCaIJHypre );
+
+    // _CCaHypre should still be holding a pointer to _CCaIJHypre, so the updates conducted here should automatically reflect on it
+
+    // // - convert to a MFEM operator
+    // HYPRE_ParCSRMatrix  CCref;
+    // HYPRE_IJMatrixGetObject( _CCaIJHypre, (void **) &CCref);
+    // _CCaHypre = new HypreParMatrix( CCref, true ); //"true" takes ownership of data
+
+
+
+  // Otherwise we need to assemble everything from scratch
+  }else{
+
+    // Initialize HYPRE matrix
+    // - get info on matrix structure
+    const int blockSize = _Cp.NumRows();
+
+    // Notice here I'm assuming each processor contains the Cp, C0, Cm block on the same ROW
+    Array<int> nnzPerRowD( blockSize );   // num of non-zero els per row in main (diagonal) block (for preallocation)
+    Array<int> nnzPerRowO( blockSize );   // ..and in off-diagonal block
+    const int  *offIdxsCp = _Cp.GetI();    // has size blockSize+1, contains offsets for data in J for each row
+    const int  *offIdxsC0 = _C0.GetI();
+    const int  *offIdxsCm = _Cm.GetI();
+    for ( int i = 0; i < blockSize; ++i ){
+      nnzPerRowD[i] = offIdxsCp[i+1] - offIdxsCp[i];
+      nnzPerRowO[i] = 0;
+      if ( _myRank > 0 ){ // first block only has elements on block diag
+        nnzPerRowO[i] += offIdxsC0[i+1] - offIdxsC0[i];
+      }
+      if ( _myRank > 1 ){ // second block only has one block sub-diag
+        nnzPerRowO[i] += offIdxsCm[i+1] - offIdxsCm[i];
+      }
+    }
+
+    // - initialise matrix
+    HYPRE_IJMatrixCreate( _comm, blockSize*_myRank, blockSize*(_myRank+1)-1,
+                                 blockSize*_myRank, blockSize*(_myRank+1)-1, &_CCaIJHypre );
+    HYPRE_IJMatrixSetObjectType( _CCaIJHypre, HYPRE_PARCSR );
+    HYPRE_IJMatrixSetDiagOffdSizes( _CCaIJHypre, nnzPerRowD.GetData(), nnzPerRowO.GetData() );    // this gives issues :/
+    HYPRE_IJMatrixInitialize( _CCaIJHypre );
+    // - fill it with matrices assembled before
+    // -- diagonal block
+    Array<int> rowsGlbIdx( blockSize );
+    for ( int i = 0; i < blockSize; ++i ){
+      rowsGlbIdx[i] = i + blockSize*_myRank;
+    }
+    Array<int> colsGlbIdxD( _Cp.NumNonZeroElems() );
+    for ( int i=0; i<_Cp.NumNonZeroElems(); i++ ) {
+      colsGlbIdxD[i] = _Cp.GetJ()[i] + blockSize*_myRank;
+    }
+    HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowD.GetData(),
+                             rowsGlbIdx.GetData(), colsGlbIdxD.GetData(), _Cp.GetData() );     // setvalues *copies* the data
+
+    // -- off-diagonal block(s)
+    if ( _myRank == 1 ){
+
+      // --- if there's only one, including it is straightforward
+      Array<int> colsGlbIdxO( _C0.NumNonZeroElems() );
+      for ( int i=0; i<_C0.NumNonZeroElems(); i++ ) {
+        colsGlbIdxO[i] = _C0.GetJ()[i] + blockSize*(_myRank-1);
+      }
+      HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowO.GetData(),
+                               rowsGlbIdx.GetData(), colsGlbIdxO.GetData(), _C0.GetData() );
+    }
+    if ( _myRank > 1 ){
+      // --- if there's two, first I need to collate them (side-by-side)
+      Array<int>    CCaOffjj( _Cm.NumNonZeroElems() + _C0.NumNonZeroElems() );
+      Array<double> CCaOffdd( _Cm.NumNonZeroElems() + _C0.NumNonZeroElems() );
+      for ( int ii = 0; ii < blockSize; ++ii ){
+        int offset = _Cm.GetI()[ii]   + _C0.GetI()[ii];
+        int dOffm  = _Cm.GetI()[ii+1] - _Cm.GetI()[ii];
+        int dOff0  = _C0.GetI()[ii+1] - _C0.GetI()[ii];
+        for ( int jj = 0; jj < dOffm; ++jj ){
+          CCaOffjj[ offset         + jj ] = _Cm.GetJ()[    _Cm.GetI()[ii] + jj ] + blockSize*(_myRank-2);
+          CCaOffdd[ offset         + jj ] = _Cm.GetData()[ _Cm.GetI()[ii] + jj ];
+        }
+        for ( int jj = 0; jj < dOff0; ++jj ){
+          CCaOffjj[ offset + dOffm + jj ] = _C0.GetJ()[    _C0.GetI()[ii] + jj ] + blockSize;
+          CCaOffdd[ offset + dOffm + jj ] = _C0.GetData()[ _C0.GetI()[ii] + jj ];
+        }
+      }
+      // --- and then I can include them
+      HYPRE_IJMatrixSetValues( _CCaIJHypre, blockSize, nnzPerRowO.GetData(),
+                               rowsGlbIdx.GetData(), CCaOffjj.GetData(), CCaOffdd.GetData() );
+    }
+
+    // - assemble
+    HYPRE_IJMatrixAssemble( _CCaIJHypre );
+
+    // - convert to a MFEM operator
+    HYPRE_ParCSRMatrix  CCref;
+    HYPRE_IJMatrixGetObject( _CCaIJHypre, (void **) &CCref);
+    _CCaHypre = new HypreParMatrix( CCref, true ); //"true" takes ownership of data
+
+    // flag it as assembled
+    _CCaHypreAssembled = true;
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2124,7 +2569,7 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
         return;
       }
       //                                             flag as time-dependent regardless of anything
-      SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essUhTDOF, true, _verbose );
+      SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essUhTDOF, "VSolver_", true, _verbose );
 
       temp->SetF( &_Fu );
       temp->SetM( &_Mu );
@@ -2136,6 +2581,41 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
       break;
     }
 
+    // Use GMRES with BoomerAMG precon
+    case 5:{
+      if( _myRank == 0 ){
+        std::cout<<"WARNING: Since you're using GMRES to solve the space-time block inside the preconditioner"<<std::endl
+                 <<"         make sure that flexible GMRES is used as the outer solver!"<<std::endl;
+      }
+
+      // Need to re-assemble the Hypre version of Fu
+      AssembleFFuHypre();
+
+      // Initialise MFEM wrappers for GMRES solver and preconditioner
+      HypreGMRES     *temp  = new HypreGMRES(     *_FFuHypre );
+      HypreBoomerAMG *temp2 = new HypreBoomerAMG( *_FFuHypre );
+
+      // Cast preconditioner as HYPRE_Solver to get the underlying hypre object
+      HYPRE_Solver FFuinvPrecon( *temp2 );
+      // Set it up
+      SetUpBoomerAMGFFu( FFuinvPrecon, 1 );   // with just one iteration this time around
+
+      // Attach preconditioner to solver
+      temp->SetPreconditioner( *temp2 );
+
+      // adjust gmres options
+      temp->SetKDim( 15 );
+      temp->SetTol( 0.0 );   // to ensure fixed number of iterations
+      temp->SetMaxIter( 15 );
+
+      _FFuinv     = temp;
+      _FFuinvPrec = temp2;
+  
+      _FFuinvAssembled = true;
+
+      break;
+    }
+
     // Assemble single time-step matrix
     case 9:{
       if(!( _MuAssembled && _FuAssembled ) && _myRank == 0 ){
@@ -2143,7 +2623,7 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
         return;
       }
       //                                             flag as time-dependent regardless of anything
-      SpaceTimeSolver *temp  = new SpaceTimeSolver( MPI_COMM_SELF, NULL, NULL, _essUhTDOF, true, _verbose );
+      SpaceTimeSolver *temp  = new SpaceTimeSolver( MPI_COMM_SELF, NULL, NULL, _essUhTDOF, "VSolver_", true, _verbose );
 
       temp->SetF( &_Fu );
       _FFuinv = temp;
@@ -2153,96 +2633,7 @@ void IMHD2DSTOperatorAssembler::AssembleFFuinv( ){
       break;
     }
 
-    // // Use BoomerAMG with AIR set-up
-    // case 1:{
-    //   if(! _FFuAssembled  && _myRank == 0 ){
-    //     std::cerr<<"ERROR: AssembleFFuinv: need to assemble FFu before assembling FFuinv\n";
-    //     return;
-    //   }
 
-    //   // Initialise MFEM wrapper for BoomerAMG solver
-    //   HypreBoomerAMG *temp = new HypreBoomerAMG( *_FFFu );
-
-    //   // Cast as HYPRE_Solver to get the underlying hypre object
-    //   HYPRE_Solver FFuinv( *temp );
-
-    //   // Set it up
-    //   SetUpBoomerAMG( FFuinv );
-
-    //   _FFuinv = temp;
-  
-    //   _FFuinvAssembled = true;
-
-    //   break;
-    // }
-
-
-
-    // // Use GMRES with BoomerAMG precon
-    // case 2:{
-    //   if(! _FFuAssembled  && _myRank == 0 ){
-    //     std::cerr<<"ERROR: AssembleFFuinv: need to assemble FFu before assembling FFuinv\n";
-    //     return;
-    //   }
-    //   if( _myRank == 0 ){
-    //     std::cout<<"WARNING: Since you're using GMRES to solve the space-time block inside the preconditioner"<<std::endl
-    //              <<"         make sure that flexible GMRES is used as the outer solver!"<<std::endl;
-    //   }
-
-
-    //   // Initialise MFEM wrappers for GMRES solver and preconditioner
-    //   HypreGMRES     *temp  = new HypreGMRES(     *_FFFu );
-    //   HypreBoomerAMG *temp2 = new HypreBoomerAMG( *_FFFu );
-
-    //   // Cast preconditioner as HYPRE_Solver to get the underlying hypre object
-    //   HYPRE_Solver FFuinvPrecon( *temp2 );
-    //   // Set it up
-    //   SetUpBoomerAMG( FFuinvPrecon, 1 );   // with just one iteration this time around
-
-    //   // Attach preconditioner to solver
-    //   temp->SetPreconditioner( *temp2 );
-
-    //   // adjust gmres options
-    //   temp->SetKDim( 50 );
-    //   temp->SetTol( 0.0 );   // to ensure fixed number of iterations
-    //   temp->SetMaxIter( 15 );
-
-    //   _FFuinv     = temp;
-    //   _FFuinvPrec = temp2;
-  
-    //   _FFuinvAssembled = true;
-
-    //   break;
-    // }
-
-    // // Use Parareal with coarse/fine solver of different accuracies
-    // case 3:{
-
-    //   const int maxIt = 2;
-
-    //   if( _numProcs <= maxIt ){
-    //     if( _myRank == 0 ){
-    //       std::cerr<<"ERROR: AssembleFFinv: Trying to set solver as "<<maxIt
-    //                <<" iterations of Parareal, but the fine discretisation only has "<<_numProcs<<" nodes. "
-    //                <<"This is equivalent to time-stepping, so I'm picking that as a solver instead."<<std::endl;
-    //     }
-        
-    //     AssembleFFinv( 0 );
-    //     return;
-    //   }
-
-
-    //   PararealSolver *temp  = new PararealSolver( _comm, NULL, NULL, NULL, maxIt, _verbose );
-
-    //   temp->SetF( &_Fw );
-    //   temp->SetC( &_Fw ); // same operator is used for both! it's the solver that changes, eventually...
-    //   temp->SetM( &_Mw );
-    //   _FFinv = temp;
-
-    //   _FFinvAssembled = true;
-      
-    //   break;
-    // }
     default:{
       if ( _myRank == 0 ){
         std::cerr<<"Space-time solver type "<<_USTSolveType<<" not recognised."<<std::endl;
@@ -2372,9 +2763,9 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
     }
 
     // Use full operator assembly Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
+    case 2:
     case 3:
-    case 4:
-    case 2:{
+    case 4:{
       AssembleCCaBlocks();
 
       SpaceTimeWaveSolver *temp  = new SpaceTimeWaveSolver( _comm, NULL, NULL, NULL, _essAhTDOF, true, false, _verbose);
@@ -2387,6 +2778,48 @@ void IMHD2DSTOperatorAssembler::AssembleCCainv( ){
       
       break;
     }
+
+    // Use GMRES+BoomerAMG
+    case 5:{
+
+      if( _myRank == 0 ){
+        std::cout<<"WARNING: Since you're using GMRES to solve the space-time block inside the preconditioner"<<std::endl
+                 <<"         make sure that flexible GMRES is used as the outer solver!"<<std::endl;
+      }
+
+      AssembleCCaBlocks();
+
+      // Need to re-assemble the Hypre version of Ca
+      AssembleCCaHypre();
+
+      // Initialise MFEM wrappers for GMRES solver and preconditioner
+      HypreGMRES     *temp  = new HypreGMRES(     *_CCaHypre );
+      HypreBoomerAMG *temp2 = new HypreBoomerAMG( *_CCaHypre );
+
+      // Cast preconditioner as HYPRE_Solver to get the underlying hypre object
+      HYPRE_Solver CCainvPrecon( *temp2 );
+      // Set it up
+      SetUpBoomerAMGCCa( CCainvPrecon, 1 );   // with just one iteration this time around
+
+      // Attach preconditioner to solver
+      temp->SetPreconditioner( *temp2 );
+
+      // adjust gmres options
+      temp->SetKDim( 15 );
+      temp->SetTol( 0.0 );   // to ensure fixed number of iterations
+      temp->SetMaxIter( 15 );
+
+      delete _CCainv;
+      delete _CCainvPrec;
+
+      _CCainv     = temp;
+      _CCainvPrec = temp2;
+  
+      _CCainvAssembled = true;
+
+      break;
+    }
+
 
     // Assemble single time-step, using main diagonal of full operator Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
     case 9:{
@@ -2429,22 +2862,125 @@ void IMHD2DSTOperatorAssembler::AssembleAS( ){
     return;
   }
 
-  AssembleMaNoZero();
-  AssembleMaNoZeroLumped(); // TODO: these are not necessary...
-  AssembledtuWa();          // TODO: these are not necessary...
-  AssembleWa();
-  AssembleCCainv( );
 
-  if ( _ASTSolveType == 9 )
-    _aSinv = new IMHD2DSTMagneticSchurComplement( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
-  else
-    _aSinv = new IMHD2DSTMagneticSchurComplement(         _comm, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
+  switch ( _ASTSolveType ){
+    // Assemble CCai Fa Mai
+    case 0:
+    case 1:
+    case 2:
+    case 3:{
+      AssembleMaNoZero();
+      AssembleWa();
+      AssembleCCainv( );
+      IMHD2DSTMagneticSchurComplement* temp = new IMHD2DSTMagneticSchurComplement( _comm, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
+      temp->SetM( &_MaNoZero );
+      temp->SetW( &_Wa );
+      temp->SetCCinv( _CCainv );
+      _aSinv = temp;
+      _aSAssembled = true;      
+      
+      break;
+    }
+    
+    // Assemble CCai Fa dMai
+    case 4:
+    case 5:{
+      AssembleMaNoZero(); // assemble Ma
+      AssembleCCainv( );  // assemble CCai
+      Vector MDiagInv;    // assemble dMai
+      _MaNoZero.GetDiag( MDiagInv );
+      for ( int i = 0; i < MDiagInv.Size(); ++i ){  // invert it
+        MDiagInv(i) = 1./MDiagInv(i);
+      }
+      SparseMatrix* dMai = new SparseMatrix( MDiagInv );
 
-  _aSinv->SetM( &_MaNoZero );
-  _aSinv->SetW( &_Wa );
-  _aSinv->SetCCinv( _CCainv );
+      // combine all operators together
+      Array<const Operator*> aSOps(3);
+      Array<bool>            aSOwn(3);
+      aSOps[0] = dMai;     aSOwn[0] = true;
+      aSOps[1] = &_FFa;    aSOwn[1] = false;
+      aSOps[2] = _CCainv;  aSOwn[2] = false;
+      OperatorsSequence *temp = new OperatorsSequence( aSOps, aSOwn );
+      _aSinv = temp;
+      _aSAssembled = true;      
+      
+      break;
+    }
+    // Simplify the whole Sa to Fa and use GMRES+BoomerAMG(AIR)
+    case 6:{
+      if( _myRank == 0 ){
+        std::cout<<"WARNING: Since you're using GMRES to solve the space-time block inside the preconditioner"<<std::endl
+                 <<"         make sure that flexible GMRES is used as the outer solver!"<<std::endl;
+      }
 
-  _aSAssembled = true;
+      // Need to re-assemble the Hypre version of Fa
+      AssembleFFaHypre();
+
+      // Initialise MFEM wrappers for GMRES solver and preconditioner
+      HypreGMRES     *temp  = new HypreGMRES(     *_FFaHypre );
+      HypreBoomerAMG *temp2 = new HypreBoomerAMG( *_FFaHypre );
+
+      // Cast preconditioner as HYPRE_Solver to get the underlying hypre object
+      HYPRE_Solver FFainvPrecon( *temp2 );
+      // Set it up
+      SetUpBoomerAMGFFa( FFainvPrecon, 1 );   // with just one iteration this time around
+
+      // Attach preconditioner to solver
+      temp->SetPreconditioner( *temp2 );
+
+      // adjust gmres options
+      temp->SetKDim( 15 );
+      temp->SetTol( 0.0 );   // to ensure fixed number of iterations
+      temp->SetMaxIter( 15 );
+
+      _aSinv     = temp;
+      _aSinvPrec = temp2;
+  
+      _aSAssembled = true;
+
+      break;
+    }
+    // Simplify the whole Sa to Fa and time-step
+    case 8:{
+      SpaceTimeSolver *temp  = new SpaceTimeSolver( _comm, NULL, NULL, _essAhTDOF, "AWaveSolver_", true, _verbose );
+      temp->SetF( &_Fa );
+      temp->SetM( &_Ma );
+      _aSinv = temp;
+      _aSAssembled = true;
+     
+      break;
+    }
+    // Assemble single time-step, using main diagonal of full operator Fa Ma^-1 Fa + dt^2 |B|/mu0 Aa
+    case 9:{
+      AssembleMaNoZero();
+      AssembleWa();
+      AssembleCCainv( );
+      IMHD2DSTMagneticSchurComplement* temp = new IMHD2DSTMagneticSchurComplement( MPI_COMM_SELF, _dt, NULL, NULL, NULL, _essAhTDOF, _verbose );
+      temp->SetM( &_MaNoZero );
+      temp->SetW( &_Wa );
+      temp->SetCCinv( _CCainv );
+      _aSinv = temp;
+      _aSAssembled = true;
+
+      break;
+    }
+    // Simplify the whole Sa to Fa - single time-step version
+    case 10:{
+      SpaceTimeSolver *temp  = new SpaceTimeSolver( MPI_COMM_SELF, NULL, NULL, _essAhTDOF, "AWaveSolver_", true, _verbose );
+      temp->SetF( &_Fa );
+      temp->SetM( &_Ma );
+      _aSinv = temp;
+      _aSAssembled = true;
+     
+      break;
+    }
+    default:{
+      if ( _myRank == 0 ){
+        std::cerr<<"Space-time solver type "<<_ASTSolveType<<" not recognised."<<std::endl;
+        return;
+      }
+    }
+  }
 
   if( _verbose>1 ){
     if ( _myRank==0 ){
@@ -2461,7 +2997,145 @@ void IMHD2DSTOperatorAssembler::AssembleAS( ){
 
 
 // Utility function for setting up FFuinv
-void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int maxiter ){
+void IMHD2DSTOperatorAssembler::SetUpBoomerAMGFFu( HYPRE_Solver& FFinv, const int maxiter ){
+  int printLevel = 0;
+
+  // AIR parameters for diffusion equation:
+  double distance_R = 1.5;
+  std::string prerelax = "A";
+  std::string postrelax = "FFC";
+  int interp_type = 0;
+  int relax_type = 8;
+  int coarsen_type = 6;
+  double strength_tolC = 0.005;
+  double strength_tolR = 0.005;
+  double filter_tolR = 0.0;
+  double filter_tolA = 0.0;
+  int cycle_type = 1;
+
+
+  // // AIR parameters:
+  // double distance_R = 1.5;
+  // std::string prerelax = "A";
+  // std::string postrelax = "FFC";
+  // int interp_type = 100;
+  // int relax_type = 3;
+  // int coarsen_type = 6;
+  // double strength_tolC = 0.005;
+  // double strength_tolR = 0.005;
+  // double filter_tolR = 0.0;
+  // double filter_tolA = 0.0;
+  // int cycle_type = 1;
+
+  // AMG parameters
+  // double distance_R = -1;
+  // std::string prerelax = "AA";
+  // std::string postrelax = "AA";
+  // int interp_type = 6;
+  // int relax_type = 3;
+  // int coarsen_type = 6;
+  // double strength_tolC = 0.1;
+  // double strength_tolR = -1;
+  // double filter_tolR = 0.0;
+  // double filter_tolA = 0.0;
+  // int cycle_type = 1;
+
+  // // AIR hyperbolic parameters
+  // double distance_R = 1.5;
+  // std::string prerelax = "A";
+  // std::string postrelax = "F";
+  // int interp_type = 100;
+  // int relax_type = 10;
+  // int coarsen_type = 6;
+  // double strength_tolC = 0.005;
+  // double strength_tolR = 0.005;
+  // double filter_tolR = 0.0;
+  // double filter_tolA = 0.0001;
+  // int cycle_type = 1;
+
+
+  // Create preconditioner
+  HYPRE_BoomerAMGSetTol( FFinv, 0 );    // set tolerance to 0 so to have a fixed number of iterations
+  HYPRE_BoomerAMGSetMaxIter( FFinv, maxiter );
+  HYPRE_BoomerAMGSetPrintLevel( FFinv, printLevel );
+
+  unsigned int ns_down = prerelax.length();
+  unsigned int ns_up   = postrelax.length();
+  int ns_coarse = 1;
+  std::string Fr("F");
+  std::string Cr("C");
+  std::string Ar("A");
+  int* *grid_relax_points = new int* [4];
+  grid_relax_points[0] = NULL;
+  grid_relax_points[1] = new int[ns_down];
+  grid_relax_points[2] = new int [ns_up];
+  grid_relax_points[3] = new int[1];
+  grid_relax_points[3][0] = 0;
+
+  // set down relax scheme 
+  for(unsigned int i = 0; i<ns_down; i++) {
+    if (prerelax.compare(i,1,Fr) == 0) {
+      grid_relax_points[1][i] = -1;
+    }
+    else if (prerelax.compare(i,1,Cr) == 0) {
+      grid_relax_points[1][i] = 1;
+    }
+    else if (prerelax.compare(i,1,Ar) == 0) {
+      grid_relax_points[1][i] = 0;
+    }
+  }
+
+  // set up relax scheme 
+  for(unsigned int i = 0; i<ns_up; i++) {
+    if (postrelax.compare(i,1,Fr) == 0) {
+      grid_relax_points[2][i] = -1;
+    }
+    else if (postrelax.compare(i,1,Cr) == 0) {
+      grid_relax_points[2][i] = 1;
+    }
+    else if (postrelax.compare(i,1,Ar) == 0) {
+      grid_relax_points[2][i] = 0;
+    }
+  }
+
+
+  if (distance_R > 0) {
+    HYPRE_BoomerAMGSetRestriction( FFinv, distance_R );
+    HYPRE_BoomerAMGSetStrongThresholdR( FFinv, strength_tolR );
+    HYPRE_BoomerAMGSetFilterThresholdR( FFinv, filter_tolR );
+  }
+  HYPRE_BoomerAMGSetInterpType( FFinv, interp_type );
+  HYPRE_BoomerAMGSetCoarsenType( FFinv, coarsen_type );
+  HYPRE_BoomerAMGSetAggNumLevels( FFinv, 0 );
+  HYPRE_BoomerAMGSetStrongThreshold( FFinv, strength_tolC );
+  HYPRE_BoomerAMGSetGridRelaxPoints( FFinv, grid_relax_points ); // TODO: THIS FUNCTION IS DEPRECATED!!
+                                                                 //nobody knows whose responsibility it is to free grid_relax_points
+  if (relax_type > -1) {
+    HYPRE_BoomerAMGSetRelaxType( FFinv, relax_type );
+  }
+  HYPRE_BoomerAMGSetCycleNumSweeps( FFinv, ns_coarse, 3 );
+  HYPRE_BoomerAMGSetCycleNumSweeps( FFinv, ns_down,   1 );
+  HYPRE_BoomerAMGSetCycleNumSweeps( FFinv, ns_up,     2 );
+  if (filter_tolA > 0) {
+    HYPRE_BoomerAMGSetADropTol( FFinv, filter_tolA );
+  }
+  // type = -1: drop based on row inf-norm
+  else if (filter_tolA == -1) {
+    HYPRE_BoomerAMGSetADropType( FFinv, -1 );
+  }
+
+  // Set cycle type for solve 
+  HYPRE_BoomerAMGSetCycleType( FFinv, cycle_type );
+
+
+}
+
+
+
+
+
+// Utility function for setting up FFainv
+void IMHD2DSTOperatorAssembler::SetUpBoomerAMGFFa( HYPRE_Solver& FFinv, const int maxiter ){
   int printLevel = 0;
 
   // AIR parameters for diffusion equation:
@@ -2600,6 +3274,143 @@ void IMHD2DSTOperatorAssembler::SetUpBoomerAMG( HYPRE_Solver& FFinv, const int m
 
 
 
+void IMHD2DSTOperatorAssembler::SetUpBoomerAMGCCa( HYPRE_Solver& CCainv, const int maxiter ){
+  if ( _myRank==0 ){
+    std::cerr<<"WARNING: Still need to adjust AIR options for CCa. Using same as in FFu"<<std::endl;
+  }
+
+  int printLevel = 0;
+
+  // AIR parameters for diffusion equation:
+  double distance_R = 1.5;
+  std::string prerelax = "A";
+  std::string postrelax = "FFC";
+  int interp_type = 0;
+  int relax_type = 8;
+  int coarsen_type = 6;
+  double strength_tolC = 0.005;
+  double strength_tolR = 0.005;
+  double filter_tolR = 0.0;
+  double filter_tolA = 0.0;
+  int cycle_type = 1;
+
+
+  // // AIR parameters:
+  // double distance_R = 1.5;
+  // std::string prerelax = "A";
+  // std::string postrelax = "FFC";
+  // int interp_type = 100;
+  // int relax_type = 3;
+  // int coarsen_type = 6;
+  // double strength_tolC = 0.005;
+  // double strength_tolR = 0.005;
+  // double filter_tolR = 0.0;
+  // double filter_tolA = 0.0;
+  // int cycle_type = 1;
+
+  // AMG parameters
+  // double distance_R = -1;
+  // std::string prerelax = "AA";
+  // std::string postrelax = "AA";
+  // int interp_type = 6;
+  // int relax_type = 3;
+  // int coarsen_type = 6;
+  // double strength_tolC = 0.1;
+  // double strength_tolR = -1;
+  // double filter_tolR = 0.0;
+  // double filter_tolA = 0.0;
+  // int cycle_type = 1;
+
+  // // AIR hyperbolic parameters
+  // double distance_R = 1.5;
+  // std::string prerelax = "A";
+  // std::string postrelax = "F";
+  // int interp_type = 100;
+  // int relax_type = 10;
+  // int coarsen_type = 6;
+  // double strength_tolC = 0.005;
+  // double strength_tolR = 0.005;
+  // double filter_tolR = 0.0;
+  // double filter_tolA = 0.0001;
+  // int cycle_type = 1;
+
+
+  // Create preconditioner
+  HYPRE_BoomerAMGSetTol( CCainv, 0 );    // set tolerance to 0 so to have a fixed number of iterations
+  HYPRE_BoomerAMGSetMaxIter( CCainv, maxiter );
+  HYPRE_BoomerAMGSetPrintLevel( CCainv, printLevel );
+
+  unsigned int ns_down = prerelax.length();
+  unsigned int ns_up   = postrelax.length();
+  int ns_coarse = 1;
+  std::string Fr("F");
+  std::string Cr("C");
+  std::string Ar("A");
+  int* *grid_relax_points = new int* [4];
+  grid_relax_points[0] = NULL;
+  grid_relax_points[1] = new int[ns_down];
+  grid_relax_points[2] = new int [ns_up];
+  grid_relax_points[3] = new int[1];
+  grid_relax_points[3][0] = 0;
+
+  // set down relax scheme 
+  for(unsigned int i = 0; i<ns_down; i++) {
+    if (prerelax.compare(i,1,Fr) == 0) {
+      grid_relax_points[1][i] = -1;
+    }
+    else if (prerelax.compare(i,1,Cr) == 0) {
+      grid_relax_points[1][i] = 1;
+    }
+    else if (prerelax.compare(i,1,Ar) == 0) {
+      grid_relax_points[1][i] = 0;
+    }
+  }
+
+  // set up relax scheme 
+  for(unsigned int i = 0; i<ns_up; i++) {
+    if (postrelax.compare(i,1,Fr) == 0) {
+      grid_relax_points[2][i] = -1;
+    }
+    else if (postrelax.compare(i,1,Cr) == 0) {
+      grid_relax_points[2][i] = 1;
+    }
+    else if (postrelax.compare(i,1,Ar) == 0) {
+      grid_relax_points[2][i] = 0;
+    }
+  }
+
+
+  if (distance_R > 0) {
+    HYPRE_BoomerAMGSetRestriction( CCainv, distance_R );
+    HYPRE_BoomerAMGSetStrongThresholdR( CCainv, strength_tolR );
+    HYPRE_BoomerAMGSetFilterThresholdR( CCainv, filter_tolR );
+  }
+  HYPRE_BoomerAMGSetInterpType( CCainv, interp_type );
+  HYPRE_BoomerAMGSetCoarsenType( CCainv, coarsen_type );
+  HYPRE_BoomerAMGSetAggNumLevels( CCainv, 0 );
+  HYPRE_BoomerAMGSetStrongThreshold( CCainv, strength_tolC );
+  HYPRE_BoomerAMGSetGridRelaxPoints( CCainv, grid_relax_points ); // TODO: THIS FUNCTION IS DEPRECATED!!
+                                                                 //nobody knows whose responsibility it is to free grid_relax_points
+  if (relax_type > -1) {
+    HYPRE_BoomerAMGSetRelaxType( CCainv, relax_type );
+  }
+  HYPRE_BoomerAMGSetCycleNumSweeps( CCainv, ns_coarse, 3 );
+  HYPRE_BoomerAMGSetCycleNumSweeps( CCainv, ns_down,   1 );
+  HYPRE_BoomerAMGSetCycleNumSweeps( CCainv, ns_up,     2 );
+  if (filter_tolA > 0) {
+    HYPRE_BoomerAMGSetADropTol( CCainv, filter_tolA );
+  }
+  // type = -1: drop based on row inf-norm
+  else if (filter_tolA == -1) {
+    HYPRE_BoomerAMGSetADropType( CCainv, -1 );
+  }
+
+  // Set cycle type for solve 
+  HYPRE_BoomerAMGSetCycleType( CCainv, cycle_type );
+
+}
+
+
 
 
 
@@ -2691,6 +3502,10 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( ParBlockLowTriOperator*& FFFu, P
   // -- since we already flagged the relevant esential BC to the local operator,
   //     the matrices are already constrained
   BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassOperator.GetGradient( x ) );
+  // Hopefully faster...
+  // _Mu.Swap( *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) ) );
+  // _Ma.Swap( *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) ) );
+  // ...as this does deep copy
   _Mu = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
   _Ma = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
 
@@ -2705,6 +3520,18 @@ void IMHD2DSTOperatorAssembler::AssembleSystem( ParBlockLowTriOperator*& FFFu, P
 
 
   BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( x ) );
+  // _Fu.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) ) );
+  // _Z1.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) ) );
+  // _Z2.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) ) );
+  // _B.Swap(  *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) ) );
+  // _Bt.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) ) );
+  // _Cs.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) ) );
+  // _X1.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) ) );
+  // _X2.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) ) );
+  // _Mz.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,2) ) ) );
+  // _K.Swap(  *( dynamic_cast<SparseMatrix*>( &J->GetBlock(2,3) ) ) );
+  // _Y.Swap(  *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) ) );
+  // _Fa.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) ) );
   _Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
   _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
   _Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
@@ -3546,6 +4373,13 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
 
 
   BlockOperator* J = dynamic_cast<BlockOperator*>( &_IMHD2DOperator.GetGradient( x ) );
+  // hopefully faster...
+  // _Fu.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) ) );
+  // _Z1.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) ) );
+  // _Z2.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) ) );
+  // _Y.Swap(  *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,0) ) ) );
+  // _Fa.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(3,3) ) ) );
+  // ...as this performs deep copy
   _Fu = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,0) ) );
   _Z1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,2) ) );
   _Z2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,3) ) );
@@ -3561,6 +4395,9 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
     _Ma.Clear();
 
     BlockOperator* JM = dynamic_cast<BlockOperator*>( &_IMHD2DMassOperator.GetGradient( x ) );
+    // _Mu.Swap(  *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) ) );
+    // _Mps.Swap( *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(1,0) ) ) );
+    // _Ma.Swap(  *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) ) );
     _Mu  = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(0,0) ) );
     _Mps = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(1,0) ) );
     _Ma  = *( dynamic_cast<SparseMatrix*>( &JM->GetBlock(3,3) ) );
@@ -3580,6 +4417,9 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
     _Bt.Clear();
     _B.Clear();
 
+    // _Cs.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) ) );
+    // _Bt.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) ) );
+    // _B.Swap(  *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) ) );
     _Cs = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,1) ) );
     _Bt = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(0,1) ) );
     _B  = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,0) ) );
@@ -3593,6 +4433,8 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
 
     _X1.Clear();
     _X2.Clear();
+    // _X1.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) ) );
+    // _X2.Swap( *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) ) );
     _X1 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,2) ) );
     _X2 = *( dynamic_cast<SparseMatrix*>( &J->GetBlock(1,3) ) );
     _XX1.SetBlockDiag( &_X1, 0, false );
@@ -3645,6 +4487,18 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
         }
         break;
       }
+      // Use GMRES+BoomerAMG
+      case 5:{
+        
+        // reassemble space-time matrix
+        AssembleFFuHypre();
+        // reassign it to solver (this should update the preconditioner, too?)
+        ( dynamic_cast<HypreGMRES*>( _FFuinv ) )->SetOperator( *_FFuHypre );
+    
+        break;
+
+      }
+      // Use sequential time-stepping to solve for space-time block - non-time-parallel version
       case 9:{
         ( dynamic_cast<SpaceTimeSolver*>( _FFuinv ) )->SetF( &_Fu );
 
@@ -3684,18 +4538,21 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
 
   // update aSchur
   if ( _aSAssembled ){
-    _WaAssembled = false;
-    _Wa.Clear();
-    AssembleWa();
-    _aSinv->SetW( &_Wa );
-
     switch ( _ASTSolveType ){
       // Update matrices in CCainv
       case 0:
       case 1:
       case 2:
       case 3:
-      case 4:{
+      case 4:
+      case 9:{
+        if ( _ASTSolveType != 4 ){
+          _WaAssembled = false;
+          _Wa.Clear();
+          AssembleWa();
+          ( dynamic_cast<IMHD2DSTMagneticSchurComplement*>( _aSinv ) )->SetW( &_Wa );
+        }
+
         _CpAssembled = false;
         _C0Assembled = false;
         _CmAssembled = false;
@@ -3704,22 +4561,63 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
         _Cm.Clear(); 
         AssembleCCaBlocks();
         ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
-        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
-        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
-        
+        if( _ASTSolveType != 9 ){ // if it's 9, then it's a single time-step op; if not, I need to assemble whole space-time op
+          ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_C0, 1 );
+          ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cm, 2 );
+        }
+
+        if ( _stab && _ASTSolveType == 4 && _myRank == 0 ){
+          std::cerr<<"When using dMai Fa CCai, I need to update dMai, too, as this can change if SUPG is on!"<<std::endl;
+        }
+
+
         break;
       }
 
-      case 9:{
+      // // if it's 10, then aSchur reduces to Fa - single time-step version
+      case 10:{
+        ( dynamic_cast<SpaceTimeSolver*>( _aSinv ) )->SetF( &_Fa );
+
+        break;
+      }
+
+
+      case 5:{
         _CpAssembled = false;
         _C0Assembled = false;
         _CmAssembled = false;
         _Cp.Clear();
         _C0.Clear();
         _Cm.Clear(); 
-        AssembleCCaBlocks();
-        ( dynamic_cast<SpaceTimeWaveSolver*>( _CCainv ) )->SetDiag( &_Cp, 0 );
-        
+        AssembleCCaBlocks();        
+        // reassemble space-time matrix
+        AssembleCCaHypre();
+        // reassign it to solver (this should update the preconditioner, too?)
+        ( dynamic_cast<HypreGMRES*>( _CCainv ) )->SetOperator( *_CCaHypre );
+    
+
+        if ( _stab && _myRank == 0 ){
+          std::cerr<<"When using dMai Fa CCai, I need to update dMai, too, as this can change if SUPG is on!"<<std::endl;
+        }
+
+        break;
+      }
+      case 6:{
+        // reassemble space-time matrix
+        AssembleFFaHypre();
+        // reassign it to solver (this should update the preconditioner, too?)
+        ( dynamic_cast<HypreGMRES*>( _aSinv ) )->SetOperator( *_FFaHypre );
+    
+        break;
+      }
+
+
+
+      case 8:{  // if it's 8, then aSchur reduces to Fa
+        ( dynamic_cast<SpaceTimeSolver*>( _aSinv ) )->SetF( &_Fa );
+        if ( _stab ){
+          ( dynamic_cast<SpaceTimeSolver*>( _aSinv ) )->SetM( &_Ma );
+        }
         break;
       }
 
@@ -3767,14 +4665,21 @@ void IMHD2DSTOperatorAssembler::UpdateLinearisedOperators( const BlockVector& x 
 void IMHD2DSTOperatorAssembler::AssemblePreconditioner( Operator*& Fuinv, Operator*& Mzinv, Operator*& pSinv, Operator*& aSinv,
                                                         const int spaceTimeSolverTypeU, const int spaceTimeSolverTypeA ){
   
-  // if either requires single time step, set both to single time step
-  if ( spaceTimeSolverTypeU == 9 || spaceTimeSolverTypeA == 9 ){
-    _USTSolveType = 9;
-    _ASTSolveType = 9;
-  }else{
-    _USTSolveType = spaceTimeSolverTypeU;    
-    _ASTSolveType = spaceTimeSolverTypeA;    
-  }
+  // // if either requires single time step, set both to single time step
+  // if ( spaceTimeSolverTypeA == 9 || spaceTimeSolverTypeA == 10 ){
+  //   _ASTSolveType = spaceTimeSolverTypeA;
+  //   _USTSolveType = 9;
+  // }else if ( spaceTimeSolverTypeU == 9 ){
+  //   _ASTSolveType = 9;  // defaults to using Cyr's preconditioner
+  //   _USTSolveType = spaceTimeSolverTypeU;
+  // }else{
+  //   _ASTSolveType = spaceTimeSolverTypeA;    
+  //   _USTSolveType = spaceTimeSolverTypeU;
+  // }
+
+  // assume any adjustment is done in main
+  _ASTSolveType = spaceTimeSolverTypeA;    
+  _USTSolveType = spaceTimeSolverTypeU;
 
 
   //Assemble inverses
@@ -3815,7 +4720,8 @@ void IMHD2DSTOperatorAssembler::AssemblePreconditioner( Operator*& Fuinv, Operat
 // This is also extremely inefficient, as it freezes all allocated processors, while only one does the whole job,
 //  but I can't be bothered to re-implement the necessary classes
 void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
-                                          const std::string &convPath, int refLvl, int precType, int output ){
+                                          const std::string &convPath, int refLvl, int precType, int output,
+                                          StopWatch& assemblyStopwatch ){
 
   std::string innerConvpath = convPath + "NP" + std::to_string(_numProcs) + "_r"  + std::to_string(refLvl) + "/";
   if (output>0 && !std::experimental::filesystem::exists( innerConvpath ) && _myRank == 0){
@@ -3836,6 +4742,16 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
              <<"          This option gets overwritten if a tolerance is prescribed in the petsc option file,"<<std::endl    
              <<"          so make sure to delete it from there!"<<std::endl;    
   }
+
+
+  // For timing
+  if( _myRank != 0 ){
+    // rank 0 takes into account also the assembly time for fixed matrices - the others can forget it
+    assemblyStopwatch.Clear();
+  }
+  StopWatch solverStopwatch;
+  double totSolverTime   = 0;
+  double totAssemblyTime = 0;
 
 
 
@@ -3931,6 +4847,7 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   }
   OperatorsSequence myMHDPr( precOps, precOwn );
 
+
   // Ok, so at this stage all the skeletons for the various operators should be there. Now it's time to get serious
   
 
@@ -3965,7 +4882,8 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
     prevSol.GetBlock(3) = aBC;
   }
 
-  // - compute residual
+  // - compute residual (this is done automatically by "ApplyOperator()" in the parallel case)
+  assemblyStopwatch.Start();
   //  -- spatial contribution
   BlockVector lclRes(offsets);
   _IMHD2DOperator.Mult( lclSol, lclRes );        // N(x)
@@ -3981,6 +4899,8 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   dtu -= tempN;                                  // -(u^{n+1}-u^{n})
   //  -- combine together
   lclRes += dtu;
+  assemblyStopwatch.Stop();
+
   //  -- shouldnt be necessary (Dirichlet nodes are set to 0 when multiplying by _IMHD2D(Mass)Operator) but does no harm:
   for ( int i = 0; i < _essUhTDOF.Size(); ++i )
     lclRes.GetBlock(0)(_essUhTDOF[i]) = 0.;
@@ -3991,7 +4911,9 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   double newtonIt = 0;
   int newtNonConv = 0;
   int GMRESNonConv = 0;
+  assemblyStopwatch.Start();
   double newtonRes = lclRes.Norml2();
+  assemblyStopwatch.Stop();
   double newtonRes0 = newtonRes;
   double newtonErrWRTPrevIt = newtonATol;
   double tempResu;
@@ -3999,13 +4921,19 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   double tempResz;
   double tempResa;
   double totGMRESIt = 0.;
+
   std::cout << "***********************************************************\n";
   std::cout << "Starting Newton for time-step "<<_myRank+1<<", initial residual "<< newtonRes
             << ", (u,p,z,A) = ("<< lclRes.GetBlock(0).Norml2() <<","
                                 << lclRes.GetBlock(1).Norml2() <<","
                                 << lclRes.GetBlock(2).Norml2() <<","
-                                << lclRes.GetBlock(3).Norml2() <<")" << std::endl;
+                                << lclRes.GetBlock(3).Norml2() <<")"  << std::endl;
+  std::cout << "Pre - Assembly took: "<< assemblyStopwatch.RealTime() << "s" <<std::endl;
   std::cout << "***********************************************************\n";
+
+
+  totAssemblyTime = assemblyStopwatch.RealTime();
+
 
   if( output>0 ){
     if (  _myRank==0 ){
@@ -4013,24 +4941,27 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
       std::string filename = innerConvpath +"NEWTconv.txt";
       std::ofstream myfile;
       myfile.open( filename, std::ios::app );
-      myfile << "tt,\tRes_norm_tot\tRel_res_norm\tNewton_its,\tNewton_conv\tAvg_GMRES_its\tGMRES_noConv" << std::endl;    
+      myfile << "tt,\tRes_norm_tot\tRel_res_norm\tNewton_its,\tNewton_conv\tAvg_GMRES_its\tGMRES_noConv"
+             << "Solve_time\t"    << "Assembly_time\t" << std::endl;
       myfile << 0 << ",\t" << newtonRes0 << ",\t" << 1.0 << ",\t"
-             << 0 << ",\t" << false      << ",\t" << 0   << ",\t" << 0  << std::endl;
+             << 0 << ",\t" << false      << ",\t" << 0   << ",\t" << 0 << ",\t"
+             << 0 << totAssemblyTime     << std::endl;
       myfile.close();
     }
     // initialise data collection for specific time-step
     std::string filename = innerInnerConvpath +"NEWTconv.txt";
     std::ofstream myfile;
     myfile.open( filename, std::ios::app );
-    myfile << "#It\t"        << "Res_norm_tot\t"        
-            << "Res_norm_u\t"          << "Res_norm_p\t"          << "Res_norm_z\t"          << "Res_norm_a\t"
-            << "Rel_res_norm\t"        << "Norm of update\t"
-            <<"Inner converged\t"<<"Inner res\t"<<"Inner its"<<std::endl;
+
+    myfile <<  "#It\t"           << "Res_norm_tot\t"        
+           << "Res_norm_u\t"    << "Res_norm_p\t"    << "Res_norm_z\t"      << "Res_norm_a\t"
+           << "Rel_res_norm\t"  << "Update_norm\t"   << "Inner_converged\t" << "Inner_res\t"  <<"Inner_its\t"
+           << "Solve_time\t"    << "Assembly_time\t" << std::endl;
     myfile << newtonIt <<"\t"<< newtonRes <<"\t"
-            << lclRes.GetBlock(0).Norml2()<<"\t"<<lclRes.GetBlock(1).Norml2()<<"\t"
-            << lclRes.GetBlock(2).Norml2()<<"\t"<<lclRes.GetBlock(3).Norml2()<<"\t"
-            << newtonRes/newtonRes0 <<"\t"<< 0.0 <<"\t"
-            << false       <<"\t"<< 0.0   <<"\t"<<0   <<std::endl;
+           << lclRes.GetBlock(0).Norml2()<<"\t"<<lclRes.GetBlock(1).Norml2()<<"\t"
+           << lclRes.GetBlock(2).Norml2()<<"\t"<<lclRes.GetBlock(3).Norml2()<<"\t"
+           << newtonRes/newtonRes0 <<"\t"<< 0.0 <<"\t"
+           << false       <<"\t"<< 0.0   <<"\t"<<0<<"\t"<<0.0<<"\t"<<totAssemblyTime   <<std::endl;
     myfile.close();
   }    
 
@@ -4044,13 +4975,25 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
                    && newtonRes/newtonRes0 >= newtonRTol;
                    // && newtonErrWRTPrevIt >= newtonTol;
                    ++newtonIt ){      
+    
+    assemblyStopwatch.Clear();
+    solverStopwatch.Clear();
+
 
     // - update operators using guess on solution
+    //   - include in timing only if I'm not rank 0 (otherwise I'd be counting twice...)
+    if ( _myRank != 0 ){
+      assemblyStopwatch.Start();
+    }
     UpdateLinearisedOperators( lclSol );  // fun fact: this works fine also if called as non-collective
+    if ( _myRank != 0 ){
+      assemblyStopwatch.Stop();
+    }
 
 
 
     // - assemble matrix
+    solverStopwatch.Start();
     BlockOperator myMHDOp( offsets );
     myMHDOp.SetBlock(0, 0, &_Fu);
     myMHDOp.SetBlock(0, 1, &_Bt);
@@ -4119,10 +5062,12 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
     // Update relevant quantities
     // - solution
     lclSol += lclDeltaSol;
+    solverStopwatch.Stop();
 
 
     // - compute residual
     //  -- spatial contribution
+    assemblyStopwatch.Start();
     _IMHD2DOperator.Mult( lclSol, lclRes );        // N(x)
     lclRes.GetBlock(0) -= _frhs;                   // N(x) - b
     lclRes.GetBlock(1) -= _grhs;
@@ -4142,6 +5087,7 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
       lclRes.GetBlock(3)(_essAhTDOF[i]) = 0.;
     newtonRes = lclRes.Norml2();
     newtonErrWRTPrevIt = lclDeltaSol.Norml2();
+    assemblyStopwatch.Stop();
 
     tempResu = lclRes.GetBlock(0).Norml2();
     tempResp = lclRes.GetBlock(1).Norml2();
@@ -4160,7 +5106,9 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
       std::cout << "Inner solver *DID NOT* converge in ";
       GMRESNonConv++;
     }
-    std::cout<< GMRESits << " iterations. Residual "<< solver.GetFinalNorm() <<std::endl;
+    std::cout<< GMRESits << " iterations. Residual "<< solver.GetFinalNorm() <<std::endl
+             << " - Assembly took: "<< assemblyStopwatch.RealTime() << "s"  << std::endl
+             << " - Solver   took: "<<   solverStopwatch.RealTime() << "s"  << std::endl;
     std::cout << "***********************************************************\n";
     std::cout << "Newton iteration "<< newtonIt+1 <<" for time-step "<< _myRank+1 <<", residual "<< newtonRes
               << ", (u,p,z,A) = ("<< tempResu <<"," << tempResp <<"," << tempResz <<"," << tempResa <<")" << std::endl;
@@ -4169,14 +5117,22 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
       std::ofstream myfile;
       myfile.open( filename, std::ios::app );
       myfile << newtonIt <<"\t"<< newtonRes <<"\t"
-             << tempResu <<"\t"<< tempResp  <<"\t" <<tempResz << "\t" << tempResa << "\t"
-             << newtonRes/newtonRes0 <<"\t"<< newtonErrWRTPrevIt << "\t"
-             << solver.GetConverged() <<"\t"<< solver.GetFinalNorm() <<"\t"<<GMRESits <<std::endl;
+             << tempResu <<"\t"<< tempResp  <<"\t"<< tempResz << "\t" << tempResa << "\t"
+             << newtonRes/newtonRes0        <<"\t"<< newtonErrWRTPrevIt    <<"\t"
+             << solver.GetConverged()       <<"\t"<< solver.GetFinalNorm() <<"\t"<<GMRESits
+             << solverStopwatch.RealTime()  <<"\t"<< assemblyStopwatch.RealTime() << std::endl;
       myfile.close();
     }      
     std::cout << "***********************************************************\n";
 
   }
+
+
+  totAssemblyTime += assemblyStopwatch.RealTime();
+  totSolverTime   += solverStopwatch.RealTime();  
+  assemblyStopwatch.Clear();
+  solverStopwatch.Clear();
+
 
 
   bool newtConv = (newtonIt < maxNewtonIt);
@@ -4189,17 +5145,18 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   }
   std::cout   << " iterations. Residual norm is "     << newtonRes;
   std::cout   << ", avg internal GMRES it are "       << totGMRESIt/newtonIt  << ".\n";
+  std::cout   << "Solve took "                        << totSolverTime <<"s";
+  std::cout   << ", assembly took "                   << totAssemblyTime <<"s in total.\n";
   std::cout   << "***********************************************************\n";
 
   if( output>0 ){
     std::string filename = innerConvpath +"NEWTconv.txt";
     std::ofstream myfile;
     myfile.open( filename, std::ios::app );
-    myfile << _myRank+1 << ",\t" << newtonRes << ",\t" << newtonRes/newtonRes0 << ",\t"
-           << newtonIt  << ",\t" << newtConv  << ",\t" << totGMRESIt/newtonIt  << ",\t" << GMRESNonConv  << std::endl;
+    myfile << _myRank+1  << ",\t" << newtonIt  << ",\t" << newtConv      << ",\t" << totGMRESIt/newtonIt  << ",\t" << GMRESNonConv
+           << newtonRes0 << ",\t" << newtonRes << ",\t" << totSolverTime << ",\t" << totAssemblyTime      << std::endl;
     myfile.close();
   }    
-
 
 
   // Store final solution for this time-step and send to next processor
@@ -4232,6 +5189,10 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
   MPI_Allreduce( MPI_IN_PLACE, &totGMRESIt,   1, MPI_DOUBLE, MPI_SUM, _comm );
   MPI_Allreduce( MPI_IN_PLACE, &GMRESNonConv, 1, MPI_INT,    MPI_SUM, _comm );
 
+  // total solve and assembly times
+  MPI_Allreduce( MPI_IN_PLACE, &totAssemblyTime, 1, MPI_DOUBLE, MPI_SUM, _comm );
+  MPI_Allreduce( MPI_IN_PLACE, &totSolverTime,   1, MPI_DOUBLE, MPI_SUM, _comm );
+
 
   if ( _myRank == 0 ){
     std::cout<<"***********************************************************\n";
@@ -4243,6 +5204,9 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
                                                                                               <<". Avg per Newton it: "<<totGMRESIt/newtonIt<<"\n";
     std::cout<<"Final space-time norm of residual: "<< STres
              << ", (u,p,z,A) = ("<<STresu<<","<<STresp<<","<<STresz<<","<<STresa<<")"<< std::endl;
+
+    std::cout<< "Solve took "      << totSolverTime <<"s";
+    std::cout<< ", assembly took " << totAssemblyTime <<"s in total.\n";
     std::cout<<"***********************************************************\n";
 
     if( output>0 ){
@@ -4250,12 +5214,14 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
       std::ofstream myfile;
       myfile.open( filename, std::ios::app );
       double Tend = _dt*_numProcs;
-      myfile << Tend       << ",\t" << _numProcs    << ",\t" << refLvl               << ",\t" << STres<< ",\t"
-             << newtonIt   << ",\t" << newtNonConv  << ",\t" << newtonIt/_numProcs   << ",\t"
-             << totGMRESIt << ",\t" << GMRESNonConv << ",\t" << totGMRESIt/_numProcs << ",\t" << totGMRESIt/newtonIt << std::endl;
+      myfile << Tend       << ",\t" << _dt           << ",\t" << _numProcs            << ",\t" << refLvl << ",\t"
+             << newtonIt   << ",\t" << newtNonConv   << ",\t" << newtonIt/_numProcs   << ",\t"
+             << totGMRESIt << ",\t" << GMRESNonConv  << ",\t" << totGMRESIt/_numProcs << ",\t" << totGMRESIt/newtonIt << ",\t"
+             << STres      << ",\t" << totSolverTime << ",\t" << totAssemblyTime      << std::endl;
       myfile.close();
     }    
   }
+
 
   // wait for write to be completed..possibly non-necessary
   MPI_Barrier(_comm);
@@ -5322,9 +6288,13 @@ inline void IMHD2DSTOperatorAssembler::SetEverythingUnassembled(){
 
   _FFuinv = NULL;
   _FFuinvPrec = NULL;
+  _aSinvPrec  = NULL;
   _MMzinv = NULL;
   _CCainv = NULL;
   _CCainvPrec = NULL;
+  _FFuHypre = NULL;
+  _FFaHypre = NULL;
+  _CCaHypre = NULL;
 }
 
 
@@ -5769,10 +6739,13 @@ void IMHD2DSTOperatorAssembler::TimeStep( const BlockVector& x, BlockVector& y,
 IMHD2DSTOperatorAssembler::~IMHD2DSTOperatorAssembler(){
   delete _pSinv;
   delete _aSinv;
+  delete _aSinvPrec;
   delete _FFuinv;
   delete _FFuinvPrec;
+  delete _FFuHypre;
   delete _CCainv;
   delete _CCainvPrec;
+  delete _CCaHypre;
   delete _Mztemp;
   delete _MMzinv;
   // delete _FFFu;
